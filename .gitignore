@@ -1,0 +1,48 @@
+# --- macOS ---
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# --- IDE / Editor ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- CodeBuddy 本地数据（不提交） ---
+.codebuddy/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+ENV/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Node ---
+node_modules/
+dist/
+build/
+.next/
+.nuxt/
+.cache/
+
+# --- 环境变量与密钥 ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- 日志 ---
+*.log
+logs/
