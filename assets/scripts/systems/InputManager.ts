@@ -60,9 +60,12 @@ export class InputManager extends Component {
             return;
         }
 
-        // getUILocation() 返回 UI 坐标，已经是基于设计分辨率的坐标（中心为原点）
+        // getUILocation() 返回屏幕像素坐标（左下角为原点）
+        // 转换为设计分辨率坐标（中心为原点）
         const uiPos = event.getUILocation();
-        const worldPos = v3(uiPos.x, uiPos.y, 0);
+        const worldX = uiPos.x - 480;  // 设计分辨率宽度 960 的一半
+        const worldY = uiPos.y - 320;  // 设计分辨率高度 640 的一半
+        const worldPos = v3(worldX, worldY, 0);
 
         if (!this.gridManager) {
             console.log('InputManager: gridManager 为空');
@@ -70,7 +73,7 @@ export class InputManager extends Component {
         }
 
         const grid = this.gridManager.worldToGrid(worldPos);
-        console.log(`InputManager: UI坐标 (${uiPos.x.toFixed(0)}, ${uiPos.y.toFixed(0)}) → 网格 (${grid.col}, ${grid.row})`);
+        console.log(`InputManager: 屏幕坐标 (${uiPos.x.toFixed(0)}, ${uiPos.y.toFixed(0)}) → 世界坐标 (${worldX.toFixed(0)}, ${worldY.toFixed(0)}) → 网格 (${grid.col}, ${grid.row})`);
 
         if (this.gridManager.canBuildAt(grid.col, grid.row)) {
             const slotPos = this.gridManager.gridToWorld(grid.col, grid.row);
