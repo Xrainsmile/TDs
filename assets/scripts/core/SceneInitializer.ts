@@ -317,8 +317,8 @@ export class SceneInitializer extends Component {
             // 当前波次全部生成且全部死亡 → 下一波
             if (this.spawnedInWave >= wave.count && this.enemies.length === 0) {
                 this.waveActive = false;
-                this.waveDelay = 2;  // 2秒后开始下一波
-                console.log(`Wave ${this.currentWave} 完成，等待 2 秒...`);
+                this.waveDelay = 2;
+                console.log(`Wave ${this.currentWave} 完成（spawned=${this.spawnedInWave}/${wave.count}, enemies=0），等待 2 秒后启动 Wave ${this.currentWave + 1}`);
             }
         } else if (this.waveDelay > 0) {
             this.waveDelay -= dt;
