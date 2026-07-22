@@ -70,7 +70,7 @@ export class InputManager extends Component {
         }
 
         const grid = this.gridManager.worldToGrid(worldPos);
-        console.log(`InputManager: 屏幕坐标 (${uiPos.x.toFixed(0)}, ${uiPos.y.toFixed(0)}) → 世界坐标 (${worldX.toFixed(0)}, ${worldY.toFixed(0)}) → 网格 (${grid.col}, ${grid.row})`);
+        console.log(`InputManager: UI坐标 (${uiPos.x.toFixed(0)}, ${uiPos.y.toFixed(0)}) → 网格 (${grid.col}, ${grid.row})`);
 
         if (this.gridManager.canBuildAt(grid.col, grid.row)) {
             const slotPos = this.gridManager.gridToWorld(grid.col, grid.row);
