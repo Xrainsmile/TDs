@@ -130,6 +130,7 @@ export class EnemyController extends Component {
     }
 
     private onEnemyKilled(enemy: Enemy, pool: ObjectPool): void {
+        console.log(`Enemy ${enemy.Uuid}: 击杀！+${enemy.killGold} 金币`);
         this._gsm?.Currency?.addGold(enemy.killGold);
         this._gsm?.emit(GameEvents.ENEMY_KILLED);
         this.removeEnemy(enemy, pool);
