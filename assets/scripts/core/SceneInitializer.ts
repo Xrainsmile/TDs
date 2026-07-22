@@ -26,6 +26,11 @@ export class SceneInitializer extends Component {
     private readonly TOWER_RANGE = 200;
     private readonly TOWER_DAMAGE = 10;
     private readonly TOWER_INTERVAL = 0.8;
+    private readonly TOWER_COST = 100;
+
+    // 金币
+    private readonly INITIAL_GOLD = 300;
+    private readonly KILL_REWARD = 20;
 
     // 子弹
     private readonly BULLET_SPEED = 500;
@@ -54,6 +59,8 @@ export class SceneInitializer extends Component {
     private towerTimers: number[] = [];
     private bullets: { node: Node; vx: number; vy: number; target: Node }[] = [];
     private statusLabel: Label | null = null;
+    private goldLabel: Label | null = null;
+    private gold = 0;
 
     // 塔按钮位置
     private readonly TOWER_BUTTON_POS = new Vec3(-400, 0, 0);
@@ -160,6 +167,17 @@ export class SceneInitializer extends Component {
         this.statusLabel = labelNode.addComponent(Label);
         this.statusLabel.string = '拖拽左侧塔按钮到绿色格子';
         this.statusLabel.fontSize = 20;
+
+        // === 金币显示 ===
+        const goldNode = new Node('Gold');
+        goldNode.layer = Layers.Enum.UI_2D;
+        goldNode.setParent(canvas);
+        goldNode.addComponent(UITransform);
+        goldNode.setPosition(-420, 280, 0);
+        this.goldLabel = goldNode.addComponent(Label);
+        this.goldLabel.fontSize = 24;
+        this.gold = this.INITIAL_GOLD;
+        this.updateGoldLabel();
 
         // === 生成第一个敌人 ===
         this.spawnEnemy();
@@ -283,6 +301,9 @@ export class SceneInitializer extends Component {
                     if (this.enemyHp <= 0 && this.enemy) {
                         this.enemy.destroy();
                         this.enemy = null;
+                        this.gold += this.KILL_REWARD;
+                        this.updateGoldLabel();
+                        console.log(`击杀！+${this.KILL_REWARD} 金币，当前 ${this.gold}`);
                         this.scheduleOnce(() => this.spawnEnemy(), 1);
                     }
                     continue;
@@ -357,8 +378,21 @@ export class SceneInitializer extends Component {
         });
     }
 
+    private updateGoldLabel(): void {
+        if (this.goldLabel) {
+            this.goldLabel.string = `Gold: ${this.gold}`;
+        }
+    }
+
     private placeTower(slotIndex: number): void {
         if (this.slotOccupied[slotIndex] || !this.gameLayer) return;
+        if (this.gold < this.TOWER_COST) {
+            console.log(`金币不足，需要 ${this.TOWER_COST}，当前 ${this.gold}`);
+            return;
+        }
+
+        this.gold -= this.TOWER_COST;
+        this.updateGoldLabel();
 
         const tower = this.createTower(this.SLOT_POSITIONS[slotIndex]);
         tower.setParent(this.gameLayer);
