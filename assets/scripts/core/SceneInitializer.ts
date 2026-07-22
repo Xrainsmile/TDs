@@ -247,17 +247,21 @@ export class SceneInitializer extends Component {
             const local = eventToLocal(event, uiTransform);
             ghostNode.setPosition(local.x, local.y, 0);
 
-            // 磁吸高亮：拖拽时高亮最近的建造点
+            // 磁吸高亮：拖拽时高亮最近的建造点（矩形重叠检测）
+            const GHOST_SIZE = 48;
+            const SLOT_SIZE = 56;
             for (let i = 0; i < slotNodes.length; i++) {
                 const slot = slotNodes[i];
                 if (!slot.active) continue;
-                const dist = Math.sqrt(
-                    (local.x - slotPositions[i].x) ** 2 +
-                    (local.y - slotPositions[i].y) ** 2
-                );
+                const dx = Math.abs(local.x - slotPositions[i].x);
+                const dy = Math.abs(local.y - slotPositions[i].y);
+                const overlapX = (GHOST_SIZE + SLOT_SIZE) / 2;
+                const overlapY = (GHOST_SIZE + SLOT_SIZE) / 2;
+                const isOverlap = dx < overlapX && dy < overlapY;
+
                 const gfx = slot.getComponent(Graphics);
                 if (gfx) {
-                    if (dist < 120) {
+                    if (isOverlap) {
                         // 高亮：绿色边框变亮
                         gfx.strokeColor = new Color(100, 255, 100, 255);
                         gfx.fillColor = new Color(100, 255, 100, 80);
@@ -280,34 +284,42 @@ export class SceneInitializer extends Component {
             const dropX = local.x;
             const dropY = local.y;
 
-            // 磁吸：找最近的建造点
-            let nearestSlot = -1;
-            let nearestDist = Infinity;
+            // 磁吸：矩形重叠检测（只要幽灵塔与建造点有重叠就算命中）
+            const GHOST_SIZE = 48;  // 幽灵塔尺寸
+            const SLOT_SIZE = 56;   // 建造点尺寸
+            let hitSlot = -1;
+            let minDist = Infinity;
+
             for (let i = 0; i < slotPositions.length; i++) {
                 const slot = slotNodes[i];
                 if (!slot.active) continue;
 
-                const dist = Math.sqrt(
-                    (dropX - slotPositions[i].x) ** 2 +
-                    (dropY - slotPositions[i].y) ** 2
-                );
-                if (dist < nearestDist) {
-                    nearestDist = dist;
-                    nearestSlot = i;
+                const dx = Math.abs(dropX - slotPositions[i].x);
+                const dy = Math.abs(dropY - slotPositions[i].y);
+
+                // 矩形重叠检测：两个矩形中心距离 < (宽+宽)/2 且 (高+高)/2
+                const overlapX = (GHOST_SIZE + SLOT_SIZE) / 2;
+                const overlapY = (GHOST_SIZE + SLOT_SIZE) / 2;
+
+                if (dx < overlapX && dy < overlapY) {
+                    const dist = Math.sqrt(dropX ** 2 + dropY ** 2) - Math.sqrt(slotPositions[i].x ** 2 + slotPositions[i].y ** 2);
+                    if (dist < minDist) {
+                        minDist = dist;
+                        hitSlot = i;
+                    }
                 }
             }
 
-            // 磁吸半径 120 像素（放宽）
-            if (nearestSlot >= 0 && nearestDist < 120) {
+            if (hitSlot >= 0) {
                 const isFirstTower = placedCount === 0;
                 if (isFirstTower) {
                     gameState.Currency.addGold(TOWER_COST);
                 }
-                const tower = towerController.placeTower(TowerType.ARROW, slotPositions[nearestSlot]);
+                const tower = towerController.placeTower(TowerType.ARROW, slotPositions[hitSlot]);
                 if (tower) {
                     placedCount++;
-                    console.log(`箭塔放置到位置 ${nearestSlot + 1}${isFirstTower ? '（首塔免费）' : `，花费 ${TOWER_COST} 金币`}`);
-                    slotNodes[nearestSlot].active = false;
+                    console.log(`箭塔放置到位置 ${hitSlot + 1}${isFirstTower ? '（首塔免费）' : `，花费 ${TOWER_COST} 金币`}`);
+                    slotNodes[hitSlot].active = false;
                 } else {
                     console.log('放置失败');
                 }
