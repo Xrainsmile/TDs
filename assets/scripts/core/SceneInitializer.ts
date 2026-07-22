@@ -1,4 +1,4 @@
-import { _decorator, Component, Node, view, UITransform, Layers, Vec3, Graphics, Color, Label, EventTouch, Button } from 'cc';
+import { _decorator, Component, Node, view, UITransform, Layers, Vec3, Graphics, Color, Label, EventTouch } from 'cc';
 import { CoordinateService } from './CoordinateService';
 import { GameStateManager } from '../systems/GameStateManager';
 import { CurrencySystem } from '../systems/CurrencySystem';
@@ -17,26 +17,15 @@ const { ccclass, property } = _decorator;
 /**
  * MVP 版 SceneInitializer
  *
- * 场景结构：
- * Canvas
- * ├── GameLayer
- * │   ├── Path (路径可视化)
- * │   ├── TowerSlot (建造点)
- * │   ├── EnemyLayer
- * │   └── TowerLayer
- * └── UILayer
- *     ├── HUD (金币/生命/波次)
- *     └── StartWaveButton
- *
- * 交互闭环：
- * 1. 点击建造点 → 放置箭塔
- * 2. 点击开始波次 → 敌人沿路径走
- * 3. 塔自动攻击 → 子弹飞向敌人 → 伤害结算
+ * 用户流程：
+ * 1. 看到 HUD + 路径 + 开始波次按钮
+ * 2. 点击开始波次 → 倒计时 3 秒
+ * 3. 倒计时结束 → 建造点出现 → 敌人开始生成
+ * 4. 点击建造点 → 放箭塔
+ * 5. 塔自动攻击敌人 → 敌人血量归 0 → 消失
  */
 @ccclass('SceneInitializer')
 export class SceneInitializer extends Component {
-    @property
-    public levelName: string = 'level_01';
 
     protected start(): void {
         this.setupScene();
@@ -72,22 +61,20 @@ export class SceneInitializer extends Component {
         gameLayer.setParent(canvas);
         gameLayer.addComponent(UITransform);
 
-        // --- 3a. 路径 ---
+        // --- 3a. 路径（直线，y=0）---
+        const pathPoints = [{ x: -400, y: 0 }, { x: 400, y: 0 }];
         const pathNode = new Node('PathManager');
         pathNode.layer = Layers.Enum.UI_2D;
         pathNode.setParent(gameLayer);
         const pathManager = pathNode.addComponent(PathManager);
-        // MVP 简单直线路径
-        pathManager.setWaypoints([
-            { x: -400, y: 0 },
-            { x: 400, y: 0 },
-        ]);
-        this.drawPath(pathNode, [{ x: -400, y: 0 }, { x: 400, y: 0 }]);
+        pathManager.setWaypoints(pathPoints);
+        this.drawPath(pathNode, pathPoints);
 
-        // --- 3b. 建造点（固定一个）---
-        const slotPos = new Vec3(0, -100, 0);
+        // --- 3b. 建造点（路径旁边，塔能攻击到路径上的敌人）---
+        const slotPos = new Vec3(0, -64, 0);  // 路径下方 64 像素
         const slotNode = this.createTowerSlot(slotPos);
         slotNode.setParent(gameLayer);
+        slotNode.active = false;  // 初始隐藏，倒计时后显示
 
         // --- 3c. EnemyLayer ---
         const enemyLayer = new Node('EnemyLayer');
@@ -132,7 +119,6 @@ export class SceneInitializer extends Component {
         waveManager.enemyController = enemyController;
         waveManager.setGameStateManager(gameState);
         enemyController.setWaveManager(waveManager);
-        // MVP 波次配置
         waveManager.loadWaves([
             { waveIndex: 0, enemies: [{ enemyType: 1, count: 5, interval: 1.0, delay: 0 }] },
             { waveIndex: 1, enemies: [{ enemyType: 1, count: 8, interval: 0.8, delay: 1 }] },
@@ -162,7 +148,6 @@ export class SceneInitializer extends Component {
         const waveLabel = this.createLabel('Wave', 'Wave: 0/3', W / 2 - 120, 0);
         waveLabel.setParent(hudNode);
 
-        // 监听金币/生命/波次变化
         gameState.on(GameEvents.GOLD_CHANGED, (gold: number) => {
             goldLabel.getComponent(Label)!.string = `Gold: ${gold}`;
         });
@@ -173,12 +158,36 @@ export class SceneInitializer extends Component {
             waveLabel.getComponent(Label)!.string = `Wave: ${wave}/3`;
         });
 
+        // --- 倒计时显示 ---
+        const countdownLabel = this.createLabel('Countdown', '', 0, 0);
+        countdownLabel.setParent(uiLayer);
+        const cdLabel = countdownLabel.getComponent(Label)!;
+        cdLabel.fontSize = 48;
+
         // --- 开始波次按钮 ---
         const startBtn = this.createButton('StartWave', '开始波次', 0, -H / 2 + 40, () => {
-            console.log('点击开始波次');
-            gameState.setGameState(GameState.WAVE_RUNNING);
-            gameState.emit(GameEvents.START_NEXT_WAVE);
+            console.log('点击开始波次，开始倒计时');
             startBtn.active = false;
+            gameState.setGameState(GameState.WAVE_RUNNING);
+
+            // 倒计时 3 秒
+            let count = 3;
+            cdLabel.string = `${count}`;
+            cdLabel.node.active = true;
+
+            this.schedule(() => {
+                count--;
+                if (count > 0) {
+                    cdLabel.string = `${count}`;
+                } else {
+                    // 倒计时结束
+                    cdLabel.string = '';
+                    cdLabel.node.active = false;
+                    slotNode.active = true;  // 显示建造点
+                    gameState.emit(GameEvents.START_NEXT_WAVE);  // 开始生成敌人
+                    console.log('倒计时结束，敌人生成，可以放塔了');
+                }
+            }, 1, 3, 1);  // 间隔 1 秒，重复 3 次，延迟 1 秒
         });
         startBtn.setParent(uiLayer);
 
@@ -189,7 +198,7 @@ export class SceneInitializer extends Component {
             const tower = towerController.placeTower(TowerType.ARROW, slotPos);
             if (tower) {
                 console.log('箭塔放置成功，花费 50 金币');
-                slotNode.active = false;  // 建造后隐藏建造点
+                slotNode.active = false;
             } else {
                 console.log('金币不足或放置失败');
             }
@@ -199,7 +208,7 @@ export class SceneInitializer extends Component {
         gameState.initGame(200, 20);
 
         console.log('SceneInitializer: MVP 场景就绪');
-        console.log('操作：点击建造点放塔 → 点击开始波次');
+        console.log('操作：点击开始波次 → 倒计时 3 秒 → 建造点出现 + 敌人生成 → 点击建造点放塔');
     }
 
     /** 绘制路径 */
