@@ -242,29 +242,48 @@ export class SceneInitializer extends Component {
         });
 
         // TOUCH_MOVE 绑定到 Canvas（手指离开按钮后仍能追踪）
+        const MAGNET_RADIUS = 100;  // 磁吸触发半径
+        let magnetTarget: number = -1;  // 当前磁吸目标槽位
+
         canvas.on(Node.EventType.TOUCH_MOVE, (event: EventTouch) => {
             if (!isDragging) return;
             const local = eventToLocal(event, uiTransform);
-            ghostNode.setPosition(local.x, local.y, 0);
 
-            // 磁吸高亮：拖拽时高亮最近的建造点（矩形重叠检测）
-            const GHOST_SIZE = 48;
-            const SLOT_SIZE = 56;
+            // 找最近的可用建造点
+            let nearestSlot = -1;
+            let nearestDist = Infinity;
+            for (let i = 0; i < slotPositions.length; i++) {
+                const slot = slotNodes[i];
+                if (!slot.active) continue;
+                const dist = Math.sqrt(
+                    (local.x - slotPositions[i].x) ** 2 +
+                    (local.y - slotPositions[i].y) ** 2
+                );
+                if (dist < nearestDist) {
+                    nearestDist = dist;
+                    nearestSlot = i;
+                }
+            }
+
+            // 磁吸：幽灵塔吸附到建造点中心（而非跟随鼠标）
+            if (nearestSlot >= 0 && nearestDist < MAGNET_RADIUS) {
+                magnetTarget = nearestSlot;
+                // 平滑吸附：幽灵塔位置 = 建造点位置
+                ghostNode.setPosition(slotPositions[nearestSlot].x, slotPositions[nearestSlot].y, 0);
+            } else {
+                magnetTarget = -1;
+                ghostNode.setPosition(local.x, local.y, 0);
+            }
+
+            // 高亮：有磁吸目标时亮，没有时暗
             for (let i = 0; i < slotNodes.length; i++) {
                 const slot = slotNodes[i];
                 if (!slot.active) continue;
-                const dx = Math.abs(local.x - slotPositions[i].x);
-                const dy = Math.abs(local.y - slotPositions[i].y);
-                const overlapX = (GHOST_SIZE + SLOT_SIZE) / 2;
-                const overlapY = (GHOST_SIZE + SLOT_SIZE) / 2;
-                const isOverlap = dx < overlapX && dy < overlapY;
-
                 const gfx = slot.getComponent(Graphics);
                 if (gfx) {
-                    if (isOverlap) {
-                        // 高亮：绿色边框变亮
+                    if (i === magnetTarget) {
                         gfx.strokeColor = new Color(100, 255, 100, 255);
-                        gfx.fillColor = new Color(100, 255, 100, 80);
+                        gfx.fillColor = new Color(100, 255, 100, 100);
                     } else {
                         gfx.strokeColor = new Color(100, 200, 100, 200);
                         gfx.fillColor = new Color(100, 200, 100, 60);
@@ -277,40 +296,50 @@ export class SceneInitializer extends Component {
         canvas.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
             if (!isDragging) return;
             isDragging = false;
-            ghostNode.active = false;
 
-            // 建造点在 GameLayer 下，用 GameLayer 的 UITransform 转换
+            // 如果有磁吸目标，直接放置（不用再检测）
+            if (magnetTarget >= 0) {
+                const slot = slotNodes[magnetTarget];
+                if (slot.active) {
+                    const isFirstTower = placedCount === 0;
+                    if (isFirstTower) {
+                        gameState.Currency.addGold(TOWER_COST);
+                    }
+                    const tower = towerController.placeTower(TowerType.ARROW, slotPositions[magnetTarget]);
+                    if (tower) {
+                        placedCount++;
+                        console.log(`箭塔放置到位置 ${magnetTarget + 1}${isFirstTower ? '（首塔免费）' : `，花费 ${TOWER_COST} 金币`}`);
+                        slot.active = false;
+                    } else {
+                        console.log('放置失败');
+                    }
+                }
+                magnetTarget = -1;
+                ghostNode.active = false;
+                return;
+            }
+
+            // 无磁吸目标：用 GameLayer 坐标检测是否拖到建造点
             const local = eventToLocal(event, gameLayerTransform);
             const dropX = local.x;
             const dropY = local.y;
 
-            // 磁吸：矩形重叠检测（只要幽灵塔与建造点有重叠就算命中）
-            const GHOST_SIZE = 48;  // 幽灵塔尺寸
-            const SLOT_SIZE = 56;   // 建造点尺寸
             let hitSlot = -1;
             let minDist = Infinity;
-
             for (let i = 0; i < slotPositions.length; i++) {
                 const slot = slotNodes[i];
                 if (!slot.active) continue;
-
-                const dx = Math.abs(dropX - slotPositions[i].x);
-                const dy = Math.abs(dropY - slotPositions[i].y);
-
-                // 矩形重叠检测：两个矩形中心距离 < (宽+宽)/2 且 (高+高)/2
-                const overlapX = (GHOST_SIZE + SLOT_SIZE) / 2;
-                const overlapY = (GHOST_SIZE + SLOT_SIZE) / 2;
-
-                if (dx < overlapX && dy < overlapY) {
-                    const dist = Math.sqrt(dropX ** 2 + dropY ** 2) - Math.sqrt(slotPositions[i].x ** 2 + slotPositions[i].y ** 2);
-                    if (dist < minDist) {
-                        minDist = dist;
-                        hitSlot = i;
-                    }
+                const dist = Math.sqrt(
+                    (dropX - slotPositions[i].x) ** 2 +
+                    (dropY - slotPositions[i].y) ** 2
+                );
+                if (dist < minDist) {
+                    minDist = dist;
+                    hitSlot = i;
                 }
             }
 
-            if (hitSlot >= 0) {
+            if (hitSlot >= 0 && minDist < MAGNET_RADIUS) {
                 const isFirstTower = placedCount === 0;
                 if (isFirstTower) {
                     gameState.Currency.addGold(TOWER_COST);
@@ -323,10 +352,12 @@ export class SceneInitializer extends Component {
                 } else {
                     console.log('放置失败');
                 }
-                return;
+            } else {
+                console.log('未拖到建造点，取消放置');
             }
 
-            console.log('未拖到建造点，取消放置');
+            ghostNode.active = false;
+            magnetTarget = -1;
         });
 
         // --- 开始波次按钮 ---
