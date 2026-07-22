@@ -2,14 +2,22 @@ import { _decorator, Component, Node, view, UITransform, Layers, Vec3, Graphics,
 
 const { ccclass } = _decorator;
 
+/** 波次配置 */
+interface WaveConfig {
+    count: number;      // 敌人数量
+    hp: number;         // 敌人血量
+    interval: number;   // 生成间隔（秒）
+}
+
 /**
  * 极简版 SceneInitializer
  *
  * 核心闭环：
- * 1. 敌人反复生成 → 沿路径走 → 到终点重新生成
+ * 1. 波次系统：按配置生成多只敌人（数量+血量可配）
  * 2. 从左侧拖拽塔 → 松手时如果在建造点附近则放置，否则取消
  * 3. 能放置时蓝球外层显示光环
- * 4. 塔自动攻击范围内敌人 → 发射子弹 → 命中扣 HP → 死亡 → 重新生成
+ * 4. 塔自动攻击范围内敌人 → 发射子弹 → 命中扣 HP → 死亡
+ * 5. 放塔扣钱，击杀加钱
  */
 @ccclass('SceneInitializer')
 export class SceneInitializer extends Component {
@@ -19,7 +27,6 @@ export class SceneInitializer extends Component {
     private readonly PATH_END = new Vec3(400, 0, 0);
 
     // 敌人属性
-    private readonly ENEMY_HP = 30;
     private readonly ENEMY_SPEED = 80;
 
     // 塔属性
@@ -34,6 +41,14 @@ export class SceneInitializer extends Component {
 
     // 子弹
     private readonly BULLET_SPEED = 500;
+
+    // 波次配置
+    private readonly WAVES: WaveConfig[] = [
+        { count: 5,  hp: 20,  interval: 1.0 },
+        { count: 8,  hp: 30,  interval: 0.8 },
+        { count: 10, hp: 50,  interval: 0.6 },
+        { count: 5,  hp: 100, interval: 1.5 },
+    ];
 
     // 建造点
     private readonly SLOT_POSITIONS = [
@@ -53,18 +68,24 @@ export class SceneInitializer extends Component {
     // 运行时状态
     private gameLayer: Node | null = null;
     private gameTransform: UITransform | null = null;
-    private enemy: Node | null = null;
-    private enemyHp = 0;
+    private enemies: { node: Node; hp: number; maxHp: number }[] = [];
     private towers: Node[] = [];
     private towerTimers: number[] = [];
     private bullets: { node: Node; vx: number; vy: number; target: Node }[] = [];
     private statusLabel: Label | null = null;
     private goldLabel: Label | null = null;
+    private waveLabel: Label | null = null;
     private gold = 0;
+
+    // 波次运行时
+    private currentWave = 0;
+    private spawnTimer = 0;
+    private spawnedInWave = 0;
+    private waveActive = false;
+    private waveDelay = 0;  // 波次间延迟
 
     // 塔按钮位置
     private readonly TOWER_BUTTON_POS = new Vec3(-400, 0, 0);
-    private towerButtonNode: Node | null = null;
 
     protected start(): void {
         view.setDesignResolutionSize(960, 640, 3);
@@ -102,20 +123,18 @@ export class SceneInitializer extends Component {
         this.drawGhost(false);
         this.ghostNode.active = false;
 
-        // === 左侧塔按钮（仅视觉，不接收触摸）===
-        this.towerButtonNode = this.createTowerButton();
-        this.towerButtonNode.setParent(canvas);
+        // === 左侧塔按钮 ===
+        const towerButton = this.createTowerButton();
+        towerButton.setParent(canvas);
 
         // === 所有触摸事件绑定到 Canvas ===
         canvas.on(Node.EventType.TOUCH_START, (event: EventTouch) => {
-            const local = this.eventToGameLocal(event);
-            // 判断是否点中了塔按钮（距离 < 40）
             const buttonLocal = this.eventToCanvasLocal(event);
-            const distToButton = Vec3.distance(buttonLocal, this.TOWER_BUTTON_POS);
-            if (distToButton > 40) return;  // 没点中按钮，忽略
+            if (Vec3.distance(buttonLocal, this.TOWER_BUTTON_POS) > 40) return;
 
             this.isDragging = true;
             this.ghostNode!.active = true;
+            const local = this.eventToGameLocal(event);
             this.ghostNode!.setPosition(local);
             this.updateGhostState(local);
         });
@@ -134,7 +153,6 @@ export class SceneInitializer extends Component {
 
             const local = this.eventToGameLocal(event);
             if (this.canPlace) {
-                // 找最近的可用建造点
                 let nearestSlot = -1;
                 let nearestDist = Infinity;
                 for (let i = 0; i < this.SLOT_POSITIONS.length; i++) {
@@ -159,12 +177,12 @@ export class SceneInitializer extends Component {
         });
 
         // === 状态显示 ===
-        const labelNode = new Node('Status');
-        labelNode.layer = Layers.Enum.UI_2D;
-        labelNode.setParent(canvas);
-        labelNode.addComponent(UITransform);
-        labelNode.setPosition(0, 280, 0);
-        this.statusLabel = labelNode.addComponent(Label);
+        const statusNode = new Node('Status');
+        statusNode.layer = Layers.Enum.UI_2D;
+        statusNode.setParent(canvas);
+        statusNode.addComponent(UITransform);
+        statusNode.setPosition(0, 280, 0);
+        this.statusLabel = statusNode.addComponent(Label);
         this.statusLabel.string = '拖拽左侧塔按钮到绿色格子';
         this.statusLabel.fontSize = 20;
 
@@ -179,16 +197,48 @@ export class SceneInitializer extends Component {
         this.gold = this.INITIAL_GOLD;
         this.updateGoldLabel();
 
-        // === 生成第一个敌人 ===
-        this.spawnEnemy();
+        // === 波次显示 ===
+        const waveNode = new Node('Wave');
+        waveNode.layer = Layers.Enum.UI_2D;
+        waveNode.setParent(canvas);
+        waveNode.addComponent(UITransform);
+        waveNode.setPosition(420, 280, 0);
+        this.waveLabel = waveNode.addComponent(Label);
+        this.waveLabel.fontSize = 24;
+        this.waveLabel.string = `Wave: 0/${this.WAVES.length}`;
+
+        // === 启动第一波 ===
+        this.startNextWave();
 
         console.log('SceneInitializer: 极简版启动');
-        console.log('拖拽塔按钮到格子放塔 → 塔自动攻击 → 敌人死亡 → 重新生成');
+        console.log(`波次配置: ${this.WAVES.length} 波`);
+        this.WAVES.forEach((w, i) => {
+            console.log(`  Wave ${i + 1}: ${w.count}只 HP=${w.hp} 间隔=${w.interval}s`);
+        });
     }
 
-    /** 更新幽灵塔状态：是否可放置 + 光环显示 */
+    /** 启动下一波 */
+    private startNextWave(): void {
+        if (this.currentWave >= this.WAVES.length) {
+            if (this.statusLabel) this.statusLabel.string = '所有波次完成！胜利！';
+            if (this.waveLabel) this.waveLabel.string = 'Victory!';
+            this.waveActive = false;
+            return;
+        }
+
+        const wave = this.WAVES[this.currentWave];
+        this.currentWave++;
+        this.spawnedInWave = 0;
+        this.spawnTimer = 0;
+        this.waveActive = true;
+
+        console.log(`Wave ${this.currentWave} 开始: ${wave.count}只 HP=${wave.hp}`);
+        if (this.waveLabel) {
+            this.waveLabel.string = `Wave: ${this.currentWave}/${this.WAVES.length}`;
+        }
+    }
+
     private updateGhostState(local: Vec3): void {
-        // 找最近的可用建造点
         let nearestSlot = -1;
         let nearestDist = Infinity;
         for (let i = 0; i < this.SLOT_POSITIONS.length; i++) {
@@ -200,29 +250,22 @@ export class SceneInitializer extends Component {
             }
         }
 
-        // 距离 < 80 认为可放置
-        this.canPlace = nearestSlot >= 0 && nearestDist < 80;
+        this.canPlace = nearestSlot >= 0 && nearestDist < 80 && this.gold >= this.TOWER_COST;
 
-        // 如果可放置，吸附到建造点
         if (this.canPlace && nearestSlot >= 0) {
             this.ghostNode!.setPosition(this.SLOT_POSITIONS[nearestSlot]);
         }
 
-        // 重绘幽灵塔（有光环 / 无光环）
         this.drawGhost(this.canPlace);
     }
 
-    /** 绘制幽灵塔（可放置时有光环） */
     private drawGhost(canPlace: boolean): void {
         const gfx = this.ghostGfx!;
         gfx.clear();
-
-        // 蓝色半透明圆
         gfx.fillColor = new Color(50, 150, 255, 120);
         gfx.circle(0, 0, 20);
         gfx.fill();
 
-        // 可放置时显示光环
         if (canPlace) {
             gfx.strokeColor = new Color(100, 255, 100, 255);
             gfx.lineWidth = 4;
@@ -231,52 +274,96 @@ export class SceneInitializer extends Component {
         }
     }
 
-    /** 屏幕坐标 → GameLayer 局部坐标 */
     private eventToGameLocal(event: EventTouch): Vec3 {
         const uiPos = event.getUILocation();
         return this.gameTransform!.convertToNodeSpaceAR(v3(uiPos.x, uiPos.y, 0));
     }
 
-    /** 屏幕坐标 → Canvas 局部坐标（用于判断塔按钮点击） */
     private eventToCanvasLocal(event: EventTouch): Vec3 {
         const uiPos = event.getUILocation();
         return this.node.getComponent(UITransform)!.convertToNodeSpaceAR(v3(uiPos.x, uiPos.y, 0));
     }
 
     protected update(dt: number): void {
+        // === 波次生成 ===
+        if (this.waveActive) {
+            const wave = this.WAVES[this.currentWave - 1];
+            if (this.spawnedInWave < wave.count) {
+                this.spawnTimer += dt;
+                if (this.spawnTimer >= wave.interval) {
+                    this.spawnTimer = 0;
+                    this.spawnedInWave++;
+                    this.spawnEnemy(wave.hp);
+                }
+            }
+            // 当前波次全部生成且全部死亡 → 下一波
+            if (this.spawnedInWave >= wave.count && this.enemies.length === 0) {
+                this.waveActive = false;
+                this.waveDelay = 2;  // 2秒后开始下一波
+                console.log(`Wave ${this.currentWave} 完成，等待 2 秒...`);
+            }
+        } else if (this.waveDelay > 0) {
+            this.waveDelay -= dt;
+            if (this.waveDelay <= 0) {
+                this.startNextWave();
+            }
+        }
+
         // === 敌人移动 ===
-        if (this.enemy) {
-            const pos = this.enemy.position;
+        for (let i = this.enemies.length - 1; i >= 0; i--) {
+            const e = this.enemies[i];
+            if (!e.node.isValid) {
+                this.enemies.splice(i, 1);
+                continue;
+            }
+
+            const pos = e.node.position;
             const dx = this.PATH_END.x - pos.x;
 
             if (Math.abs(dx) < 5) {
-                this.enemy.destroy();
-                this.enemy = null;
-                this.scheduleOnce(() => this.spawnEnemy(), 1);
+                // 到达终点
+                e.node.destroy();
+                this.enemies.splice(i, 1);
             } else {
-                this.enemy.setPosition(pos.x + Math.sign(dx) * this.ENEMY_SPEED * dt, pos.y, 0);
+                e.node.setPosition(pos.x + Math.sign(dx) * this.ENEMY_SPEED * dt, pos.y, 0);
             }
         }
 
         // === HP 显示 ===
         if (this.statusLabel) {
-            if (this.enemy) {
-                this.statusLabel.string = `敌人 HP: ${this.enemyHp}/${this.ENEMY_HP}  塔: ${this.towers.length}`;
+            if (this.waveActive) {
+                const wave = this.WAVES[this.currentWave - 1];
+                const remaining = wave.count - this.spawnedInWave + this.enemies.length;
+                this.statusLabel.string = `剩余敌人: ${remaining}  塔: ${this.towers.length}`;
+            } else if (this.waveDelay > 0) {
+                this.statusLabel.string = `下一波倒计时: ${Math.ceil(this.waveDelay)}s  塔: ${this.towers.length}`;
             } else {
-                this.statusLabel.string = `等待敌人生成...  塔: ${this.towers.length}`;
+                this.statusLabel.string = `塔: ${this.towers.length}`;
             }
         }
 
         // === 塔攻击 ===
         for (let i = 0; i < this.towers.length; i++) {
-            if (!this.enemy) continue;
-            const dist = Vec3.distance(this.towers[i].position, this.enemy.position);
-            if (dist > this.TOWER_RANGE) continue;
+            if (this.enemies.length === 0) continue;
+
+            // 找最近的敌人
+            let nearestEnemy = -1;
+            let nearestDist = Infinity;
+            for (let j = 0; j < this.enemies.length; j++) {
+                if (!this.enemies[j].node.isValid) continue;
+                const dist = Vec3.distance(this.towers[i].position, this.enemies[j].node.position);
+                if (dist < nearestDist) {
+                    nearestDist = dist;
+                    nearestEnemy = j;
+                }
+            }
+
+            if (nearestEnemy < 0 || nearestDist > this.TOWER_RANGE) continue;
 
             this.towerTimers[i] += dt;
             if (this.towerTimers[i] >= this.TOWER_INTERVAL) {
                 this.towerTimers[i] = 0;
-                this.tryAttack(i);
+                this.fireBullet(this.towers[i].position, this.enemies[nearestEnemy].node.position, this.enemies[nearestEnemy].node);
             }
         }
 
@@ -291,24 +378,34 @@ export class SceneInitializer extends Component {
             const pos = b.node.position;
             b.node.setPosition(pos.x + b.vx * dt, pos.y + b.vy * dt, 0);
 
-            if (b.target.isValid) {
-                const d = Vec3.distance(b.node.position, b.target.position);
+            // 命中检测：检查所有敌人
+            let hit = false;
+            for (let j = this.enemies.length - 1; j >= 0; j--) {
+                const e = this.enemies[j];
+                if (!e.node.isValid || !b.target.isValid) continue;
+                if (b.target !== e.node) continue;  // 只命中目标
+
+                const d = Vec3.distance(b.node.position, e.node.position);
                 if (d < 16) {
-                    this.enemyHp -= this.TOWER_DAMAGE;
+                    e.hp -= this.TOWER_DAMAGE;
                     b.node.destroy();
                     this.bullets.splice(i, 1);
+                    hit = true;
 
-                    if (this.enemyHp <= 0 && this.enemy) {
-                        this.enemy.destroy();
-                        this.enemy = null;
+                    if (e.hp <= 0) {
+                        e.node.destroy();
+                        this.enemies.splice(j, 1);
                         this.gold += this.KILL_REWARD;
                         this.updateGoldLabel();
                         console.log(`击杀！+${this.KILL_REWARD} 金币，当前 ${this.gold}`);
-                        this.scheduleOnce(() => this.spawnEnemy(), 1);
                     }
-                    continue;
+                    break;
                 }
-            } else {
+            }
+
+            if (hit) continue;
+
+            if (b.target && !b.target.isValid) {
                 b.node.destroy();
                 this.bullets.splice(i, 1);
                 continue;
@@ -321,7 +418,8 @@ export class SceneInitializer extends Component {
         }
     }
 
-    private spawnEnemy(): void {
+    /** 生成敌人 */
+    private spawnEnemy(hp: number): void {
         if (!this.gameLayer) return;
 
         const enemy = new Node('Enemy');
@@ -337,17 +435,7 @@ export class SceneInitializer extends Component {
         gfx.circle(0, 0, 14);
         gfx.fill();
 
-        this.enemy = enemy;
-        this.enemyHp = this.ENEMY_HP;
-    }
-
-    private tryAttack(towerIndex: number): void {
-        if (!this.enemy || !this.towers[towerIndex]) return;
-        const towerPos = this.towers[towerIndex].position;
-        const enemyPos = this.enemy.position;
-        if (Vec3.distance(towerPos, enemyPos) <= this.TOWER_RANGE) {
-            this.fireBullet(towerPos, enemyPos, this.enemy);
-        }
+        this.enemies.push({ node: enemy, hp, maxHp: hp });
     }
 
     private fireBullet(from: Vec3, to: Vec3, target: Node): void {
@@ -378,18 +466,9 @@ export class SceneInitializer extends Component {
         });
     }
 
-    private updateGoldLabel(): void {
-        if (this.goldLabel) {
-            this.goldLabel.string = `Gold: ${this.gold}`;
-        }
-    }
-
     private placeTower(slotIndex: number): void {
         if (this.slotOccupied[slotIndex] || !this.gameLayer) return;
-        if (this.gold < this.TOWER_COST) {
-            console.log(`金币不足，需要 ${this.TOWER_COST}，当前 ${this.gold}`);
-            return;
-        }
+        if (this.gold < this.TOWER_COST) return;
 
         this.gold -= this.TOWER_COST;
         this.updateGoldLabel();
@@ -402,7 +481,13 @@ export class SceneInitializer extends Component {
         this.slotOccupied[slotIndex] = true;
         this.slotNodes[slotIndex].active = false;
 
-        console.log(`塔放置到位置 ${slotIndex + 1}，当前塔数: ${this.towers.length}`);
+        console.log(`塔放置到位置 ${slotIndex + 1}，花费 ${this.TOWER_COST}，当前 ${this.towers.length} 塔`);
+    }
+
+    private updateGoldLabel(): void {
+        if (this.goldLabel) {
+            this.goldLabel.string = `Gold: ${this.gold}`;
+        }
     }
 
     private createTowerButton(): Node {
