@@ -1,4 +1,4 @@
-import { _decorator, Component, Node, Label, Button, Layers, UITransform, view } from 'cc';
+import { _decorator, Component, Node, Label, Button, Layers, UITransform, view, EventTouch } from 'cc';
 import { GameStateManager } from '../systems/GameStateManager';
 import { GameState } from '../core/Constants';
 import { GameEvents } from '../core/EventNames';
@@ -10,6 +10,7 @@ const { ccclass, property } = _decorator;
  * UIManager - UI 总管理器
  *
  * 管理各 UI 面板的显示/隐藏，响应游戏状态变化
+ * 使用原生 TOUCH_END 事件代替 Button 组件，确保动态创建的节点也能响应点击
  */
 @ccclass('UIManager')
 export class UIManager extends Component {
@@ -34,7 +35,21 @@ export class UIManager extends Component {
 
         // 主菜单
         this._mainMenuPanel = this.createPanel('MainMenu', '塔防游戏\n\n点击开始', () => {
-            this.gameStateManager?.setGameState(GameState.PREPARING);
+            console.log('UIManager: 点击开始游戏');
+            const gsm = this.gameStateManager;
+            if (gsm) {
+                // 确保游戏初始化
+                gsm.initGame(200, 20);
+                gsm.setGameState(GameState.PREPARING);
+                // 触发加载关卡
+                gsm.emit(GameEvents.START_NEXT_WAVE);
+                // 切回 PREPARING（start-next-wave 可能切走了状态，这里确保是 PREPARING）
+                if (gsm.State !== GameState.PREPARING) {
+                    gsm.setGameState(GameState.PREPARING);
+                }
+            } else {
+                console.error('UIManager: gameStateManager 为空!');
+            }
         });
 
         // HUD
@@ -66,6 +81,8 @@ export class UIManager extends Component {
 
         // 开始波次按钮
         this._startWaveButton = this.createButton('StartWaveBtn', '开始波次', 0, -screenSize.height / 2 + 40, () => {
+            console.log('UIManager: 点击开始波次');
+            this.gameStateManager?.setGameState(GameState.WAVE_RUNNING);
             this.gameStateManager?.emit(GameEvents.START_NEXT_WAVE);
         });
         this._startWaveButton.setParent(this.node);
@@ -73,17 +90,22 @@ export class UIManager extends Component {
 
         // 游戏结束面板
         this._gameOverPanel = this.createPanel('GameOver', '游戏结束\n\n点击重新开始', () => {
+            console.log('UIManager: 点击重新开始');
             this.gameStateManager?.setGameState(GameState.PREPARING);
         });
         this._gameOverPanel.active = false;
 
         // 胜利面板
         this._victoryPanel = this.createPanel('Victory', '胜利!\n\n点击重新开始', () => {
+            console.log('UIManager: 点击重新开始(胜利)');
             this.gameStateManager?.setGameState(GameState.PREPARING);
         });
         this._victoryPanel.active = false;
     }
 
+    /**
+     * 创建面板（用 TOUCH_END 代替 Button，确保动态节点可点击）
+     */
     private createPanel(name: string, text: string, onClick: () => void): Node {
         const panel = new Node(name);
         panel.layer = Layers.Enum.UI_2D;
@@ -96,8 +118,12 @@ export class UIManager extends Component {
         label.setParent(panel);
         label.getComponent(Label)!.fontSize = 32;
 
-        const btn = panel.addComponent(Button);
-        btn.node.on(Button.EventType.CLICK, onClick, this);
+        // 用 TOUCH_END 代替 Button
+        panel.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
+            event.propagationStopped = true;
+            onClick();
+        }, this);
+
         return panel;
     }
 
@@ -113,20 +139,30 @@ export class UIManager extends Component {
         return node;
     }
 
+    /**
+     * 创建按钮（用 TOUCH_END 代替 Button）
+     */
     private createButton(name: string, text: string, x: number, y: number, onClick: () => void): Node {
         const btn = new Node(name);
         btn.layer = Layers.Enum.UI_2D;
-        btn.addComponent(UITransform);
+        const transform = btn.addComponent(UITransform);
+        transform.setContentSize(120, 40);
         btn.setPosition(x, y, 0);
         const label = btn.addComponent(Label);
         label.string = text;
         label.fontSize = 18;
-        const button = btn.addComponent(Button);
-        button.node.on(Button.EventType.CLICK, onClick, this);
+
+        // 用 TOUCH_END 代替 Button
+        btn.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
+            event.propagationStopped = true;
+            onClick();
+        }, this);
+
         return btn;
     }
 
     private onGameStateChanged(state: GameState): void {
+        console.log(`UIManager: 状态切换到 ${state}`);
         switch (state) {
             case GameState.MENU:
                 this.showOnly(this._mainMenuPanel);

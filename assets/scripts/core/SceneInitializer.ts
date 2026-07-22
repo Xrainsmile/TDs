@@ -152,7 +152,9 @@ export class SceneInitializer extends Component {
         const uiLayer = new Node('UILayer');
         uiLayer.layer = Layers.Enum.UI_2D;
         uiLayer.setParent(canvas);
-        uiLayer.addComponent(UITransform);
+        const uiLayerTransform = uiLayer.addComponent(UITransform);
+        uiLayerTransform.setContentSize(screenSize.width, screenSize.height);
+        // UILayer 在 GameLayer 之后创建，天然在上层，触摸优先
 
         // --- 3a. UIManager ---
         const uiManagerNode = new Node('UIManager');
