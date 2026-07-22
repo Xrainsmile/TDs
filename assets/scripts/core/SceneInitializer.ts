@@ -1,4 +1,4 @@
-import { _decorator, Component, Node, director, Vec3, view, UITransform, Layers, JsonAsset, resources } from 'cc';
+import { _decorator, Component, Node, director, Vec3, view, UITransform, Layers, JsonAsset, resources, Camera, Color, find } from 'cc';
 import { GameStateManager } from '../systems/GameStateManager';
 import { CurrencySystem } from '../systems/CurrencySystem';
 import { DamageSystem } from '../systems/DamageSystem';
@@ -36,12 +36,27 @@ export class SceneInitializer extends Component {
     public levelName: string = 'level_01';
 
     protected start(): void {
+        console.log('========== SceneInitializer: start() 被调用 ==========');
+        console.log('SceneInitializer: node =', this.node.name, 'active =', this.node.active);
+
+        // 视觉标记：找到 Camera 并改变背景色为绿色，确认脚本在运行
+        const camera = find('Canvas/Camera');
+        if (camera) {
+            const cam = camera.getComponent(Camera);
+            if (cam) {
+                cam.backgroundColor = new Color(30, 60, 30, 255);
+                console.log('SceneInitializer: Camera 背景色已改为绿色');
+            }
+        }
+
         this.setupScene();
     }
 
     private async setupScene(): Promise<void> {
+        console.log('SceneInitializer: setupScene 开始');
         const canvas = this.node;
         const screenSize = view.getVisibleSize();
+        console.log('SceneInitializer: 屏幕尺寸 =', screenSize.width, 'x', screenSize.height);
 
         // === 1. GameManager 根节点（持久化）===
         const gmNode = new Node('GameManager');
@@ -190,5 +205,6 @@ export class SceneInitializer extends Component {
         }
 
         console.log('SceneInitializer: 场景初始化完成');
+        console.log('========== SceneInitializer: 完成 ==========');
     }
 }
