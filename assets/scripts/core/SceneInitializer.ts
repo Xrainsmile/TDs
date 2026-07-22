@@ -298,8 +298,10 @@ export class SceneInitializer extends Component {
             isDragging = false;
 
             // 如果有磁吸目标，直接放置
+            console.log(`松手: magnetTarget=${magnetTarget}, isDragging=${isDragging}`);
             if (magnetTarget >= 0) {
                 const slot = slotNodes[magnetTarget];
+                console.log(`槽位 ${magnetTarget}: active=${slot.active}, pos=(${slotPositions[magnetTarget].x},${slotPositions[magnetTarget].y})`);
                 if (slot.active) {
                     const isFirstTower = placedCount === 0;
                     if (isFirstTower) {
@@ -311,7 +313,7 @@ export class SceneInitializer extends Component {
                         console.log(`箭塔放置到位置 ${magnetTarget + 1}${isFirstTower ? '（首塔免费）' : `，花费 ${TOWER_COST} 金币`}`);
                         slot.active = false;
                     } else {
-                        console.log('放置失败');
+                        console.log('placeTower 返回 null，放置失败');
                     }
                 }
                 magnetTarget = -1;
