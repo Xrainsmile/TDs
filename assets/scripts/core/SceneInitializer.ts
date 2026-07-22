@@ -238,9 +238,7 @@ export class SceneInitializer extends Component {
     /** 启动下一波 */
     private startNextWave(): void {
         if (this.currentWave >= this.WAVES.length) {
-            if (this.statusLabel) this.statusLabel.string = '所有波次完成！胜利！';
-            if (this.waveLabel) this.waveLabel.string = 'Victory!';
-            this.waveActive = false;
+            this.victory();
             return;
         }
 
@@ -254,6 +252,72 @@ export class SceneInitializer extends Component {
         if (this.waveLabel) {
             this.waveLabel.string = `Wave: ${this.currentWave}/${this.WAVES.length}`;
         }
+    }
+
+    private victory(): void {
+        this.waveActive = false;
+        this.isGameOver = true;  // 复用 isGameOver 停止 update 逻辑
+
+        const canvas = this.node;
+        const panel = new Node('VictoryPanel');
+        panel.layer = Layers.Enum.UI_2D;
+        panel.setParent(canvas);
+        const panelTransform = panel.addComponent(UITransform);
+        panelTransform.setContentSize(400, 200);
+
+        const gfx = panel.addComponent(Graphics);
+        gfx.fillColor = new Color(40, 40, 50, 230);
+        gfx.roundRect(-200, -100, 400, 200, 12);
+        gfx.fill();
+        gfx.strokeColor = new Color(80, 255, 80, 255);
+        gfx.lineWidth = 3;
+        gfx.roundRect(-200, -100, 400, 200, 12);
+        gfx.stroke();
+
+        // 标题
+        const titleNode = new Node('Title');
+        titleNode.layer = Layers.Enum.UI_2D;
+        titleNode.setParent(panel);
+        titleNode.addComponent(UITransform);
+        titleNode.setPosition(0, 40, 0);
+        const titleLabel = titleNode.addComponent(Label);
+        titleLabel.string = '胜利！';
+        titleLabel.fontSize = 36;
+        titleLabel.color = new Color(80, 255, 80, 255);
+
+        // 再来一局按钮
+        const btnNode = new Node('RestartBtn');
+        btnNode.layer = Layers.Enum.UI_2D;
+        btnNode.setParent(panel);
+        const btnTransform = btnNode.addComponent(UITransform);
+        btnTransform.setContentSize(140, 44);
+        btnTransform.setAnchorPoint(0.5, 0.5);
+        btnNode.setPosition(0, -40, 0);
+
+        const btnGfx = btnNode.addComponent(Graphics);
+        btnGfx.fillColor = new Color(80, 160, 80, 255);
+        btnGfx.roundRect(-70, -22, 140, 44, 8);
+        btnGfx.fill();
+
+        const btnLabelNode = new Node('Label');
+        btnLabelNode.layer = Layers.Enum.UI_2D;
+        btnLabelNode.setParent(btnNode);
+        btnLabelNode.addComponent(UITransform);
+        const btnLabel = btnLabelNode.addComponent(Label);
+        btnLabel.string = '再来一局';
+        btnLabel.fontSize = 20;
+        btnLabel.color = new Color(255, 255, 255, 255);
+
+        btnNode.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
+            event.propagationStopped = true;
+            this.restart();
+        });
+
+        this.gameOverPanel = panel;
+
+        if (this.statusLabel) this.statusLabel.string = '胜利！';
+        if (this.waveLabel) this.waveLabel.string = 'Victory!';
+        console.log('所有波次完成，胜利！');
     }
 
     private updateGhostState(local: Vec3): void {
