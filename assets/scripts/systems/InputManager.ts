@@ -1,4 +1,4 @@
-import { _decorator, Component, Node, EventTouch, v3, Vec3, view } from 'cc';
+import { _decorator, Component, Node, EventTouch, v3, Vec3 } from 'cc';
 import { GameState } from '../core/Constants';
 import { GameStateManager } from '../systems/GameStateManager';
 import { GridManager } from './GridManager';
@@ -60,13 +60,9 @@ export class InputManager extends Component {
             return;
         }
 
-        // getUILocation() 返回屏幕像素坐标（左下角为原点）
-        // 需要转换为世界坐标（屏幕中心为原点）
+        // getUILocation() 返回 UI 坐标，已经是基于设计分辨率的坐标（中心为原点）
         const uiPos = event.getUILocation();
-        const screenSize = view.getVisibleSize();
-        const worldX = uiPos.x - screenSize.width / 2;
-        const worldY = uiPos.y - screenSize.height / 2;
-        const worldPos = v3(worldX, worldY, 0);
+        const worldPos = v3(uiPos.x, uiPos.y, 0);
 
         if (!this.gridManager) {
             console.log('InputManager: gridManager 为空');

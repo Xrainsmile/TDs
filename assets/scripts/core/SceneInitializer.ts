@@ -43,8 +43,11 @@ export class SceneInitializer extends Component {
     private async setupScene(): Promise<void> {
         console.log('SceneInitializer: setupScene 开始');
         const canvas = this.node;
-        const screenSize = view.getVisibleSize();
-        console.log('SceneInitializer: 屏幕尺寸 =', screenSize.width, 'x', screenSize.height);
+        // 使用设计分辨率（与关卡数据坐标匹配）
+        const DESIGN_WIDTH = 960;
+        const DESIGN_HEIGHT = 640;
+        view.setDesignResolutionSize(DESIGN_WIDTH, DESIGN_HEIGHT, view.ResolutionPolicy.SHOW_ALL);
+        console.log(`SceneInitializer: 设计分辨率 ${DESIGN_WIDTH}x${DESIGN_HEIGHT}`);
 
         // === 1. GameManager 根节点（持久化）===
         const gmNode = new Node('GameManager');
@@ -116,8 +119,9 @@ export class SceneInitializer extends Component {
         gridNode.layer = Layers.Enum.UI_2D;
         gridNode.setParent(gameLayer);
         const gridManager = gridNode.addComponent(GridManager);
-        // 根据实际屏幕尺寸居中网格
-        gridManager.centerToScreen(screenSize.width, screenSize.height);
+        // 使用设计分辨率的原点（960x640 的一半）
+        gridManager.originX = -DESIGN_WIDTH / 2;
+        gridManager.originY = -DESIGN_HEIGHT / 2;
         console.log(`SceneInitializer: GridManager 原点 (${gridManager.originX}, ${gridManager.originY}), 格子 ${gridManager.cellSize}px`);
 
         // --- 2g. InputManager ---
@@ -156,7 +160,7 @@ export class SceneInitializer extends Component {
         uiLayer.layer = Layers.Enum.UI_2D;
         uiLayer.setParent(canvas);
         const uiLayerTransform = uiLayer.addComponent(UITransform);
-        uiLayerTransform.setContentSize(screenSize.width, screenSize.height);
+        uiLayerTransform.setContentSize(DESIGN_WIDTH, DESIGN_HEIGHT);
         // UILayer 在 GameLayer 之后创建，天然在上层，触摸优先
 
         // --- 3a. UIManager ---

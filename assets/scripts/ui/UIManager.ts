@@ -31,7 +31,9 @@ export class UIManager extends Component {
     }
 
     private createPanels(): void {
-        const screenSize = view.getVisibleSize();
+        // 使用设计分辨率（960x640）
+        const DESIGN_WIDTH = 960;
+        const DESIGN_HEIGHT = 640;
 
         // 主菜单
         this._mainMenuPanel = this.createPanel('MainMenu', '塔防游戏\n\n点击开始', () => {
@@ -57,15 +59,15 @@ export class UIManager extends Component {
         this._hudNode.layer = Layers.Enum.UI_2D;
         this._hudNode.setParent(this.node);
         const hudTransform = this._hudNode.addComponent(UITransform);
-        hudTransform.setContentSize(screenSize.width, 40);
+        hudTransform.setContentSize(DESIGN_WIDTH, 40);
         hudTransform.setAnchorPoint(0.5, 1);
-        this._hudNode.setPosition(0, screenSize.height / 2, 0);
+        this._hudNode.setPosition(0, DESIGN_HEIGHT / 2, 0);
 
-        const goldLabel = this.createLabel('GoldLabel', 'Gold: 0', -screenSize.width / 2 + 80, 0);
+        const goldLabel = this.createLabel('GoldLabel', 'Gold: 0', -DESIGN_WIDTH / 2 + 80, 0);
         goldLabel.setParent(this._hudNode);
-        const livesLabel = this.createLabel('LivesLabel', 'Lives: 0', -screenSize.width / 2 + 240, 0);
+        const livesLabel = this.createLabel('LivesLabel', 'Lives: 0', -DESIGN_WIDTH / 2 + 240, 0);
         livesLabel.setParent(this._hudNode);
-        const waveLabel = this.createLabel('WaveLabel', 'Wave: 0 / 0', screenSize.width / 2 - 120, 0);
+        const waveLabel = this.createLabel('WaveLabel', 'Wave: 0 / 0', DESIGN_WIDTH / 2 - 120, 0);
         waveLabel.setParent(this._hudNode);
 
         this._statusLabel = this.createLabel('StatusLabel', '', 0, -20);
@@ -80,7 +82,7 @@ export class UIManager extends Component {
         hud.init(this.gameStateManager!);
 
         // 开始波次按钮
-        this._startWaveButton = this.createButton('StartWaveBtn', '开始波次', 0, -screenSize.height / 2 + 40, () => {
+        this._startWaveButton = this.createButton('StartWaveBtn', '开始波次', 0, -DESIGN_HEIGHT / 2 + 40, () => {
             console.log('UIManager: 点击开始波次');
             this.gameStateManager?.setGameState(GameState.WAVE_RUNNING);
             this.gameStateManager?.emit(GameEvents.START_NEXT_WAVE);
@@ -111,8 +113,8 @@ export class UIManager extends Component {
         panel.layer = Layers.Enum.UI_2D;
         panel.setParent(this.node);
         const transform = panel.addComponent(UITransform);
-        const screenSize = view.getVisibleSize();
-        transform.setContentSize(screenSize.width, screenSize.height);
+        const screenSize = { width: DESIGN_WIDTH, height: DESIGN_HEIGHT };
+        transform.setContentSize(DESIGN_WIDTH, DESIGN_HEIGHT);
 
         const label = this.createLabel('Label', text, 0, 0);
         label.setParent(panel);
