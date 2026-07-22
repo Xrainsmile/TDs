@@ -35,7 +35,7 @@ export class SceneInitializer extends Component {
     @property
     public levelName: string = 'level_01';
 
-    protected onLoad(): void {
+    protected start(): void {
         this.setupScene();
     }
 

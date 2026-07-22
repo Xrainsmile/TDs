@@ -38,7 +38,7 @@ export class GameStateManager extends Component {
             return;
         }
         GameStateManager._instance = this;
-        director.addPersistRootNode(this.node);
+        // 不使用 addPersistRootNode，因为 demo 只有一个场景
         this._currency = this.getComponent(CurrencySystem);
     }
 
