@@ -215,10 +215,10 @@ export class SceneInitializer extends Component {
 
         towerButton.on(Node.EventType.TOUCH_MOVE, (event: EventTouch) => {
             if (!isDragging) return;
-            // getUILocation() 在 Cocos 3.x 中返回的是设计分辨率坐标（中心为原点）
-            const ui = event.getUILocation();
-            ghostNode.setPosition(ui.x, ui.y, 0);
-            console.log(`拖拽中: UI(${ui.x.toFixed(0)},${ui.y.toFixed(0)})`);
+            // getLocation() 返回世界坐标（中心为原点）
+            const world = event.getLocation();
+            ghostNode.setPosition(world.x, world.y, 0);
+            console.log(`拖拽中: world(${world.x.toFixed(0)},${world.y.toFixed(0)})`);
         });
 
         towerButton.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
@@ -227,16 +227,16 @@ export class SceneInitializer extends Component {
             ghostNode.active = false;
 
             // 检查是否拖到了某个建造点
-            const ui = event.getUILocation();
-            console.log(`放下: UI(${ui.x.toFixed(0)},${ui.y.toFixed(0)})`);
+            const world = event.getLocation();
+            console.log(`放下: world(${world.x.toFixed(0)},${world.y.toFixed(0)})`);
 
             for (let i = 0; i < slotPositions.length; i++) {
                 const slot = slotNodes[i];
                 if (!slot.active) continue;  // 已被占用或未显示
 
                 const dist = Math.sqrt(
-                    (ui.x - slotPositions[i].x) ** 2 +
-                    (ui.y - slotPositions[i].y) ** 2
+                    (world.x - slotPositions[i].x) ** 2 +
+                    (world.y - slotPositions[i].y) ** 2
                 );
 
                 if (dist < 40) {
