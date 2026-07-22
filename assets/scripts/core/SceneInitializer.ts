@@ -215,11 +215,13 @@ export class SceneInitializer extends Component {
             console.log(`开始拖拽塔${isFirstTower ? '（首塔免费）' : ''}`);
         });
 
-        // 坐标转换辅助：屏幕坐标 → Canvas 本地坐标
+        // 坐标转换：直接打印所有坐标API的值来调试
         const touchToCanvasLocal = (event: EventTouch): Vec3 => {
-            const world = event.getLocation();
-            const v3 = new Vec3(world.x, world.y, 0);
-            return canvasTransform.convertToNodeSpaceAR(v3);
+            const loc = event.getLocation();
+            const uiLoc = event.getUILocation();
+            console.log(`getLocation: (${loc.x.toFixed(0)},${loc.y.toFixed(0)}), getUILocation: (${uiLoc.x.toFixed(0)},${uiLoc.y.toFixed(0)})`);
+            // getUILocation 返回 UI 坐标（中心为原点，设计分辨率）
+            return new Vec3(uiLoc.x, uiLoc.y, 0);
         };
 
         // TOUCH_MOVE 绑定到 Canvas（手指离开按钮后仍能追踪）
