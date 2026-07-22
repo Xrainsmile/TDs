@@ -102,6 +102,10 @@ export class SceneInitializer extends Component {
 
     // 拖拽中的塔类型
     private dragTowerType: 'attack' | 'slow' = 'attack';
+    // 拖拽模式：'place' 新建 / 'move' 移动已建好的塔
+    private dragMode: 'place' | 'move' = 'place';
+    // 移动塔时记录原槽位
+    private moveFromSlot = -1;
 
     protected start(): void {
         view.setDesignResolutionSize(960, 640, 3);
@@ -148,23 +152,43 @@ export class SceneInitializer extends Component {
         // === 所有触摸事件绑定到 Canvas ===
         canvas.on(Node.EventType.TOUCH_START, (event: EventTouch) => {
             const buttonLocal = this.eventToCanvasLocal(event);
+            const gameLocal = this.eventToGameLocal(event);
 
-            // 判断点中了哪个塔按钮
+            // 1. 判断是否点中了塔按钮（新建）
             if (Vec3.distance(buttonLocal, this.TOWER_BUTTON_POS) <= 40) {
                 this.dragTowerType = 'attack';
+                this.dragMode = 'place';
             } else if (Vec3.distance(buttonLocal, this.SLOW_BUTTON_POS) <= 40) {
                 this.dragTowerType = 'slow';
+                this.dragMode = 'place';
             } else {
-                return;
+                // 2. 判断是否点中了已建好的塔（移动）
+                let hitTower = -1;
+                for (let i = 0; i < this.towers.length; i++) {
+                    if (Vec3.distance(gameLocal, this.towers[i].node.position) < 30) {
+                        hitTower = i;
+                        break;
+                    }
+                }
+                if (hitTower < 0) return;
+
+                // 记录原槽位
+                const towerPos = this.towers[hitTower].node.position;
+                for (let s = 0; s < this.SLOT_POSITIONS.length; s++) {
+                    if (Vec3.distance(towerPos, this.SLOT_POSITIONS[s]) < 5) {
+                        this.moveFromSlot = s;
+                        break;
+                    }
+                }
+                this.dragTowerType = this.towers[hitTower].type;
+                this.dragMode = 'move';
             }
 
             this.isDragging = true;
             this.ghostNode!.active = true;
-            // 重绘幽灵塔外观匹配类型
             this.drawGhost(false);
-            const local = this.eventToGameLocal(event);
-            this.ghostNode!.setPosition(local);
-            this.updateGhostState(local);
+            this.ghostNode!.setPosition(gameLocal);
+            this.updateGhostState(gameLocal);
         });
 
         canvas.on(Node.EventType.TOUCH_MOVE, (event: EventTouch) => {
@@ -181,6 +205,7 @@ export class SceneInitializer extends Component {
 
             const local = this.eventToGameLocal(event);
             if (this.canPlace) {
+                // 找最近的可用建造点
                 let nearestSlot = -1;
                 let nearestDist = Infinity;
                 for (let i = 0; i < this.SLOT_POSITIONS.length; i++) {
@@ -191,17 +216,38 @@ export class SceneInitializer extends Component {
                         nearestSlot = i;
                     }
                 }
+
                 if (nearestSlot >= 0) {
-                    this.placeTower(nearestSlot, this.dragTowerType);
+                    if (this.dragMode === 'place') {
+                        // 新建塔
+                        this.placeTower(nearestSlot, this.dragTowerType);
+                    } else if (this.dragMode === 'move' && this.moveFromSlot >= 0) {
+                        // 移动塔：找到对应塔对象，更新位置
+                        for (const tower of this.towers) {
+                            if (Vec3.distance(tower.node.position, this.SLOT_POSITIONS[this.moveFromSlot]) < 5) {
+                                tower.node.setPosition(this.SLOT_POSITIONS[nearestSlot]);
+                                break;
+                            }
+                        }
+                        // 释放原槽位，占用新槽位
+                        this.slotOccupied[this.moveFromSlot] = false;
+                        this.slotNodes[this.moveFromSlot].active = true;
+                        this.slotOccupied[nearestSlot] = true;
+                        this.slotNodes[nearestSlot].active = false;
+                        console.log(`塔从位置 ${this.moveFromSlot + 1} 移动到 ${nearestSlot + 1}`);
+                        this.moveFromSlot = -1;
+                    }
                 }
             }
             this.canPlace = false;
+            this.moveFromSlot = -1;
         });
 
         canvas.on(Node.EventType.TOUCH_CANCEL, () => {
             this.isDragging = false;
             this.ghostNode!.active = false;
             this.canPlace = false;
+            this.moveFromSlot = -1;
         });
 
         // === 状态显示 ===
@@ -356,7 +402,9 @@ export class SceneInitializer extends Component {
         }
 
         const cost = this.dragTowerType === 'attack' ? this.TOWER_COST : this.SLOW_TOWER_COST;
-        this.canPlace = nearestSlot >= 0 && nearestDist < 80 && this.gold >= cost;
+        // 移动模式不扣钱，只需要目标槽位空闲
+        const goldOk = this.dragMode === 'move' || this.gold >= cost;
+        this.canPlace = nearestSlot >= 0 && nearestDist < 80 && goldOk;
 
         if (this.canPlace && nearestSlot >= 0) {
             this.ghostNode!.setPosition(this.SLOT_POSITIONS[nearestSlot]);
