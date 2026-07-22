@@ -1,4 +1,4 @@
-import { _decorator, Component, Node, view, UITransform, Layers, Vec3, Graphics, Color, Label, EventTouch } from 'cc';
+import { _decorator, Component, Node, view, UITransform, Layers, Vec3, Graphics, Color, Label, EventTouch, v3 } from 'cc';
 import { CoordinateService } from './CoordinateService';
 import { GameStateManager } from '../systems/GameStateManager';
 import { CurrencySystem } from '../systems/CurrencySystem';
@@ -14,14 +14,16 @@ import { GameEvents } from './EventNames';
 
 const { ccclass, property } = _decorator;
 
+const TOWER_COST = 300;
+
 /**
  * MVP 版 SceneInitializer
  *
  * 用户流程：
- * 1. 看到 HUD + 路径 + 开始波次按钮
+ * 1. 看到 HUD + 路径 + 左侧塔栏 + 开始波次按钮
  * 2. 点击开始波次 → 倒计时 3 秒
- * 3. 倒计时结束 → 建造点出现 → 敌人开始生成
- * 4. 点击建造点 → 放箭塔
+ * 3. 倒计时结束 → 3个建造点出现 + 敌人开始生成
+ * 4. 从左侧拖拽塔按钮 → 放到建造点（花 300 金币）
  * 5. 塔自动攻击敌人 → 敌人血量归 0 → 消失
  */
 @ccclass('SceneInitializer')
@@ -70,11 +72,19 @@ export class SceneInitializer extends Component {
         pathManager.setWaypoints(pathPoints);
         this.drawPath(pathNode, pathPoints);
 
-        // --- 3b. 建造点（路径旁边，塔能攻击到路径上的敌人）---
-        const slotPos = new Vec3(0, -64, 0);  // 路径下方 64 像素
-        const slotNode = this.createTowerSlot(slotPos);
-        slotNode.setParent(gameLayer);
-        slotNode.active = false;  // 初始隐藏，倒计时后显示
+        // --- 3b. 3个建造点 ---
+        const slotPositions: Vec3[] = [
+            new Vec3(-150, -64, 0),
+            new Vec3(0, -64, 0),
+            new Vec3(150, -64, 0),
+        ];
+        const slotNodes: Node[] = [];
+        for (let i = 0; i < slotPositions.length; i++) {
+            const slot = this.createTowerSlot(slotPositions[i], i + 1);
+            slot.setParent(gameLayer);
+            slot.active = false;  // 倒计时后显示
+            slotNodes.push(slot);
+        }
 
         // --- 3c. EnemyLayer ---
         const enemyLayer = new Node('EnemyLayer');
@@ -164,13 +174,96 @@ export class SceneInitializer extends Component {
         const cdLabel = countdownLabel.getComponent(Label)!;
         cdLabel.fontSize = 48;
 
+        // --- 左侧塔栏（拖拽源）---
+        const towerBar = new Node('TowerBar');
+        towerBar.layer = Layers.Enum.UI_2D;
+        towerBar.setParent(uiLayer);
+        towerBar.addComponent(UITransform);
+        towerBar.setPosition(-W / 2 + 60, 0, 0);
+
+        const towerButton = this.createDraggableTowerButton('箭塔', TOWER_COST, 0, 100);
+        towerButton.setParent(towerBar);
+
+        // --- 拖拽幽灵（跟随手指的半透明塔）---
+        const ghostNode = new Node('DragGhost');
+        ghostNode.layer = Layers.Enum.UI_2D;
+        ghostNode.setParent(uiLayer);
+        const ghostTransform = ghostNode.addComponent(UITransform);
+        ghostTransform.setContentSize(48, 48);
+        const ghostGfx = ghostNode.addComponent(Graphics);
+        ghostGfx.fillColor = new Color(50, 150, 255, 120);
+        ghostGfx.circle(0, 0, 20);
+        ghostGfx.fill();
+        ghostNode.active = false;
+
+        // --- 拖拽逻辑 ---
+        let isDragging = false;
+        const screen = canvas.getComponent(UITransform)!;
+
+        towerButton.on(Node.EventType.TOUCH_START, (event: EventTouch) => {
+            if (gameState.Gold < TOWER_COST) {
+                console.log(`金币不足，需要 ${TOWER_COST}，当前 ${gameState.Gold}`);
+                return;
+            }
+            isDragging = true;
+            ghostNode.active = true;
+            console.log('开始拖拽塔');
+        });
+
+        towerButton.on(Node.EventType.TOUCH_MOVE, (event: EventTouch) => {
+            if (!isDragging) return;
+            const ui = event.getUILocation();
+            const worldX = ui.x - W / 2;
+            const worldY = ui.y - H / 2;
+            ghostNode.setPosition(worldX, worldY, 0);
+        });
+
+        towerButton.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
+            if (!isDragging) return;
+            isDragging = false;
+            ghostNode.active = false;
+
+            // 检查是否拖到了某个建造点
+            const ui = event.getUILocation();
+            const dropX = ui.x - W / 2;
+            const dropY = ui.y - H / 2;
+
+            for (let i = 0; i < slotPositions.length; i++) {
+                const slot = slotNodes[i];
+                if (!slot.active) continue;  // 已被占用或未显示
+
+                const dist = Math.sqrt(
+                    (dropX - slotPositions[i].x) ** 2 +
+                    (dropY - slotPositions[i].y) ** 2
+                );
+
+                if (dist < 40) {
+                    // 放置塔
+                    const tower = towerController.placeTower(TowerType.ARROW, slotPositions[i]);
+                    if (tower) {
+                        console.log(`箭塔放置到位置 ${i + 1}，花费 ${TOWER_COST} 金币`);
+                        slot.active = false;  // 隐藏建造点
+                    } else {
+                        console.log('放置失败');
+                    }
+                    return;
+                }
+            }
+
+            console.log('未拖到建造点，取消放置');
+        });
+
+        towerButton.on(Node.EventType.TOUCH_CANCEL, () => {
+            isDragging = false;
+            ghostNode.active = false;
+        });
+
         // --- 开始波次按钮 ---
         const startBtn = this.createButton('StartWave', '开始波次', 0, -H / 2 + 40, () => {
             console.log('点击开始波次，开始倒计时');
             startBtn.active = false;
             gameState.setGameState(GameState.WAVE_RUNNING);
 
-            // 倒计时 3 秒
             let count = 3;
             cdLabel.string = `${count}`;
             cdLabel.node.active = true;
@@ -180,35 +273,54 @@ export class SceneInitializer extends Component {
                 if (count > 0) {
                     cdLabel.string = `${count}`;
                 } else {
-                    // 倒计时结束
                     cdLabel.string = '';
                     cdLabel.node.active = false;
-                    slotNode.active = true;  // 显示建造点
-                    gameState.emit(GameEvents.START_NEXT_WAVE);  // 开始生成敌人
-                    console.log('倒计时结束，敌人生成，可以放塔了');
+                    // 显示3个建造点
+                    for (const slot of slotNodes) {
+                        slot.active = true;
+                    }
+                    gameState.emit(GameEvents.START_NEXT_WAVE);
+                    console.log('倒计时结束，敌人生成，可以拖拽放塔了');
                 }
-            }, 1, 3, 1);  // 间隔 1 秒，重复 3 次，延迟 1 秒
+            }, 1, 3, 1);
         });
         startBtn.setParent(uiLayer);
 
-        // --- 建造点点击 ---
-        slotNode.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
-            event.propagationStopped = true;
-            console.log('点击建造点');
-            const tower = towerController.placeTower(TowerType.ARROW, slotPos);
-            if (tower) {
-                console.log('箭塔放置成功，花费 50 金币');
-                slotNode.active = false;
-            } else {
-                console.log('金币不足或放置失败');
-            }
-        });
-
         // === 5. 初始化游戏 ===
-        gameState.initGame(200, 20);
+        gameState.initGame(1000, 20);  // 初始 1000 金币，够放3个塔
 
         console.log('SceneInitializer: MVP 场景就绪');
-        console.log('操作：点击开始波次 → 倒计时 3 秒 → 建造点出现 + 敌人生成 → 点击建造点放塔');
+        console.log('操作：点击开始波次 → 倒计时 → 从左侧拖拽塔到建造点');
+    }
+
+    /** 创建可拖拽的塔按钮 */
+    private createDraggableTowerButton(name: string, cost: number, x: number, y: number): Node {
+        const node = new Node(name);
+        node.layer = Layers.Enum.UI_2D;
+        const transform = node.addComponent(UITransform);
+        transform.setContentSize(80, 80);
+        node.setPosition(x, y, 0);
+
+        const gfx = node.addComponent(Graphics);
+        // 塔图标
+        gfx.fillColor = new Color(60, 60, 70, 255);
+        gfx.rect(-30, -30, 60, 60);
+        gfx.fill();
+        gfx.fillColor = new Color(50, 150, 255, 255);
+        gfx.circle(0, 0, 16);
+        gfx.fill();
+        // 价格
+        gfx.fillColor = new Color(255, 255, 0, 255);
+        gfx.roundRect(-30, -40, 60, 16, 4);
+        gfx.fill();
+
+        const label = node.addComponent(Label);
+        label.string = `${cost}`;
+        label.fontSize = 12;
+        label.lineHeight = 16;
+        label.setPosition(0, -32, 0);
+
+        return node;
     }
 
     /** 绘制路径 */
@@ -234,25 +346,23 @@ export class SceneInitializer extends Component {
         gfx.circle(points[0].x, points[0].y, 20);
         gfx.fill();
 
-        // 终点城堡 🏰
+        // 终点城堡
         const last = points[points.length - 1];
         gfx.fillColor = new Color(120, 80, 60, 255);
         gfx.rect(last.x - 20, last.y - 20, 40, 40);
         gfx.fill();
-        // 城垛
         gfx.rect(last.x - 20, last.y + 10, 10, 10);
         gfx.rect(last.x - 5, last.y + 10, 10, 10);
         gfx.rect(last.x + 10, last.y + 10, 10, 10);
         gfx.fill();
-        // 城门
         gfx.fillColor = new Color(40, 40, 40, 255);
         gfx.rect(last.x - 6, last.y - 20, 12, 16);
         gfx.fill();
     }
 
     /** 创建建造点 */
-    private createTowerSlot(pos: Vec3): Node {
-        const node = new Node('TowerSlot');
+    private createTowerSlot(pos: Vec3, index: number): Node {
+        const node = new Node(`TowerSlot_${index}`);
         node.layer = Layers.Enum.UI_2D;
         node.setPosition(pos);
 

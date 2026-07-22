@@ -46,13 +46,13 @@ export class TowerController extends Component {
 
     /** 默认配置（无 JSON 时的 fallback） */
     private readonly _defaultConfigs: Map<TowerType, TowerConfig> = new Map([
-        [TowerType.ARROW, { type: TowerType.ARROW, name: '箭塔', cost: 50, upgradeCostMultiplier: 0.8,
+        [TowerType.ARROW, { type: TowerType.ARROW, name: '箭塔', cost: 300, upgradeCostMultiplier: 0.8,
             base: { attackRange: 140, attackDamage: 15, attackInterval: 0.8 },
             growth: { attackRange: 1.2, attackDamage: 1.5, attackInterval: 0.9 } }],
-        [TowerType.CANNON, { type: TowerType.CANNON, name: '炮塔', cost: 100, upgradeCostMultiplier: 0.8,
+        [TowerType.CANNON, { type: TowerType.CANNON, name: '炮塔', cost: 300, upgradeCostMultiplier: 0.8,
             base: { attackRange: 120, attackDamage: 40, attackInterval: 1.5 },
             growth: { attackRange: 1.15, attackDamage: 1.6, attackInterval: 0.95 } }],
-        [TowerType.MAGIC, { type: TowerType.MAGIC, name: '魔法塔', cost: 80, upgradeCostMultiplier: 0.8,
+        [TowerType.MAGIC, { type: TowerType.MAGIC, name: '魔法塔', cost: 300, upgradeCostMultiplier: 0.8,
             base: { attackRange: 160, attackDamage: 25, attackInterval: 1.0 },
             growth: { attackRange: 1.2, attackDamage: 1.5, attackInterval: 0.9 } }],
     ]);
