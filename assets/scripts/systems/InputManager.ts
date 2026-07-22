@@ -42,25 +42,33 @@ export class InputManager extends Component {
     }
 
     private onTouchEnded(event: EventTouch): void {
-        if (!this._gsm) return;
+        if (!this._gsm) {
+            console.log('InputManager: _gsm 为空');
+            return;
+        }
 
-        // 仅在 PREPARING 或 WAVE_RUNNING 或 WAVE_CLEARED 状态下可操作
         const state = this._gsm.State;
-        if (state !== GameState.PREPARING && state !== GameState.WAVE_RUNNING && state !== GameState.WAVE_CLEARED) return;
+        if (state !== GameState.PREPARING && state !== GameState.WAVE_RUNNING && state !== GameState.WAVE_CLEARED) {
+            console.log(`InputManager: 当前状态 ${state}，不可操作`);
+            return;
+        }
 
         const uiPos = event.getUILocation();
         const worldPos = v3(uiPos.x, uiPos.y, 0);
 
-        if (!this.gridManager) return;
+        if (!this.gridManager) {
+            console.log('InputManager: gridManager 为空');
+            return;
+        }
 
         const grid = this.gridManager.worldToGrid(worldPos);
+        console.log(`InputManager: 点击坐标 (${uiPos.x.toFixed(0)}, ${uiPos.y.toFixed(0)}) → 网格 (${grid.col}, ${grid.row})`);
 
         if (this.gridManager.canBuildAt(grid.col, grid.row)) {
-            // 空地 → 显示建塔菜单
             const slotPos = this.gridManager.gridToWorld(grid.col, grid.row);
+            console.log(`InputManager: 可以建塔，位置 (${slotPos.x.toFixed(0)}, ${slotPos.y.toFixed(0)})`);
             this.towerMenu?.showBuildMenu(slotPos);
         } else {
-            // 检查是否点击了已有塔
             this.checkTowerClick(worldPos);
         }
     }

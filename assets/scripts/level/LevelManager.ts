@@ -48,8 +48,11 @@ export class LevelManager extends Component {
 
     private _levelConfig: LevelConfig | null = null;
 
+    // start 中不再自动加载，由 SceneInitializer 在设置完 levelConfigAsset 后手动调用
     protected start(): void {
-        this.loadLevel();
+        if (this.levelConfigAsset) {
+            this.loadLevel();
+        }
     }
 
     /** 加载关卡 */

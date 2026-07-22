@@ -38,15 +38,10 @@ export class UIManager extends Component {
             console.log('UIManager: 点击开始游戏');
             const gsm = this.gameStateManager;
             if (gsm) {
-                // 确保游戏初始化
-                gsm.initGame(200, 20);
+                // 只切换状态到 PREPARING，让玩家先放塔
+                // 关卡加载时已经通过 initGame 设置了金币和生命
                 gsm.setGameState(GameState.PREPARING);
-                // 触发加载关卡
-                gsm.emit(GameEvents.START_NEXT_WAVE);
-                // 切回 PREPARING（start-next-wave 可能切走了状态，这里确保是 PREPARING）
-                if (gsm.State !== GameState.PREPARING) {
-                    gsm.setGameState(GameState.PREPARING);
-                }
+                console.log(`UIManager: 当前状态 ${gsm.State}, 金币 ${gsm.Currency?.Gold}, 生命 ${gsm.Lives}`);
             } else {
                 console.error('UIManager: gameStateManager 为空!');
             }
