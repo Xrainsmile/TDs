@@ -323,11 +323,15 @@ export class SceneInitializer extends Component {
         gfx.roundRect(-30, -40, 60, 16, 4);
         gfx.fill();
 
-        const label = node.addComponent(Label);
+        const labelNode = new Node('Cost');
+        labelNode.layer = Layers.Enum.UI_2D;
+        labelNode.addComponent(UITransform);
+        labelNode.setParent(node);
+        labelNode.setPosition(0, -32, 0);
+        const label = labelNode.addComponent(Label);
         label.string = `${cost}`;
         label.fontSize = 12;
         label.lineHeight = 16;
-        label.setPosition(0, -32, 0);
 
         return node;
     }
