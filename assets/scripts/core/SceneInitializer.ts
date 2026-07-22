@@ -29,11 +29,18 @@ export class SceneInitializer extends Component {
     // 敌人属性
     private readonly ENEMY_SPEED = 80;
 
-    // 塔属性
+    // 塔属性（攻击塔）
     private readonly TOWER_RANGE = 200;
     private readonly TOWER_DAMAGE = 10;
     private readonly TOWER_INTERVAL = 0.8;
     private readonly TOWER_COST = 100;
+
+    // 减速塔属性
+    private readonly SLOW_TOWER_RANGE = 200;
+    private readonly SLOW_TOWER_INTERVAL = 1.0;
+    private readonly SLOW_TOWER_COST = 150;
+    private readonly SLOW_MULTIPLIER = 0.7;   // 速度降为 70%（即降低 30%）
+    private readonly SLOW_DURATION = 2.0;      // 持续 2 秒
 
     // 金币
     private readonly INITIAL_GOLD = 300;
@@ -68,8 +75,8 @@ export class SceneInitializer extends Component {
     // 运行时状态
     private gameLayer: Node | null = null;
     private gameTransform: UITransform | null = null;
-    private enemies: { node: Node; hp: number; maxHp: number }[] = [];
-    private towers: Node[] = [];
+    private enemies: { node: Node; hp: number; maxHp: number; slowTimer: number; slowMultiplier: number }[] = [];
+    private towers: { node: Node; type: 'attack' | 'slow' }[] = [];
     private towerTimers: number[] = [];
     private bullets: { node: Node; vx: number; vy: number; target: Node }[] = [];
     private statusLabel: Label | null = null;
@@ -91,6 +98,10 @@ export class SceneInitializer extends Component {
 
     // 塔按钮位置
     private readonly TOWER_BUTTON_POS = new Vec3(-400, -200, 0);
+    private readonly SLOW_BUTTON_POS = new Vec3(-400, -100, 0);
+
+    // 拖拽中的塔类型
+    private dragTowerType: 'attack' | 'slow' = 'attack';
 
     protected start(): void {
         view.setDesignResolutionSize(960, 640, 3);
@@ -128,17 +139,29 @@ export class SceneInitializer extends Component {
         this.drawGhost(false);
         this.ghostNode.active = false;
 
-        // === 左侧塔按钮 ===
-        const towerButton = this.createTowerButton();
+        // === 塔按钮 ===
+        const towerButton = this.createTowerButton('attack');
         towerButton.setParent(canvas);
+        const slowButton = this.createTowerButton('slow');
+        slowButton.setParent(canvas);
 
         // === 所有触摸事件绑定到 Canvas ===
         canvas.on(Node.EventType.TOUCH_START, (event: EventTouch) => {
             const buttonLocal = this.eventToCanvasLocal(event);
-            if (Vec3.distance(buttonLocal, this.TOWER_BUTTON_POS) > 40) return;
+
+            // 判断点中了哪个塔按钮
+            if (Vec3.distance(buttonLocal, this.TOWER_BUTTON_POS) <= 40) {
+                this.dragTowerType = 'attack';
+            } else if (Vec3.distance(buttonLocal, this.SLOW_BUTTON_POS) <= 40) {
+                this.dragTowerType = 'slow';
+            } else {
+                return;
+            }
 
             this.isDragging = true;
             this.ghostNode!.active = true;
+            // 重绘幽灵塔外观匹配类型
+            this.drawGhost(false);
             const local = this.eventToGameLocal(event);
             this.ghostNode!.setPosition(local);
             this.updateGhostState(local);
@@ -169,7 +192,7 @@ export class SceneInitializer extends Component {
                     }
                 }
                 if (nearestSlot >= 0) {
-                    this.placeTower(nearestSlot);
+                    this.placeTower(nearestSlot, this.dragTowerType);
                 }
             }
             this.canPlace = false;
@@ -332,7 +355,8 @@ export class SceneInitializer extends Component {
             }
         }
 
-        this.canPlace = nearestSlot >= 0 && nearestDist < 80 && this.gold >= this.TOWER_COST;
+        const cost = this.dragTowerType === 'attack' ? this.TOWER_COST : this.SLOW_TOWER_COST;
+        this.canPlace = nearestSlot >= 0 && nearestDist < 80 && this.gold >= cost;
 
         if (this.canPlace && nearestSlot >= 0) {
             this.ghostNode!.setPosition(this.SLOT_POSITIONS[nearestSlot]);
@@ -344,7 +368,10 @@ export class SceneInitializer extends Component {
     private drawGhost(canPlace: boolean): void {
         const gfx = this.ghostGfx!;
         gfx.clear();
-        gfx.fillColor = new Color(50, 150, 255, 120);
+        // 攻击塔蓝色，减速塔紫色
+        const isSlow = this.dragTowerType === 'slow';
+        const baseColor = isSlow ? new Color(180, 80, 220, 120) : new Color(50, 150, 255, 120);
+        gfx.fillColor = baseColor;
         gfx.circle(0, 0, 20);
         gfx.fill();
 
@@ -418,7 +445,8 @@ export class SceneInitializer extends Component {
                     this.gameOver();
                 }
             } else {
-                e.node.setPosition(pos.x + Math.sign(dx) * this.ENEMY_SPEED * dt, pos.y, 0);
+                const speed = this.ENEMY_SPEED * e.slowMultiplier;
+                e.node.setPosition(pos.x + Math.sign(dx) * speed * dt, pos.y, 0);
             }
         }
 
@@ -438,25 +466,47 @@ export class SceneInitializer extends Component {
         // === 塔攻击 ===
         for (let i = 0; i < this.towers.length; i++) {
             if (this.enemies.length === 0) continue;
+            const tower = this.towers[i];
+            const range = tower.type === 'attack' ? this.TOWER_RANGE : this.SLOW_TOWER_RANGE;
+            const interval = tower.type === 'attack' ? this.TOWER_INTERVAL : this.SLOW_TOWER_INTERVAL;
 
             // 找最近的敌人
             let nearestEnemy = -1;
             let nearestDist = Infinity;
             for (let j = 0; j < this.enemies.length; j++) {
                 if (!this.enemies[j].node.isValid) continue;
-                const dist = Vec3.distance(this.towers[i].position, this.enemies[j].node.position);
+                const dist = Vec3.distance(tower.node.position, this.enemies[j].node.position);
                 if (dist < nearestDist) {
                     nearestDist = dist;
                     nearestEnemy = j;
                 }
             }
 
-            if (nearestEnemy < 0 || nearestDist > this.TOWER_RANGE) continue;
+            if (nearestEnemy < 0 || nearestDist > range) continue;
 
             this.towerTimers[i] += dt;
-            if (this.towerTimers[i] >= this.TOWER_INTERVAL) {
+            if (this.towerTimers[i] >= interval) {
                 this.towerTimers[i] = 0;
-                this.fireBullet(this.towers[i].position, this.enemies[nearestEnemy].node.position, this.enemies[nearestEnemy].node);
+                if (tower.type === 'attack') {
+                    // 攻击塔：发射子弹
+                    this.fireBullet(tower.node.position, this.enemies[nearestEnemy].node.position, this.enemies[nearestEnemy].node);
+                } else {
+                    // 减速塔：直接施加减速效果
+                    this.enemies[nearestEnemy].slowMultiplier = this.SLOW_MULTIPLIER;
+                    this.enemies[nearestEnemy].slowTimer = this.SLOW_DURATION;
+                    // 发射紫色减速弹（视觉）
+                    this.fireBullet(tower.node.position, this.enemies[nearestEnemy].node.position, this.enemies[nearestEnemy].node, true);
+                }
+            }
+        }
+
+        // === 敌人减速计时 ===
+        for (const e of this.enemies) {
+            if (e.slowTimer > 0) {
+                e.slowTimer -= dt;
+                if (e.slowTimer <= 0) {
+                    e.slowMultiplier = 1;
+                }
             }
         }
 
@@ -528,10 +578,10 @@ export class SceneInitializer extends Component {
         gfx.circle(0, 0, 14);
         gfx.fill();
 
-        this.enemies.push({ node: enemy, hp, maxHp: hp });
+        this.enemies.push({ node: enemy, hp, maxHp: hp, slowTimer: 0, slowMultiplier: 1 });
     }
 
-    private fireBullet(from: Vec3, to: Vec3, target: Node): void {
+    private fireBullet(from: Vec3, to: Vec3, target: Node, isSlow: boolean = false): void {
         if (!this.gameLayer) return;
 
         const bullet = new Node('Bullet');
@@ -543,7 +593,7 @@ export class SceneInitializer extends Component {
         transform.setContentSize(12, 12);
 
         const gfx = bullet.addComponent(Graphics);
-        gfx.fillColor = new Color(100, 180, 255, 255);
+        gfx.fillColor = isSlow ? new Color(180, 80, 220, 255) : new Color(100, 180, 255, 255);
         gfx.circle(0, 0, 6);
         gfx.fill();
 
@@ -559,22 +609,23 @@ export class SceneInitializer extends Component {
         });
     }
 
-    private placeTower(slotIndex: number): void {
+    private placeTower(slotIndex: number, type: 'attack' | 'slow'): void {
         if (this.slotOccupied[slotIndex] || !this.gameLayer) return;
-        if (this.gold < this.TOWER_COST) return;
+        const cost = type === 'attack' ? this.TOWER_COST : this.SLOW_TOWER_COST;
+        if (this.gold < cost) return;
 
-        this.gold -= this.TOWER_COST;
+        this.gold -= cost;
         this.updateGoldLabel();
 
-        const tower = this.createTower(this.SLOT_POSITIONS[slotIndex]);
+        const tower = this.createTower(this.SLOT_POSITIONS[slotIndex], type);
         tower.setParent(this.gameLayer);
 
-        this.towers.push(tower);
-        this.towerTimers.push(this.TOWER_INTERVAL);
+        this.towers.push({ node: tower, type });
+        this.towerTimers.push(type === 'attack' ? this.TOWER_INTERVAL : this.SLOW_TOWER_INTERVAL);
         this.slotOccupied[slotIndex] = true;
         this.slotNodes[slotIndex].active = false;
 
-        console.log(`塔放置到位置 ${slotIndex + 1}，花费 ${this.TOWER_COST}，当前 ${this.towers.length} 塔`);
+        console.log(`${type === 'attack' ? '攻击塔' : '减速塔'}放置到位置 ${slotIndex + 1}，花费 ${cost}，当前 ${this.towers.length} 塔`);
     }
 
     private updateGoldLabel(): void {
@@ -669,7 +720,7 @@ export class SceneInitializer extends Component {
         }
 
         // 清除所有塔和建造点
-        for (const tower of this.towers) tower.destroy();
+        for (const tower of this.towers) tower.node.destroy();
         this.towers.length = 0;
         this.towerTimers.length = 0;
 
@@ -700,26 +751,42 @@ export class SceneInitializer extends Component {
         console.log('游戏重新开始');
     }
 
-    private createTowerButton(): Node {
-        const node = new Node('TowerButton');
+    private createTowerButton(type: 'attack' | 'slow'): Node {
+        const isSlow = type === 'slow';
+        const pos = isSlow ? this.SLOW_BUTTON_POS : this.TOWER_BUTTON_POS;
+        const name = isSlow ? 'SlowButton' : 'TowerButton';
+
+        const node = new Node(name);
         node.layer = Layers.Enum.UI_2D;
         const transform = node.addComponent(UITransform);
         transform.setContentSize(80, 80);
-        node.setPosition(this.TOWER_BUTTON_POS);
+        node.setPosition(pos);
 
         const gfx = node.addComponent(Graphics);
         gfx.fillColor = new Color(60, 60, 70, 255);
         gfx.rect(-30, -30, 60, 60);
         gfx.fill();
-        gfx.fillColor = new Color(50, 150, 255, 255);
+        // 攻击塔蓝色，减速塔紫色
+        gfx.fillColor = isSlow ? new Color(180, 80, 220, 255) : new Color(50, 150, 255, 255);
         gfx.circle(0, 0, 16);
         gfx.fill();
+
+        // 价格标签
+        const labelNode = new Node('Cost');
+        labelNode.layer = Layers.Enum.UI_2D;
+        labelNode.addComponent(UITransform);
+        labelNode.setParent(node);
+        labelNode.setPosition(0, -32, 0);
+        const label = labelNode.addComponent(Label);
+        label.string = `${isSlow ? this.SLOW_TOWER_COST : this.TOWER_COST}`;
+        label.fontSize = 12;
 
         return node;
     }
 
-    private createTower(pos: Vec3): Node {
-        const node = new Node('Tower');
+    private createTower(pos: Vec3, type: 'attack' | 'slow'): Node {
+        const isSlow = type === 'slow';
+        const node = new Node(isSlow ? 'SlowTower' : 'Tower');
         node.layer = Layers.Enum.UI_2D;
         node.setPosition(pos);
 
@@ -730,15 +797,16 @@ export class SceneInitializer extends Component {
         gfx.fillColor = new Color(60, 60, 70, 255);
         gfx.rect(-20, -20, 40, 40);
         gfx.fill();
-        gfx.fillColor = new Color(50, 150, 255, 255);
+        gfx.fillColor = isSlow ? new Color(180, 80, 220, 255) : new Color(50, 150, 255, 255);
         gfx.circle(0, 0, 14);
         gfx.fill();
         gfx.fillColor = new Color(255, 255, 255, 255);
         gfx.circle(0, 0, 4);
         gfx.fill();
-        gfx.strokeColor = new Color(50, 150, 255, 60);
+        const range = isSlow ? this.SLOW_TOWER_RANGE : this.TOWER_RANGE;
+        gfx.strokeColor = isSlow ? new Color(180, 80, 220, 60) : new Color(50, 150, 255, 60);
         gfx.lineWidth = 2;
-        gfx.circle(0, 0, this.TOWER_RANGE);
+        gfx.circle(0, 0, range);
         gfx.stroke();
 
         return node;
