@@ -90,7 +90,7 @@ export class SceneInitializer extends Component {
     private waveDelay = 0;  // 波次间延迟
 
     // 塔按钮位置
-    private readonly TOWER_BUTTON_POS = new Vec3(-400, 0, 0);
+    private readonly TOWER_BUTTON_POS = new Vec3(-400, -200, 0);
 
     protected start(): void {
         view.setDesignResolutionSize(960, 640, 3);
