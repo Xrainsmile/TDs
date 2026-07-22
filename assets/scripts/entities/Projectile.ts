@@ -1,8 +1,15 @@
-import { _decorator, Component, Vec3 } from 'cc';
+import { _decorator, Component, Vec3, Graphics, Color, UITransform } from 'cc';
 import { TowerType } from '../core/Constants';
 import { Enemy } from './Enemy';
 
 const { ccclass, property } = _decorator;
+
+/** 子弹颜色配置 */
+const PROJECTILE_COLORS: Map<TowerType, Color> = new Map([
+    [TowerType.ARROW, new Color(100, 180, 255, 255)],
+    [TowerType.CANNON, new Color(220, 120, 50, 255)],
+    [TowerType.MAGIC, new Color(200, 100, 240, 255)],
+]);
 
 /**
  * Projectile - 子弹实体
@@ -26,6 +33,29 @@ export class Projectile extends Component {
     private _direction: Vec3 = new Vec3(0, 0, 0);
     private _isHoming: boolean = false;
     private _onHit: (() => void) | null = null;
+
+    protected onEnable(): void {
+        this.redraw();
+    }
+
+    /** 重新绘制子弹形状 */
+    private redraw(): void {
+        let gfx = this.node.getComponent(Graphics);
+        if (!gfx) {
+            gfx = this.node.addComponent(Graphics);
+        }
+        gfx.clear();
+
+        const transform = this.node.getComponent(UITransform);
+        if (transform) {
+            transform.setContentSize(12, 12);
+        }
+
+        const color = PROJECTILE_COLORS.get(this.towerType) || new Color(100, 180, 255, 255);
+        gfx.fillColor = color;
+        gfx.circle(0, 0, 6);
+        gfx.fill();
+    }
 
     protected update(dt: number): void {
         if (!this.node.active) return;

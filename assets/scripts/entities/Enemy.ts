@@ -1,7 +1,15 @@
-import { _decorator, Component, Vec3 } from 'cc';
+import { _decorator, Component, Vec3, Graphics, Color, UITransform } from 'cc';
 import { EnemyType } from '../core/Constants';
 
 const { ccclass, property } = _decorator;
+
+/** 敌人外观配置 */
+const ENEMY_VISUALS: Map<EnemyType, { color: Color; size: number; shape: 'circle' | 'triangle' | 'square' | 'star' }> = new Map([
+    [EnemyType.NORMAL, { color: new Color(80, 200, 80, 255), size: 14, shape: 'circle' }],
+    [EnemyType.FAST, { color: new Color(255, 200, 50, 255), size: 14, shape: 'triangle' }],
+    [EnemyType.TANK, { color: new Color(120, 120, 140, 255), size: 18, shape: 'square' }],
+    [EnemyType.BOSS, { color: new Color(220, 50, 50, 255), size: 22, shape: 'star' }],
+]);
 
 /**
  * Enemy - 敌人实体
@@ -34,7 +42,57 @@ export class Enemy extends Component {
     private _onReachedEnd: (() => void) | null = null;
     private _onKilled: (() => void) | null = null;
 
-    protected onEnable(): void { this.reset(); }
+    protected onEnable(): void {
+        this.reset();
+        this.redraw();
+    }
+
+    /** 重新绘制敌人形状（instantiate 后 Graphics 内容会丢失） */
+    private redraw(): void {
+        let gfx = this.node.getComponent(Graphics);
+        if (!gfx) {
+            gfx = this.node.addComponent(Graphics);
+        }
+        gfx.clear();
+
+        const visual = ENEMY_VISUALS.get(this.enemyType);
+        if (!visual) return;
+
+        const transform = this.node.getComponent(UITransform);
+        if (transform) {
+            transform.setContentSize(visual.size * 2, visual.size * 2);
+        }
+
+        gfx.fillColor = visual.color;
+        switch (visual.shape) {
+            case 'circle':
+                gfx.circle(0, 0, visual.size);
+                gfx.fill();
+                break;
+            case 'triangle':
+                gfx.moveTo(0, visual.size);
+                gfx.lineTo(-visual.size * 0.866, -visual.size * 0.5);
+                gfx.lineTo(visual.size * 0.866, -visual.size * 0.5);
+                gfx.close();
+                gfx.fill();
+                break;
+            case 'square':
+                gfx.rect(-visual.size, -visual.size, visual.size * 2, visual.size * 2);
+                gfx.fill();
+                break;
+            case 'star':
+                for (let i = 0; i < 6; i++) {
+                    const angle = (i / 6) * Math.PI * 2;
+                    const x = Math.cos(angle) * visual.size;
+                    const y = Math.sin(angle) * visual.size;
+                    if (i === 0) gfx.moveTo(x, y);
+                    else gfx.lineTo(x, y);
+                }
+                gfx.close();
+                gfx.fill();
+                break;
+        }
+    }
 
     public reset(): void {
         this._hp = this.maxHp;

@@ -1,9 +1,16 @@
-import { _decorator, Component, Vec3 } from 'cc';
+import { _decorator, Component, Vec3, Graphics, Color, UITransform } from 'cc';
 import { TowerType, GameConfig } from '../core/Constants';
 import { Enemy } from './Enemy';
 import { ProjectileController } from '../systems/ProjectileController';
 
 const { ccclass, property } = _decorator;
+
+/** 塔外观配置 */
+const TOWER_COLORS: Map<TowerType, Color> = new Map([
+    [TowerType.ARROW, new Color(50, 150, 255, 255)],
+    [TowerType.CANNON, new Color(200, 100, 50, 255)],
+    [TowerType.MAGIC, new Color(180, 80, 220, 255)],
+]);
 
 /**
  * Tower - 塔实体
@@ -36,6 +43,40 @@ export class Tower extends Component {
 
     private _attackTimer: number = 0;
     private _totalCost: number = 0;
+
+    protected onEnable(): void {
+        this.redraw();
+    }
+
+    /** 重新绘制塔形状 */
+    private redraw(): void {
+        let gfx = this.node.getComponent(Graphics);
+        if (!gfx) {
+            gfx = this.node.addComponent(Graphics);
+        }
+        gfx.clear();
+
+        const transform = this.node.getComponent(UITransform);
+        if (transform) {
+            transform.setContentSize(48, 48);
+        }
+
+        // 底座
+        gfx.fillColor = new Color(60, 60, 70, 255);
+        gfx.rect(-20, -20, 40, 40);
+        gfx.fill();
+
+        // 顶部
+        const color = TOWER_COLORS.get(this.towerType) || new Color(50, 150, 255, 255);
+        gfx.fillColor = color;
+        gfx.circle(0, 0, 14);
+        gfx.fill();
+
+        // 中心点
+        gfx.fillColor = new Color(255, 255, 255, 255);
+        gfx.circle(0, 0, 4);
+        gfx.fill();
+    }
 
     protected update(dt: number): void {
         this._attackTimer += dt;
