@@ -140,7 +140,6 @@ export class Enemy extends Component {
         }
 
         this._hp -= actualDamage;
-        console.log(`Enemy ${this._uuid}: 受到 ${actualDamage} 伤害, 剩余 HP ${this._hp}/${this.maxHp}`);
         if (this._hp <= 0) {
             this.die();
         }
@@ -162,7 +161,6 @@ export class Enemy extends Component {
     private die(): void {
         if (this._isDead) return;
         this._isDead = true;
-        console.log(`Enemy ${this._uuid}: 死亡`);
 
         if (this.buffSystem) {
             this.buffSystem.onEnemyDeath(this._uuid);

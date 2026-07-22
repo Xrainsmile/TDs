@@ -33,10 +33,10 @@ export class EnemyController extends Component {
 
     /** 敌人默认属性 */
     private readonly _defaultProps: Map<EnemyType, { hp: number; speed: number; gold: number; livesCost: number }> = new Map([
-        [EnemyType.NORMAL, { hp: 100, speed: 80, gold: 10, livesCost: 1 }],
-        [EnemyType.FAST, { hp: 60, speed: 160, gold: 15, livesCost: 1 }],
-        [EnemyType.TANK, { hp: 400, speed: 40, gold: 30, livesCost: 2 }],
-        [EnemyType.BOSS, { hp: 1000, speed: 50, gold: 100, livesCost: 5 }],
+        [EnemyType.NORMAL, { hp: 10, speed: 80, gold: 10, livesCost: 1 }],
+        [EnemyType.FAST, { hp: 8, speed: 160, gold: 15, livesCost: 1 }],
+        [EnemyType.TANK, { hp: 30, speed: 40, gold: 30, livesCost: 2 }],
+        [EnemyType.BOSS, { hp: 100, speed: 50, gold: 100, livesCost: 5 }],
     ]);
 
     public setGameStateManager(gsm: any): void { this._gsm = gsm; }
