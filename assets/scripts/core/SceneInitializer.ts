@@ -7,10 +7,8 @@ const { ccclass } = _decorator;
  *
  * 核心闭环：
  * 1. 敌人反复生成 → 沿路径走 → 到终点重新生成
- * 2. 点击格子 → 放置塔
+ * 2. 从左侧拖拽塔按钮 → 拖到格子放置（拖到空白处取消）
  * 3. 塔自动攻击范围内敌人 → 发射子弹 → 命中扣 HP → 死亡 → 重新生成
- *
- * 直接创建、直接销毁，不引入对象池
  */
 @ccclass('SceneInitializer')
 export class SceneInitializer extends Component {
@@ -33,6 +31,7 @@ export class SceneInitializer extends Component {
 
     // 运行时状态
     private gameLayer: Node | null = null;
+    private gameTransform: UITransform | null = null;
     private enemy: Node | null = null;
     private enemyHp = 0;
     private towers: Node[] = [];
@@ -49,6 +48,11 @@ export class SceneInitializer extends Component {
     private slotNodes: Node[] = [];
     private slotOccupied: boolean[] = [false, false, false];
 
+    // 拖拽
+    private ghostNode: Node | null = null;
+    private isDragging = false;
+    private magnetTarget = -1;
+
     protected start(): void {
         view.setDesignResolutionSize(960, 640, 3);
         this.setupScene();
@@ -61,24 +65,91 @@ export class SceneInitializer extends Component {
         this.gameLayer = new Node('GameLayer');
         this.gameLayer.layer = Layers.Enum.UI_2D;
         this.gameLayer.setParent(canvas);
-        const gameTransform = this.gameLayer.addComponent(UITransform);
-        gameTransform.setContentSize(960, 640);
+        this.gameTransform = this.gameLayer.addComponent(UITransform);
+        this.gameTransform.setContentSize(960, 640);
 
         // === 路径 ===
         this.drawPath(this.gameLayer);
 
-        // === 3个建造点（可点击）===
+        // === 3个建造点 ===
         for (let i = 0; i < this.SLOT_POSITIONS.length; i++) {
             const slot = this.createTowerSlot(this.SLOT_POSITIONS[i], i);
             slot.setParent(this.gameLayer);
             this.slotNodes.push(slot);
-
-            // 点击格子放塔
-            slot.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
-                event.propagationStopped = true;
-                this.placeTower(i);
-            });
         }
+
+        // === 拖拽幽灵塔（在 GameLayer 下，与建造点同坐标系）===
+        this.ghostNode = new Node('DragGhost');
+        this.ghostNode.layer = Layers.Enum.UI_2D;
+        this.ghostNode.setParent(this.gameLayer);
+        const ghostTransform = this.ghostNode.addComponent(UITransform);
+        ghostTransform.setContentSize(48, 48);
+        ghostTransform.setAnchorPoint(0.5, 0.5);
+        const ghostGfx = this.ghostNode.addComponent(Graphics);
+        ghostGfx.fillColor = new Color(50, 150, 255, 120);
+        ghostGfx.circle(0, 0, 20);
+        ghostGfx.fill();
+        this.ghostNode.active = false;
+
+        // === 左侧塔栏（拖拽源）===
+        const towerButton = this.createTowerButton();
+        towerButton.setParent(canvas);
+
+        // === 拖拽事件 ===
+        // TOUCH_START 在按钮上
+        towerButton.on(Node.EventType.TOUCH_START, (event: EventTouch) => {
+            this.isDragging = true;
+            this.ghostNode!.active = true;
+            const local = this.eventToGameLocal(event);
+            this.ghostNode!.setPosition(local);
+        });
+
+        // TOUCH_MOVE / TOUCH_END 在 Canvas 上（全屏追踪）
+        canvas.on(Node.EventType.TOUCH_MOVE, (event: EventTouch) => {
+            if (!this.isDragging) return;
+            const local = this.eventToGameLocal(event);
+            this.ghostNode!.setPosition(local);
+
+            // 磁吸检测
+            this.magnetTarget = -1;
+            for (let i = 0; i < this.SLOT_POSITIONS.length; i++) {
+                if (this.slotOccupied[i]) continue;
+                const dist = Vec3.distance(local, this.SLOT_POSITIONS[i]);
+                if (dist < 60) {
+                    this.magnetTarget = i;
+                    this.ghostNode!.setPosition(this.SLOT_POSITIONS[i]);
+                    break;
+                }
+            }
+
+            // 高亮
+            for (let i = 0; i < this.slotNodes.length; i++) {
+                if (this.slotOccupied[i]) continue;
+                const gfx = this.slotNodes[i].getComponent(Graphics);
+                if (gfx) {
+                    if (i === this.magnetTarget) {
+                        gfx.strokeColor = new Color(100, 255, 100, 255);
+                        gfx.fillColor = new Color(100, 255, 100, 100);
+                    } else {
+                        gfx.strokeColor = new Color(100, 200, 100, 200);
+                        gfx.fillColor = new Color(100, 200, 100, 60);
+                    }
+                }
+            }
+        });
+
+        canvas.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
+            if (!this.isDragging) return;
+            this.isDragging = false;
+            this.ghostNode!.active = false;
+
+            if (this.magnetTarget >= 0) {
+                this.placeTower(this.magnetTarget);
+            } else {
+                console.log('拖到空白处，取消放置');
+            }
+            this.magnetTarget = -1;
+        });
 
         // === 状态显示 ===
         const labelNode = new Node('Status');
@@ -87,14 +158,20 @@ export class SceneInitializer extends Component {
         labelNode.addComponent(UITransform);
         labelNode.setPosition(0, 280, 0);
         this.statusLabel = labelNode.addComponent(Label);
-        this.statusLabel.string = '点击绿色格子放塔';
+        this.statusLabel.string = '从左侧拖拽塔到绿色格子';
         this.statusLabel.fontSize = 20;
 
         // === 生成第一个敌人 ===
         this.spawnEnemy();
 
         console.log('SceneInitializer: 极简版启动');
-        console.log('点击绿色格子放塔 → 塔自动攻击 → 敌人死亡 → 重新生成');
+        console.log('拖拽塔按钮到格子放塔 → 塔自动攻击 → 敌人死亡 → 重新生成');
+    }
+
+    /** 屏幕坐标 → GameLayer 局部坐标 */
+    private eventToGameLocal(event: EventTouch): Vec3 {
+        const uiPos = event.getUILocation();
+        return this.gameTransform!.convertToNodeSpaceAR(v3(uiPos.x, uiPos.y, 0));
     }
 
     protected update(dt: number): void {
@@ -104,7 +181,6 @@ export class SceneInitializer extends Component {
             const dx = this.PATH_END.x - pos.x;
 
             if (Math.abs(dx) < 5) {
-                // 到达终点，重新生成
                 this.enemy.destroy();
                 this.enemy = null;
                 this.scheduleOnce(() => this.spawnEnemy(), 1);
@@ -124,7 +200,6 @@ export class SceneInitializer extends Component {
 
         // === 塔攻击 ===
         for (let i = 0; i < this.towers.length; i++) {
-            // 只在敌人进入范围时才计时
             if (!this.enemy) continue;
             const dist = Vec3.distance(this.towers[i].position, this.enemy.position);
             if (dist > this.TOWER_RANGE) continue;
@@ -151,13 +226,10 @@ export class SceneInitializer extends Component {
             if (b.target.isValid) {
                 const d = Vec3.distance(b.node.position, b.target.position);
                 if (d < 16) {
-                    // 命中
                     this.enemyHp -= this.TOWER_DAMAGE;
-                    console.log(`命中！HP: ${this.enemyHp}/${this.ENEMY_HP}`);
                     b.node.destroy();
                     this.bullets.splice(i, 1);
 
-                    // 敌人死亡
                     if (this.enemyHp <= 0 && this.enemy) {
                         this.enemy.destroy();
                         this.enemy = null;
@@ -166,15 +238,13 @@ export class SceneInitializer extends Component {
                     continue;
                 }
             } else {
-                // 目标已消失，子弹销毁
                 b.node.destroy();
                 this.bullets.splice(i, 1);
                 continue;
             }
 
             // 飞出范围销毁
-            const distFromOrigin = Vec3.distance(b.node.position, Vec3.ZERO);
-            if (distFromOrigin > 800) {
+            if (Vec3.distance(b.node.position, Vec3.ZERO) > 800) {
                 b.node.destroy();
                 this.bullets.splice(i, 1);
             }
@@ -205,12 +275,9 @@ export class SceneInitializer extends Component {
     /** 尝试攻击 */
     private tryAttack(towerIndex: number): void {
         if (!this.enemy || !this.towers[towerIndex]) return;
-
         const towerPos = this.towers[towerIndex].position;
         const enemyPos = this.enemy.position;
-        const dist = Vec3.distance(towerPos, enemyPos);
-
-        if (dist <= this.TOWER_RANGE) {
+        if (Vec3.distance(towerPos, enemyPos) <= this.TOWER_RANGE) {
             this.fireBullet(towerPos, enemyPos, this.enemy);
         }
     }
@@ -232,7 +299,6 @@ export class SceneInitializer extends Component {
         gfx.circle(0, 0, 6);
         gfx.fill();
 
-        // 计算速度向量
         const dx = to.x - from.x;
         const dy = to.y - from.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
@@ -245,22 +311,38 @@ export class SceneInitializer extends Component {
         });
     }
 
-    /** 点击格子放塔 */
+    /** 放置塔 */
     private placeTower(slotIndex: number): void {
-        if (this.slotOccupied[slotIndex]) return;
-        if (!this.gameLayer) return;
+        if (this.slotOccupied[slotIndex] || !this.gameLayer) return;
 
         const tower = this.createTower(this.SLOT_POSITIONS[slotIndex]);
         tower.setParent(this.gameLayer);
 
         this.towers.push(tower);
-        this.towerTimers.push(this.TOWER_INTERVAL);  // 满值，敌人进入范围立即发射
+        this.towerTimers.push(this.TOWER_INTERVAL);
         this.slotOccupied[slotIndex] = true;
-
-        // 隐藏建造点
         this.slotNodes[slotIndex].active = false;
 
         console.log(`塔放置到位置 ${slotIndex + 1}，当前塔数: ${this.towers.length}`);
+    }
+
+    /** 创建左侧塔按钮 */
+    private createTowerButton(): Node {
+        const node = new Node('TowerButton');
+        node.layer = Layers.Enum.UI_2D;
+        const transform = node.addComponent(UITransform);
+        transform.setContentSize(80, 80);
+        node.setPosition(-400, 0, 0);
+
+        const gfx = node.addComponent(Graphics);
+        gfx.fillColor = new Color(60, 60, 70, 255);
+        gfx.rect(-30, -30, 60, 60);
+        gfx.fill();
+        gfx.fillColor = new Color(50, 150, 255, 255);
+        gfx.circle(0, 0, 16);
+        gfx.fill();
+
+        return node;
     }
 
     /** 创建塔 */
@@ -273,19 +355,15 @@ export class SceneInitializer extends Component {
         transform.setContentSize(48, 48);
 
         const gfx = node.addComponent(Graphics);
-        // 底座
         gfx.fillColor = new Color(60, 60, 70, 255);
         gfx.rect(-20, -20, 40, 40);
         gfx.fill();
-        // 顶部
         gfx.fillColor = new Color(50, 150, 255, 255);
         gfx.circle(0, 0, 14);
         gfx.fill();
-        // 中心
         gfx.fillColor = new Color(255, 255, 255, 255);
         gfx.circle(0, 0, 4);
         gfx.fill();
-        // 攻击范围圈
         gfx.strokeColor = new Color(50, 150, 255, 60);
         gfx.lineWidth = 2;
         gfx.circle(0, 0, this.TOWER_RANGE);
@@ -311,7 +389,6 @@ export class SceneInitializer extends Component {
         gfx.fill();
         gfx.stroke();
 
-        // "+" 号
         gfx.strokeColor = new Color(100, 200, 100, 255);
         gfx.lineWidth = 3;
         gfx.moveTo(-10, 0); gfx.lineTo(10, 0);
@@ -337,12 +414,10 @@ export class SceneInitializer extends Component {
         gfx.lineTo(this.PATH_END.x, this.PATH_END.y);
         gfx.stroke();
 
-        // 起点绿圈
         gfx.fillColor = new Color(0, 255, 0, 200);
         gfx.circle(this.PATH_START.x, this.PATH_START.y, 20);
         gfx.fill();
 
-        // 终点红圈
         gfx.fillColor = new Color(255, 0, 0, 200);
         gfx.circle(this.PATH_END.x, this.PATH_END.y, 20);
         gfx.fill();
