@@ -198,16 +198,19 @@ export class SceneInitializer extends Component {
 
         // --- 拖拽逻辑 ---
         let isDragging = false;
+        let placedCount = 0;  // 已放置塔数量（第一个免费）
         const screen = canvas.getComponent(UITransform)!;
 
         towerButton.on(Node.EventType.TOUCH_START, (event: EventTouch) => {
-            if (gameState.Gold < TOWER_COST) {
+            const isFirstTower = placedCount === 0;
+            const cost = isFirstTower ? 0 : TOWER_COST;
+            if (!isFirstTower && gameState.Gold < TOWER_COST) {
                 console.log(`金币不足，需要 ${TOWER_COST}，当前 ${gameState.Gold}`);
                 return;
             }
             isDragging = true;
             ghostNode.active = true;
-            console.log('开始拖拽塔');
+            console.log(`开始拖拽塔${isFirstTower ? '（首塔免费）' : ''}`);
         });
 
         towerButton.on(Node.EventType.TOUCH_MOVE, (event: EventTouch) => {
@@ -239,10 +242,16 @@ export class SceneInitializer extends Component {
 
                 if (dist < 40) {
                     // 放置塔
+                    const isFirstTower = placedCount === 0;
+                    if (isFirstTower) {
+                        // 首塔免费：先加 300 金币，placeTower 会扣掉
+                        gameState.Currency.addGold(TOWER_COST);
+                    }
                     const tower = towerController.placeTower(TowerType.ARROW, slotPositions[i]);
                     if (tower) {
-                        console.log(`箭塔放置到位置 ${i + 1}，花费 ${TOWER_COST} 金币`);
-                        slot.active = false;  // 隐藏建造点
+                        placedCount++;
+                        console.log(`箭塔放置到位置 ${i + 1}${isFirstTower ? '（首塔免费）' : `，花费 ${TOWER_COST} 金币`}`);
+                        slot.active = false;
                     } else {
                         console.log('放置失败');
                     }
