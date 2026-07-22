@@ -136,6 +136,7 @@ export class EnemyController extends Component {
     }
 
     private onEnemyReachedEnd(enemy: Enemy, pool: ObjectPool): void {
+        console.log(`Enemy ${enemy.Uuid}: 漏怪！到达终点，扣除 ${enemy.livesCost} 生命`);
         this._gsm?.loseLife(enemy.livesCost);
         this._gsm?.emit(GameEvents.ENEMY_REACHED_END);
         this.removeEnemy(enemy, pool);

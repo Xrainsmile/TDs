@@ -120,8 +120,8 @@ export class SceneInitializer extends Component {
         waveManager.setGameStateManager(gameState);
         enemyController.setWaveManager(waveManager);
         waveManager.loadWaves([
-            { waveIndex: 0, enemies: [{ enemyType: 1, count: 5, interval: 1.0, delay: 0 }] },
-            { waveIndex: 1, enemies: [{ enemyType: 1, count: 8, interval: 0.8, delay: 1 }] },
+            { waveIndex: 0, enemies: [{ enemyType: 1, count: 10, interval: 1.0, delay: 0 }] },
+            { waveIndex: 1, enemies: [{ enemyType: 1, count: 10, interval: 0.8, delay: 1 }] },
             { waveIndex: 2, enemies: [{ enemyType: 2, count: 5, interval: 0.5, delay: 0 }, { enemyType: 3, count: 2, interval: 2.0, delay: 3 }] },
         ]);
 
@@ -234,10 +234,19 @@ export class SceneInitializer extends Component {
         gfx.circle(points[0].x, points[0].y, 20);
         gfx.fill();
 
-        // 终点红圈（核心）
+        // 终点城堡 🏰
         const last = points[points.length - 1];
-        gfx.fillColor = new Color(255, 0, 0, 200);
-        gfx.circle(last.x, last.y, 20);
+        gfx.fillColor = new Color(120, 80, 60, 255);
+        gfx.rect(last.x - 20, last.y - 20, 40, 40);
+        gfx.fill();
+        // 城垛
+        gfx.rect(last.x - 20, last.y + 10, 10, 10);
+        gfx.rect(last.x - 5, last.y + 10, 10, 10);
+        gfx.rect(last.x + 10, last.y + 10, 10, 10);
+        gfx.fill();
+        // 城门
+        gfx.fillColor = new Color(40, 40, 40, 255);
+        gfx.rect(last.x - 6, last.y - 20, 12, 16);
         gfx.fill();
     }
 

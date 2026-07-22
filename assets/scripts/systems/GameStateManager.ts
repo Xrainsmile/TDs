@@ -88,8 +88,12 @@ export class GameStateManager extends Component {
 
     public loseLife(amount: number = 1): void {
         this._lives = Math.max(0, this._lives - amount);
+        console.log(`GameState: 基地生命 -${amount}，剩余 ${this._lives}`);
         this.emit(GameEvents.LIVES_CHANGED, this._lives);
-        if (this._lives <= 0) this.setGameState(GameState.GAME_OVER);
+        if (this._lives <= 0) {
+            console.log('GameState: 基地被摧毁，游戏结束！');
+            this.setGameState(GameState.GAME_OVER);
+        }
     }
 
     // --- 波次 ---
