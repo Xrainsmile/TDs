@@ -235,8 +235,8 @@ export class SceneInitializer extends Component {
                 if (!slot.active) continue;  // 已被占用或未显示
 
                 const dist = Math.sqrt(
-                    (dropX - slotPositions[i].x) ** 2 +
-                    (dropY - slotPositions[i].y) ** 2
+                    (ui.x - slotPositions[i].x) ** 2 +
+                    (ui.y - slotPositions[i].y) ** 2
                 );
 
                 if (dist < 40) {
