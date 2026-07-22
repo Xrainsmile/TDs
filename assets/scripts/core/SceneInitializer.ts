@@ -64,7 +64,8 @@ export class SceneInitializer extends Component {
         const gameLayer = new Node('GameLayer');
         gameLayer.layer = Layers.Enum.UI_2D;
         gameLayer.setParent(canvas);
-        gameLayer.addComponent(UITransform);
+        const gameLayerTransform = gameLayer.addComponent(UITransform);
+        gameLayerTransform.setContentSize(W, H);
 
         // --- 3a. 路径（直线，y=0）---
         const pathPoints = [{ x: -400, y: 0 }, { x: 400, y: 0 }];
@@ -217,20 +218,33 @@ export class SceneInitializer extends Component {
             console.log(`开始拖拽塔${isFirstTower ? '（首塔免费）' : ''}`);
         });
 
-        // 坐标转换：getUILocation() 返回屏幕像素坐标（左下角原点）
-        // 减去视口中心点得到世界坐标（中心为原点）
-        const visibleSize = view.getVisibleSize();
-        const touchToCanvasLocal = (event: EventTouch): Vec3 => {
-            const uiLoc = event.getUILocation();
-            const worldX = uiLoc.x - visibleSize.width / 2;
-            const worldY = uiLoc.y - visibleSize.height / 2;
-            return new Vec3(worldX, worldY, 0);
+        // 统一坐标转换：getUILocation() + convertToNodeSpaceAR()
+        // getUILocation() 返回 UI 世界坐标（左下角原点）
+        // convertToNodeSpaceAR() 转为目标节点的局部坐标（考虑锚点/缩放/位置）
+        const eventToLocal = (event: EventTouch, parentTransform: UITransform): Vec3 => {
+            const uiPos = event.getUILocation();
+            return parentTransform.convertToNodeSpaceAR(v3(uiPos.x, uiPos.y, 0));
         };
+
+        // TOUCH_START 时也立即放置幽灵塔，避免先出现在默认坐标
+        towerButton.on(Node.EventType.TOUCH_START, (event: EventTouch) => {
+            const isFirstTower = placedCount === 0;
+            if (!isFirstTower && gameState.Gold < TOWER_COST) {
+                console.log(`金币不足，需要 ${TOWER_COST}，当前 ${gameState.Gold}`);
+                return;
+            }
+            isDragging = true;
+            ghostNode.active = true;
+            // 按下时立即放到鼠标位置
+            const local = eventToLocal(event, uiTransform);
+            ghostNode.setPosition(local);
+            console.log(`开始拖拽塔${isFirstTower ? '（首塔免费）' : ''}`);
+        });
 
         // TOUCH_MOVE 绑定到 Canvas（手指离开按钮后仍能追踪）
         canvas.on(Node.EventType.TOUCH_MOVE, (event: EventTouch) => {
             if (!isDragging) return;
-            const local = touchToCanvasLocal(event);
+            const local = eventToLocal(event, uiTransform);
             ghostNode.setPosition(local.x, local.y, 0);
 
             // 磁吸高亮：拖拽时高亮最近的建造点
@@ -261,7 +275,8 @@ export class SceneInitializer extends Component {
             isDragging = false;
             ghostNode.active = false;
 
-            const local = touchToCanvasLocal(event);
+            // 建造点在 GameLayer 下，用 GameLayer 的 UITransform 转换
+            const local = eventToLocal(event, gameLayerTransform);
             const dropX = local.x;
             const dropY = local.y;
 

@@ -1,4 +1,4 @@
-import { _decorator, Component, view, Vec3, v3, EventTouch } from 'cc';
+import { _decorator, Component, view, Vec3, v3, EventTouch, UITransform } from 'cc';
 
 const { ccclass, property } = _decorator;
 
@@ -27,9 +27,21 @@ export class CoordinateService extends Component {
     public originY: number = 0;
 
     /**
+     * 触摸事件 → 指定节点的局部坐标
+     * 统一使用 getUILocation() + convertToNodeSpaceAR()
+     */
+    public touchToLocal(event: EventTouch, parentTransform: UITransform): Vec3 {
+        const uiPos = event.getUILocation();
+        return parentTransform.convertToNodeSpaceAR(v3(uiPos.x, uiPos.y, 0));
+    }
+
+    /**
      * 触摸事件 → 世界坐标
      * getUILocation() 返回屏幕像素坐标（左下角原点，0~960）
      * 转为世界坐标（中心原点，-480~480）
+     *
+     * 注意：此方法假设父节点无缩放/偏移，适用于 Canvas 直接子节点
+     * 如需转换到特定节点，请用 touchToLocal()
      */
     public touchToWorld(event: EventTouch): Vec3 {
         const ui = event.getUILocation();
