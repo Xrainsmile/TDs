@@ -41,6 +41,9 @@ export class SceneInitializer extends Component {
         const H = CoordinateService.DESIGN_HEIGHT;
         view.setDesignResolutionSize(W, H, 3);
 
+        // 获取 Canvas 的 UITransform，用于坐标转换
+        const canvasTransform = canvas.getComponent(UITransform)!;
+
         // === 1. GameManager ===
         const gmNode = new Node('GameManager');
         gmNode.layer = Layers.Enum.UI_2D;
@@ -212,13 +215,18 @@ export class SceneInitializer extends Component {
             console.log(`开始拖拽塔${isFirstTower ? '（首塔免费）' : ''}`);
         });
 
+        // 坐标转换辅助：屏幕坐标 → Canvas 本地坐标
+        const touchToCanvasLocal = (event: EventTouch): Vec3 => {
+            const world = event.getLocation();
+            const v3 = new Vec3(world.x, world.y, 0);
+            return canvasTransform.convertToNodeSpaceAR(v3);
+        };
+
         // TOUCH_MOVE 绑定到 Canvas（手指离开按钮后仍能追踪）
         canvas.on(Node.EventType.TOUCH_MOVE, (event: EventTouch) => {
             if (!isDragging) return;
-            const loc = event.getLocation();
-            const worldX = loc.x - W / 2;
-            const worldY = loc.y - H / 2;
-            ghostNode.setPosition(worldX, worldY, 0);
+            const local = touchToCanvasLocal(event);
+            ghostNode.setPosition(local.x, local.y, 0);
         });
 
         // TOUCH_END 绑定到 Canvas
@@ -227,10 +235,13 @@ export class SceneInitializer extends Component {
             isDragging = false;
             ghostNode.active = false;
 
-            const loc = event.getLocation();
-            const dropX = loc.x - W / 2;
-            const dropY = loc.y - H / 2;
+            const local = touchToCanvasLocal(event);
+            const dropX = local.x;
+            const dropY = local.y;
 
+            // 磁吸：找最近的建造点
+            let nearestSlot = -1;
+            let nearestDist = Infinity;
             for (let i = 0; i < slotPositions.length; i++) {
                 const slot = slotNodes[i];
                 if (!slot.active) continue;
@@ -239,22 +250,27 @@ export class SceneInitializer extends Component {
                     (dropX - slotPositions[i].x) ** 2 +
                     (dropY - slotPositions[i].y) ** 2
                 );
-
-                if (dist < 40) {
-                    const isFirstTower = placedCount === 0;
-                    if (isFirstTower) {
-                        gameState.Currency.addGold(TOWER_COST);
-                    }
-                    const tower = towerController.placeTower(TowerType.ARROW, slotPositions[i]);
-                    if (tower) {
-                        placedCount++;
-                        console.log(`箭塔放置到位置 ${i + 1}${isFirstTower ? '（首塔免费）' : `，花费 ${TOWER_COST} 金币`}`);
-                        slot.active = false;
-                    } else {
-                        console.log('放置失败');
-                    }
-                    return;
+                if (dist < nearestDist) {
+                    nearestDist = dist;
+                    nearestSlot = i;
                 }
+            }
+
+            // 磁吸半径 80 像素
+            if (nearestSlot >= 0 && nearestDist < 80) {
+                const isFirstTower = placedCount === 0;
+                if (isFirstTower) {
+                    gameState.Currency.addGold(TOWER_COST);
+                }
+                const tower = towerController.placeTower(TowerType.ARROW, slotPositions[nearestSlot]);
+                if (tower) {
+                    placedCount++;
+                    console.log(`箭塔放置到位置 ${nearestSlot + 1}${isFirstTower ? '（首塔免费）' : `，花费 ${TOWER_COST} 金币`}`);
+                    slotNodes[nearestSlot].active = false;
+                } else {
+                    console.log('放置失败');
+                }
+                return;
             }
 
             console.log('未拖到建造点，取消放置');
