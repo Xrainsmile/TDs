@@ -8,6 +8,7 @@ import { GridManager } from '../systems/GridManager';
 import { InputManager } from '../systems/InputManager';
 import { EnemyController } from '../systems/EnemyController';
 import { TowerController } from '../systems/TowerController';
+import { BuffSystem } from '../systems/buffs/BuffSystem';
 import { ProjectileController } from '../systems/ProjectileController';
 import { LevelManager } from '../level/LevelManager';
 import { UIManager } from '../ui/UIManager';
@@ -58,6 +59,8 @@ export class SceneInitializer extends Component {
         // 这样 GameStateManager.onLoad 时能正确获取 CurrencySystem
         const currencySystem = gmNode.addComponent(CurrencySystem);
         const damageSystem = gmNode.addComponent(DamageSystem);
+        const buffSystem = gmNode.addComponent(BuffSystem);
+        damageSystem.buffSystem = buffSystem;
         const gameStateManager = gmNode.addComponent(GameStateManager);
 
         // === 2. GameLayer（游戏逻辑层）===
@@ -86,6 +89,7 @@ export class SceneInitializer extends Component {
         const enemyController = enemyLayer.addComponent(EnemyController);
         enemyController.enemyContainer = enemyLayer;
         enemyController.setGameStateManager(gameStateManager);
+        enemyController.setBuffSystem(buffSystem);
         // 使用运行时模板（无美术资源）
         enemyController.initWithTemplates();
 

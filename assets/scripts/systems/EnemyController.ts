@@ -4,6 +4,7 @@ import { GameEvents } from '../core/EventNames';
 import { Enemy } from '../entities/Enemy';
 import { ObjectPool } from '../utils/ObjectPool';
 import { createEnemyNode } from '../utils/PrefabFactory';
+import { BuffSystem } from './buffs/BuffSystem';
 
 const { ccclass, property } = _decorator;
 
@@ -28,6 +29,7 @@ export class EnemyController extends Component {
     private _pools: Map<EnemyType, ObjectPool> = new Map();
     private _gsm: any = null;  // GameStateManager
     private _waveManager: any = null;  // WaveManager
+    private _buffSystem: BuffSystem | null = null;  // BuffSystem
 
     /** 敌人默认属性 */
     private readonly _defaultProps: Map<EnemyType, { hp: number; speed: number; gold: number; livesCost: number }> = new Map([
@@ -39,6 +41,21 @@ export class EnemyController extends Component {
 
     public setGameStateManager(gsm: any): void { this._gsm = gsm; }
     public setWaveManager(wm: any): void { this._waveManager = wm; }
+    public setBuffSystem(bs: BuffSystem): void { this._buffSystem = bs; }
+
+    protected update(dt: number): void {
+        // 每帧更新 BuffSystem，处理 DOT 伤害
+        if (this._buffSystem) {
+            const dotResults = this._buffSystem.update(dt);
+            // 应用 DOT 伤害到对应敌人
+            for (const result of dotResults) {
+                const enemy = this._enemies.find(e => e.Uuid === result.uuid);
+                if (enemy && !enemy.IsDead) {
+                    enemy.takeDoTDamage(result.damage);
+                }
+            }
+        }
+    }
 
     /** 初始化对象池（使用 Prefab） */
     public initPools(): void {
@@ -95,6 +112,7 @@ export class EnemyController extends Component {
             enemy.livesCost = props.livesCost;
         }
         enemy.enemyType = type;
+        enemy.buffSystem = this._buffSystem;  // 注入 BuffSystem
         enemy.reset();
 
         // 设置路径

@@ -1,6 +1,7 @@
 import { _decorator, Component, Vec3, Graphics, Color, UITransform } from 'cc';
 import { TowerType } from '../core/Constants';
 import { Enemy } from './Enemy';
+import { BuffType } from '../systems/buffs/BuffTypes';
 
 const { ccclass, property } = _decorator;
 
@@ -28,6 +29,11 @@ export class Projectile extends Component {
     public splashRadius: number = 0;
     public slowMultiplier: number = 1;
     public slowDuration: number = 0;
+
+    /** 命中时施加的 Buff 类型（肉鸽 modifier 可配置） */
+    public buffType: BuffType | null = null;
+    /** Buff 叠加层数 */
+    public buffStacks: number = 1;
 
     private _target: Enemy | null = null;
     private _direction: Vec3 = new Vec3(0, 0, 0);

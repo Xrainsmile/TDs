@@ -6,6 +6,7 @@ import { ObjectPool } from '../utils/ObjectPool';
 import { DamageSystem } from './DamageSystem';
 import { EnemyController } from './EnemyController';
 import { createProjectileNode } from '../utils/PrefabFactory';
+import { BuffType } from './buffs/BuffTypes';
 
 const { ccclass, property } = _decorator;
 
@@ -104,18 +105,22 @@ export class ProjectileController extends Component {
                 proj.splashRadius = 0;
                 proj.slowMultiplier = 1;
                 proj.slowDuration = 0;
+                proj.buffType = null;  // 基础箭塔无 Buff（modifier 可加毒/暴击等）
                 break;
             case TowerType.CANNON:
                 proj.speed = 300;
                 proj.splashRadius = 50;
                 proj.slowMultiplier = 1;
                 proj.slowDuration = 0;
+                proj.buffType = null;
                 break;
             case TowerType.MAGIC:
                 proj.speed = 400;
                 proj.splashRadius = 0;
                 proj.slowMultiplier = 0.5;
                 proj.slowDuration = 2.0;
+                proj.buffType = BuffType.SLOW;  // 魔法塔减速
+                proj.buffStacks = 1;
                 break;
         }
     }
@@ -124,9 +129,33 @@ export class ProjectileController extends Component {
     private onProjectileHit(proj: Projectile, target: Enemy): void {
         if (!this.damageSystem) return;
 
-        // 减速效果
-        if (proj.slowMultiplier < 1 && !target.IsDead) {
-            this.damageSystem.applySlow(target, proj.slowMultiplier, proj.slowDuration);
+        // 施加 Buff（通过 DamageSystem → BuffSystem）
+        if (proj.buffType && !target.IsDead) {
+            switch (proj.buffType) {
+                case BuffType.SLOW:
+                    this.damageSystem.applySlow(target, proj.slowMultiplier, proj.slowDuration);
+                    break;
+                case BuffType.BURN:
+                    this.damageSystem.applyBurn(target, proj.buffStacks);
+                    break;
+                case BuffType.POISON:
+                    this.damageSystem.applyPoison(target, proj.buffStacks);
+                    break;
+                case BuffType.FREEZE:
+                    this.damageSystem.applyFreeze(target);
+                    break;
+                case BuffType.BLEED:
+                    this.damageSystem.applyBleed(target, proj.buffStacks);
+                    break;
+                case BuffType.MARK:
+                    this.damageSystem.applyMark(target);
+                    break;
+                case BuffType.CURSE:
+                    this.damageSystem.applyCurse(target);
+                    break;
+                default:
+                    this.damageSystem.applyBuff(target, proj.buffType, proj.buffStacks);
+            }
         }
 
         // 溅射伤害
