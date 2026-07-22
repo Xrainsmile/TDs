@@ -242,7 +242,7 @@ export class SceneInitializer extends Component {
         });
 
         // TOUCH_MOVE 绑定到 Canvas（手指离开按钮后仍能追踪）
-        const MAGNET_RADIUS = 100;  // 磁吸触发半径
+        const MAGNET_RADIUS = 60;  // 磁吸触发半径（缩小，避免过强）
         let magnetTarget: number = -1;  // 当前磁吸目标槽位
 
         canvas.on(Node.EventType.TOUCH_MOVE, (event: EventTouch) => {
@@ -297,7 +297,7 @@ export class SceneInitializer extends Component {
             if (!isDragging) return;
             isDragging = false;
 
-            // 如果有磁吸目标，直接放置（不用再检测）
+            // 如果有磁吸目标，直接放置
             if (magnetTarget >= 0) {
                 const slot = slotNodes[magnetTarget];
                 if (slot.active) {
@@ -319,43 +319,8 @@ export class SceneInitializer extends Component {
                 return;
             }
 
-            // 无磁吸目标：用 GameLayer 坐标检测是否拖到建造点
-            const local = eventToLocal(event, gameLayerTransform);
-            const dropX = local.x;
-            const dropY = local.y;
-
-            let hitSlot = -1;
-            let minDist = Infinity;
-            for (let i = 0; i < slotPositions.length; i++) {
-                const slot = slotNodes[i];
-                if (!slot.active) continue;
-                const dist = Math.sqrt(
-                    (dropX - slotPositions[i].x) ** 2 +
-                    (dropY - slotPositions[i].y) ** 2
-                );
-                if (dist < minDist) {
-                    minDist = dist;
-                    hitSlot = i;
-                }
-            }
-
-            if (hitSlot >= 0 && minDist < MAGNET_RADIUS) {
-                const isFirstTower = placedCount === 0;
-                if (isFirstTower) {
-                    gameState.Currency.addGold(TOWER_COST);
-                }
-                const tower = towerController.placeTower(TowerType.ARROW, slotPositions[hitSlot]);
-                if (tower) {
-                    placedCount++;
-                    console.log(`箭塔放置到位置 ${hitSlot + 1}${isFirstTower ? '（首塔免费）' : `，花费 ${TOWER_COST} 金币`}`);
-                    slotNodes[hitSlot].active = false;
-                } else {
-                    console.log('放置失败');
-                }
-            } else {
-                console.log('未拖到建造点，取消放置');
-            }
-
+            // 无磁吸目标：取消放置
+            console.log('未拖到建造点，取消放置');
             ghostNode.active = false;
             magnetTarget = -1;
         });
