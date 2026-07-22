@@ -1,99 +1,106 @@
-import { _decorator, Component, Node, director, view, UITransform, Layers, JsonAsset, resources } from 'cc';
+import { _decorator, Component, Node, view, UITransform, Layers, Vec3, Graphics, Color, Label, EventTouch, Button } from 'cc';
+import { CoordinateService } from './CoordinateService';
 import { GameStateManager } from '../systems/GameStateManager';
 import { CurrencySystem } from '../systems/CurrencySystem';
 import { DamageSystem } from '../systems/DamageSystem';
+import { BuffSystem } from '../systems/buffs/BuffSystem';
 import { WaveManager } from '../systems/WaveManager';
 import { PathManager } from '../systems/PathManager';
-import { GridManager } from '../systems/GridManager';
-import { InputManager } from '../systems/InputManager';
 import { EnemyController } from '../systems/EnemyController';
 import { TowerController } from '../systems/TowerController';
-import { BuffSystem } from '../systems/buffs/BuffSystem';
 import { ProjectileController } from '../systems/ProjectileController';
-import { LevelManager } from '../level/LevelManager';
-import { UIManager } from '../ui/UIManager';
-import { HUD } from '../ui/HUD';
-import { TowerMenu } from '../ui/TowerMenu';
+import { TowerType, GameState } from './Constants';
+import { GameEvents } from './EventNames';
 
 const { ccclass, property } = _decorator;
 
 /**
- * SceneInitializer - 场景自动初始化器
+ * MVP 版 SceneInitializer
  *
- * 挂载到 Canvas 节点上，运行时自动创建所有系统节点和组件，
- * 并绑定引用关系。无需在编辑器中手动搭建节点树。
+ * 场景结构：
+ * Canvas
+ * ├── GameLayer
+ * │   ├── Path (路径可视化)
+ * │   ├── TowerSlot (建造点)
+ * │   ├── EnemyLayer
+ * │   └── TowerLayer
+ * └── UILayer
+ *     ├── HUD (金币/生命/波次)
+ *     └── StartWaveButton
  *
- * 使用方式：
- *  1. 创建空 2D 场景
- *  2. 在 Canvas 上挂载此组件
- *  3. 运行场景
+ * 交互闭环：
+ * 1. 点击建造点 → 放置箭塔
+ * 2. 点击开始波次 → 敌人沿路径走
+ * 3. 塔自动攻击 → 子弹飞向敌人 → 伤害结算
  */
 @ccclass('SceneInitializer')
 export class SceneInitializer extends Component {
-    @property({ type: JsonAsset, tooltip: '关卡配置 JSON（可选，留空则加载 level_01）' })
-    public levelConfigAsset: JsonAsset | null = null;
-
     @property
     public levelName: string = 'level_01';
 
     protected start(): void {
-        console.log('========== SceneInitializer: start() 被调用 ==========');
         this.setupScene();
     }
 
     private async setupScene(): Promise<void> {
-        console.log('SceneInitializer: setupScene 开始');
-        const canvas = this.node;
-        // 使用设计分辨率（与关卡数据坐标匹配）
-        const DESIGN_WIDTH = 960;
-        const DESIGN_HEIGHT = 640;
-        view.setDesignResolutionSize(DESIGN_WIDTH, DESIGN_HEIGHT, 3); // 3 = SHOW_ALL
-        console.log(`SceneInitializer: 设计分辨率 ${DESIGN_WIDTH}x${DESIGN_HEIGHT}`);
+        console.log('SceneInitializer: MVP 版启动');
 
-        // === 1. GameManager 根节点（持久化）===
+        const canvas = this.node;
+        const W = CoordinateService.DESIGN_WIDTH;
+        const H = CoordinateService.DESIGN_HEIGHT;
+        view.setDesignResolutionSize(W, H, 3);
+
+        // === 1. GameManager ===
         const gmNode = new Node('GameManager');
         gmNode.layer = Layers.Enum.UI_2D;
-        director.getScene()?.addChild(gmNode);
+        canvas.addChild(gmNode);
 
-        // 先添加 CurrencySystem 和 DamageSystem，再添加 GameStateManager
-        // 这样 GameStateManager.onLoad 时能正确获取 CurrencySystem
-        const currencySystem = gmNode.addComponent(CurrencySystem);
-        const damageSystem = gmNode.addComponent(DamageSystem);
+        const currency = gmNode.addComponent(CurrencySystem);
         const buffSystem = gmNode.addComponent(BuffSystem);
+        const damageSystem = gmNode.addComponent(DamageSystem);
         damageSystem.buffSystem = buffSystem;
-        const gameStateManager = gmNode.addComponent(GameStateManager);
+        const gameState = gmNode.addComponent(GameStateManager);
 
-        // === 2. GameLayer（游戏逻辑层）===
+        // === 2. CoordinateService ===
+        const coordService = canvas.addComponent(CoordinateService);
+        coordService.originX = -W / 2;
+        coordService.originY = -H / 2;
+
+        // === 3. GameLayer ===
         const gameLayer = new Node('GameLayer');
         gameLayer.layer = Layers.Enum.UI_2D;
         gameLayer.setParent(canvas);
         gameLayer.addComponent(UITransform);
 
-        // --- 2a. VisualLayer（路径/格子可视化）---
-        const visualLayer = new Node('VisualLayer');
-        visualLayer.layer = Layers.Enum.UI_2D;
-        visualLayer.setParent(gameLayer);
-        visualLayer.addComponent(UITransform);
-
-        // --- 2b. PathManager ---
+        // --- 3a. 路径 ---
         const pathNode = new Node('PathManager');
         pathNode.layer = Layers.Enum.UI_2D;
         pathNode.setParent(gameLayer);
         const pathManager = pathNode.addComponent(PathManager);
+        // MVP 简单直线路径
+        pathManager.setWaypoints([
+            { x: -400, y: 0 },
+            { x: 400, y: 0 },
+        ]);
+        this.drawPath(pathNode, [{ x: -400, y: 0 }, { x: 400, y: 0 }]);
 
-        // --- 2c. EnemyLayer + EnemyController ---
+        // --- 3b. 建造点（固定一个）---
+        const slotPos = new Vec3(0, -100, 0);
+        const slotNode = this.createTowerSlot(slotPos);
+        slotNode.setParent(gameLayer);
+
+        // --- 3c. EnemyLayer ---
         const enemyLayer = new Node('EnemyLayer');
         enemyLayer.layer = Layers.Enum.UI_2D;
         enemyLayer.setParent(gameLayer);
         enemyLayer.addComponent(UITransform);
         const enemyController = enemyLayer.addComponent(EnemyController);
         enemyController.enemyContainer = enemyLayer;
-        enemyController.setGameStateManager(gameStateManager);
+        enemyController.setGameStateManager(gameState);
         enemyController.setBuffSystem(buffSystem);
-        // 使用运行时模板（无美术资源）
         enemyController.initWithTemplates();
 
-        // --- 2d. TowerLayer + TowerController ---
+        // --- 3d. TowerLayer ---
         const towerLayer = new Node('TowerLayer');
         towerLayer.layer = Layers.Enum.UI_2D;
         towerLayer.setParent(gameLayer);
@@ -101,10 +108,10 @@ export class SceneInitializer extends Component {
         const towerController = towerLayer.addComponent(TowerController);
         towerController.towerContainer = towerLayer;
         towerController.enemyController = enemyController;
-        towerController.setGameStateManager(gameStateManager);
+        towerController.setGameStateManager(gameState);
         towerController.enableTemplates();
 
-        // --- 2e. ProjectileLayer + ProjectileController ---
+        // --- 3e. ProjectileController ---
         const projectileLayer = new Node('ProjectileLayer');
         projectileLayer.layer = Layers.Enum.UI_2D;
         projectileLayer.setParent(gameLayer);
@@ -114,100 +121,170 @@ export class SceneInitializer extends Component {
         projectileController.damageSystem = damageSystem;
         projectileController.enemyController = enemyController;
         projectileController.initWithTemplates();
-
-        // 连接 TowerController → ProjectileController
         towerController.projectileController = projectileController;
 
-        // --- 2f. GridManager ---
-        const gridNode = new Node('GridManager');
-        gridNode.layer = Layers.Enum.UI_2D;
-        gridNode.setParent(gameLayer);
-        const gridManager = gridNode.addComponent(GridManager);
-        // 让格子居中：col=3 处于 x=0，row=0 处于 y=0
-        // originX = -col*cellSize - cellSize/2 = -3*64 - 32 = -224
-        // originY = -row*cellSize - cellSize/2 = 0*64 - 32 = -32
-        gridManager.originX = -224;
-        gridManager.originY = -32;
-        console.log(`SceneInitializer: GridManager 原点 (${gridManager.originX}, ${gridManager.originY}), 格子 ${gridManager.cellSize}px`);
-
-        // --- 2g. InputManager ---
-        // 注意：InputManager 挂在 Canvas 上（而非 GameLayer），确保在 UILayer 之上能收到触摸事件
-        const inputManager = this.node.addComponent(InputManager);
-        inputManager.gridManager = gridManager;
-        inputManager.towerController = towerController;
-        inputManager.init(gameStateManager);
-
-        // --- 2h. WaveManager ---
+        // --- 3f. WaveManager ---
         const waveNode = new Node('WaveManager');
         waveNode.layer = Layers.Enum.UI_2D;
         waveNode.setParent(gameLayer);
         const waveManager = waveNode.addComponent(WaveManager);
         waveManager.pathManager = pathManager;
         waveManager.enemyController = enemyController;
-        waveManager.setGameStateManager(gameStateManager);
+        waveManager.setGameStateManager(gameState);
         enemyController.setWaveManager(waveManager);
+        // MVP 波次配置
+        waveManager.loadWaves([
+            { waveIndex: 0, enemies: [{ enemyType: 1, count: 5, interval: 1.0, delay: 0 }] },
+            { waveIndex: 1, enemies: [{ enemyType: 1, count: 8, interval: 0.8, delay: 1 }] },
+            { waveIndex: 2, enemies: [{ enemyType: 2, count: 5, interval: 0.5, delay: 0 }, { enemyType: 3, count: 2, interval: 2.0, delay: 3 }] },
+        ]);
 
-        // --- 2i. LevelManager ---
-        const levelNode = new Node('LevelManager');
-        levelNode.layer = Layers.Enum.UI_2D;
-        levelNode.setParent(gameLayer);
-        const levelManager = levelNode.addComponent(LevelManager);
-        levelManager.pathManager = pathManager;
-        levelManager.waveManager = waveManager;
-        levelManager.gridManager = gridManager;
-        levelManager.enemyController = enemyController;
-        levelManager.towerController = towerController;
-        levelManager.gameStateManager = gameStateManager;
-        levelManager.visualContainer = visualLayer;
-        levelManager.levelConfigAsset = this.levelConfigAsset;
-
-        // === 3. UILayer ===
+        // === 4. UILayer ===
         const uiLayer = new Node('UILayer');
         uiLayer.layer = Layers.Enum.UI_2D;
         uiLayer.setParent(canvas);
-        const uiLayerTransform = uiLayer.addComponent(UITransform);
-        uiLayerTransform.setContentSize(DESIGN_WIDTH, DESIGN_HEIGHT);
-        // UILayer 在 GameLayer 之后创建，天然在上层，触摸优先
+        const uiTransform = uiLayer.addComponent(UITransform);
+        uiTransform.setContentSize(W, H);
 
-        // --- 3a. UIManager ---
-        const uiManagerNode = new Node('UIManager');
-        uiManagerNode.layer = Layers.Enum.UI_2D;
-        uiManagerNode.setParent(uiLayer);
-        uiManagerNode.addComponent(UITransform);
-        const uiManager = uiManagerNode.addComponent(UIManager);
-        uiManager.init(gameStateManager);
+        // --- HUD ---
+        const hudNode = new Node('HUD');
+        hudNode.layer = Layers.Enum.UI_2D;
+        hudNode.setParent(uiLayer);
+        const hudTransform = hudNode.addComponent(UITransform);
+        hudTransform.setContentSize(W, 40);
+        hudTransform.setAnchorPoint(0.5, 1);
+        hudNode.setPosition(0, H / 2, 0);
 
-        // --- 3b. TowerMenu ---
-        const towerMenuNode = new Node('TowerMenu');
-        towerMenuNode.layer = Layers.Enum.UI_2D;
-        towerMenuNode.setParent(uiLayer);
-        towerMenuNode.addComponent(UITransform);
-        const towerMenu = towerMenuNode.addComponent(TowerMenu);
-        towerMenu.towerController = towerController;
-        towerMenu.init();
+        const goldLabel = this.createLabel('Gold', 'Gold: 0', -W / 2 + 80, 0);
+        goldLabel.setParent(hudNode);
+        const livesLabel = this.createLabel('Lives', 'Lives: 0', -W / 2 + 240, 0);
+        livesLabel.setParent(hudNode);
+        const waveLabel = this.createLabel('Wave', 'Wave: 0/3', W / 2 - 120, 0);
+        waveLabel.setParent(hudNode);
 
-        // 连接 InputManager → TowerMenu
-        inputManager.towerMenu = towerMenu;
+        // 监听金币/生命/波次变化
+        gameState.on(GameEvents.GOLD_CHANGED, (gold: number) => {
+            goldLabel.getComponent(Label)!.string = `Gold: ${gold}`;
+        });
+        gameState.on(GameEvents.LIVES_CHANGED, (lives: number) => {
+            livesLabel.getComponent(Label)!.string = `Lives: ${lives}`;
+        });
+        gameState.on(GameEvents.WAVE_START, (wave: number) => {
+            waveLabel.getComponent(Label)!.string = `Wave: ${wave}/3`;
+        });
 
-        // === 4. 加载关卡配置 ===
-        if (this.levelConfigAsset) {
-            levelManager.levelConfigAsset = this.levelConfigAsset;
-            levelManager.loadLevel();
-        } else {
-            // 从 resources 加载
-            const levelPath = `data/levels/${this.levelName}`;
-            console.log(`SceneInitializer: 从 resources 加载 ${levelPath}`);
-            resources.load(levelPath, JsonAsset, (err, asset) => {
-                if (err) {
-                    console.error(`SceneInitializer: 加载关卡失败 - ${err}`);
-                    return;
-                }
-                levelManager.levelConfigAsset = asset;
-                levelManager.loadLevel();
-            });
+        // --- 开始波次按钮 ---
+        const startBtn = this.createButton('StartWave', '开始波次', 0, -H / 2 + 40, () => {
+            console.log('点击开始波次');
+            gameState.setGameState(GameState.WAVE_RUNNING);
+            gameState.emit(GameEvents.START_NEXT_WAVE);
+            startBtn.active = false;
+        });
+        startBtn.setParent(uiLayer);
+
+        // --- 建造点点击 ---
+        slotNode.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
+            event.propagationStopped = true;
+            console.log('点击建造点');
+            const tower = towerController.placeTower(TowerType.ARROW, slotPos);
+            if (tower) {
+                console.log('箭塔放置成功，花费 50 金币');
+                slotNode.active = false;  // 建造后隐藏建造点
+            } else {
+                console.log('金币不足或放置失败');
+            }
+        });
+
+        // === 5. 初始化游戏 ===
+        gameState.initGame(200, 20);
+
+        console.log('SceneInitializer: MVP 场景就绪');
+        console.log('操作：点击建造点放塔 → 点击开始波次');
+    }
+
+    /** 绘制路径 */
+    private drawPath(parent: Node, points: { x: number; y: number }[]): void {
+        const gfx = parent.getComponent(Graphics) || parent.addComponent(Graphics);
+        const transform = parent.getComponent(UITransform) || parent.addComponent(UITransform);
+        transform.setContentSize(2000, 2000);
+        transform.setAnchorPoint(0.5, 0.5);
+
+        gfx.clear();
+        gfx.lineWidth = 40;
+        gfx.strokeColor = new Color(200, 180, 140, 180);
+        if (points.length > 0) {
+            gfx.moveTo(points[0].x, points[0].y);
+            for (let i = 1; i < points.length; i++) {
+                gfx.lineTo(points[i].x, points[i].y);
+            }
+            gfx.stroke();
         }
 
-        console.log('SceneInitializer: 场景初始化完成');
-        console.log('========== SceneInitializer: 完成 ==========');
+        // 起点绿圈
+        gfx.fillColor = new Color(0, 255, 0, 200);
+        gfx.circle(points[0].x, points[0].y, 20);
+        gfx.fill();
+
+        // 终点红圈（核心）
+        const last = points[points.length - 1];
+        gfx.fillColor = new Color(255, 0, 0, 200);
+        gfx.circle(last.x, last.y, 20);
+        gfx.fill();
+    }
+
+    /** 创建建造点 */
+    private createTowerSlot(pos: Vec3): Node {
+        const node = new Node('TowerSlot');
+        node.layer = Layers.Enum.UI_2D;
+        node.setPosition(pos);
+
+        const transform = node.addComponent(UITransform);
+        transform.setContentSize(56, 56);
+
+        const gfx = node.addComponent(Graphics);
+        gfx.lineWidth = 3;
+        gfx.strokeColor = new Color(100, 200, 100, 200);
+        gfx.fillColor = new Color(100, 200, 100, 60);
+        gfx.rect(-28, -28, 56, 56);
+        gfx.fill();
+        gfx.stroke();
+
+        // "+" 号
+        gfx.strokeColor = new Color(100, 200, 100, 255);
+        gfx.lineWidth = 3;
+        gfx.moveTo(-10, 0); gfx.lineTo(10, 0);
+        gfx.moveTo(0, -10); gfx.lineTo(0, 10);
+        gfx.stroke();
+
+        return node;
+    }
+
+    /** 创建 Label */
+    private createLabel(name: string, text: string, x: number, y: number): Node {
+        const node = new Node(name);
+        node.layer = Layers.Enum.UI_2D;
+        node.addComponent(UITransform);
+        const label = node.addComponent(Label);
+        label.string = text;
+        label.fontSize = 20;
+        node.setPosition(x, y, 0);
+        return node;
+    }
+
+    /** 创建按钮 */
+    private createButton(name: string, text: string, x: number, y: number, onClick: () => void): Node {
+        const btn = new Node(name);
+        btn.layer = Layers.Enum.UI_2D;
+        const transform = btn.addComponent(UITransform);
+        transform.setContentSize(120, 40);
+        btn.setPosition(x, y, 0);
+        const label = btn.addComponent(Label);
+        label.string = text;
+        label.fontSize = 18;
+        btn.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
+            event.propagationStopped = true;
+            onClick();
+        });
+        return btn;
     }
 }
