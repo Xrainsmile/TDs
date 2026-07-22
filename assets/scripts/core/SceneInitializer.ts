@@ -249,7 +249,7 @@ export class SceneInitializer extends Component {
         tower.setParent(this.gameLayer);
 
         this.towers.push(tower);
-        this.towerTimers.push(0);
+        this.towerTimers.push(this.TOWER_INTERVAL);  // 初始设为满，第一发立即发射
         this.slotOccupied[slotIndex] = true;
 
         // 隐藏建造点
