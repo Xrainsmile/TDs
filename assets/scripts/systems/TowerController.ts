@@ -92,20 +92,30 @@ export class TowerController extends Component {
     /** 放置塔 */
     public placeTower(type: TowerType, position: Vec3): Tower | null {
         const config = this._configs.get(type);
-        if (!config) return null;
+        if (!config) {
+            console.warn('placeTower: 未找到配置');
+            return null;
+        }
 
         const currency = this._gsm?.Currency;
-        if (!currency || !currency.spendGold(config.cost)) return null;
+        if (!currency) {
+            console.warn('placeTower: Currency 为空');
+            return null;
+        }
+        if (!currency.spendGold(config.cost)) {
+            console.warn(`placeTower: 金币不足，需要 ${config.cost}，当前 ${currency.Gold}`);
+            return null;
+        }
 
         let node: Node;
 
         if (this.useTemplates) {
-            // 用 Node 模板创建
             node = createTowerNode(type);
             node.addComponent(Tower);
         } else {
             const prefabIndex = type - 1;
             if (prefabIndex < 0 || prefabIndex >= this.towerPrefabs.length || !this.towerPrefabs[prefabIndex]) {
+                console.warn('placeTower: 缺少预制体');
                 currency.refundGold(config.cost);
                 return null;
             }
@@ -117,6 +127,7 @@ export class TowerController extends Component {
 
         const tower = node.getComponent(Tower);
         if (!tower) {
+            console.warn('placeTower: getComponent(Tower) 返回 null');
             node.destroy();
             currency.refundGold(config.cost);
             return null;
