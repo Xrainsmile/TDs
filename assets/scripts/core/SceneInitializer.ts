@@ -143,11 +143,20 @@ export class SceneInitializer extends Component {
             this.isDragging = false;
             this.ghostNode!.active = false;
 
+            console.log(`TOUCH_END: magnetTarget=${this.magnetTarget}`);
             if (this.magnetTarget >= 0) {
                 this.placeTower(this.magnetTarget);
             } else {
                 console.log('拖到空白处，取消放置');
             }
+            this.magnetTarget = -1;
+        });
+
+        canvas.on(Node.EventType.TOUCH_CANCEL, (event: EventTouch) => {
+            if (!this.isDragging) return;
+            console.log('TOUCH_CANCEL: 拖拽被取消');
+            this.isDragging = false;
+            this.ghostNode!.active = false;
             this.magnetTarget = -1;
         });
 
