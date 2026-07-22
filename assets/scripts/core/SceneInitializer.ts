@@ -303,6 +303,8 @@ export class SceneInitializer extends Component {
     }
 
     protected update(dt: number): void {
+        if (this.isGameOver) return;
+
         // === 波次生成 ===
         if (this.waveActive) {
             const wave = this.WAVES[this.currentWave - 1];
@@ -349,13 +351,7 @@ export class SceneInitializer extends Component {
                 }
                 if (this.allyHp <= 0) {
                     console.log('友军被摧毁，游戏结束！');
-                    if (this.statusLabel) this.statusLabel.string = '游戏结束！友军被摧毁';
-                    this.waveActive = false;
-                    // 清除所有敌人和子弹
-                    for (const en of this.enemies) en.node.destroy();
-                    this.enemies.length = 0;
-                    for (const b of this.bullets) b.node.destroy();
-                    this.bullets.length = 0;
+                    this.gameOver();
                 }
             } else {
                 e.node.setPosition(pos.x + Math.sign(dx) * this.ENEMY_SPEED * dt, pos.y, 0);
@@ -521,6 +517,123 @@ export class SceneInitializer extends Component {
         if (this.goldLabel) {
             this.goldLabel.string = `Gold: ${this.gold}`;
         }
+    }
+
+    // === 游戏结束弹窗 ===
+    private gameOverPanel: Node | null = null;
+    private isGameOver = false;
+
+    private gameOver(): void {
+        if (this.isGameOver) return;
+        this.isGameOver = true;
+        this.waveActive = false;
+        this.waveDelay = 0;
+
+        // 清除所有敌人和子弹
+        for (const en of this.enemies) en.node.destroy();
+        this.enemies.length = 0;
+        for (const b of this.bullets) b.node.destroy();
+        this.bullets.length = 0;
+
+        // 创建弹窗
+        const canvas = this.node;
+        const panel = new Node('GameOverPanel');
+        panel.layer = Layers.Enum.UI_2D;
+        panel.setParent(canvas);
+        const panelTransform = panel.addComponent(UITransform);
+        panelTransform.setContentSize(400, 200);
+
+        const gfx = panel.addComponent(Graphics);
+        gfx.fillColor = new Color(40, 40, 50, 230);
+        gfx.roundRect(-200, -100, 400, 200, 12);
+        gfx.fill();
+        gfx.strokeColor = new Color(255, 80, 80, 255);
+        gfx.lineWidth = 3;
+        gfx.roundRect(-200, -100, 400, 200, 12);
+        gfx.stroke();
+
+        // "守卫失败" 文字
+        const titleNode = new Node('Title');
+        titleNode.layer = Layers.Enum.UI_2D;
+        titleNode.setParent(panel);
+        titleNode.addComponent(UITransform);
+        titleNode.setPosition(0, 40, 0);
+        const titleLabel = titleNode.addComponent(Label);
+        titleLabel.string = '守卫失败';
+        titleLabel.fontSize = 36;
+        titleLabel.color = new Color(255, 80, 80, 255);
+
+        // "再来一局" 按钮
+        const btnNode = new Node('RestartBtn');
+        btnNode.layer = Layers.Enum.UI_2D;
+        btnNode.setParent(panel);
+        const btnTransform = btnNode.addComponent(UITransform);
+        btnTransform.setContentSize(140, 44);
+        btnTransform.setAnchorPoint(0.5, 0.5);
+        btnNode.setPosition(0, -40, 0);
+
+        const btnGfx = btnNode.addComponent(Graphics);
+        btnGfx.fillColor = new Color(80, 160, 80, 255);
+        btnGfx.roundRect(-70, -22, 140, 44, 8);
+        btnGfx.fill();
+
+        const btnLabelNode = new Node('Label');
+        btnLabelNode.layer = Layers.Enum.UI_2D;
+        btnLabelNode.setParent(btnNode);
+        btnLabelNode.addComponent(UITransform);
+        const btnLabel = btnLabelNode.addComponent(Label);
+        btnLabel.string = '再来一局';
+        btnLabel.fontSize = 20;
+        btnLabel.color = new Color(255, 255, 255, 255);
+
+        btnNode.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
+            event.propagationStopped = true;
+            console.log('点击再来一局');
+            this.restart();
+        });
+
+        this.gameOverPanel = panel;
+
+        if (this.statusLabel) this.statusLabel.string = '守卫失败';
+    }
+
+    private restart(): void {
+        // 销毁弹窗
+        if (this.gameOverPanel) {
+            this.gameOverPanel.destroy();
+            this.gameOverPanel = null;
+        }
+
+        // 清除所有塔和建造点
+        for (const tower of this.towers) tower.destroy();
+        this.towers.length = 0;
+        this.towerTimers.length = 0;
+
+        // 恢复建造点
+        for (let i = 0; i < this.slotOccupied.length; i++) {
+            this.slotOccupied[i] = false;
+            this.slotNodes[i].active = true;
+        }
+
+        // 重置状态
+        this.isGameOver = false;
+        this.gold = this.INITIAL_GOLD;
+        this.allyHp = this.ALLY_MAX_HP;
+        this.currentWave = 0;
+        this.spawnedInWave = 0;
+        this.spawnTimer = 0;
+        this.waveActive = false;
+        this.waveDelay = 0;
+
+        // 更新 HUD
+        this.updateGoldLabel();
+        if (this.livesLabel) this.livesLabel.string = `Base: ${this.allyHp}/${this.ALLY_MAX_HP}`;
+        if (this.waveLabel) this.waveLabel.string = `Wave: 0/${this.WAVES.length}`;
+        if (this.statusLabel) this.statusLabel.string = '拖拽左侧塔按钮到绿色格子';
+
+        // 启动第一波
+        this.startNextWave();
+        console.log('游戏重新开始');
     }
 
     private createTowerButton(): Node {
