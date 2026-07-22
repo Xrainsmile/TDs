@@ -71,6 +71,7 @@ export class SceneInitializer extends Component {
     private ghostGfx: Graphics | null = null;
     private isDragging = false;
     private canPlace = false;
+    private targetSlot = -1;  // 当前拖拽目标槽位（TOUCH_MOVE 时确定，TOUCH_END 直接用）
 
     // 运行时状态
     private gameLayer: Node | null = null;
@@ -203,57 +204,44 @@ export class SceneInitializer extends Component {
             this.isDragging = false;
             this.ghostNode!.active = false;
 
-            const local = this.eventToGameLocal(event);
-            if (this.canPlace) {
-                // 找最近的可用建造点
-                let nearestSlot = -1;
-                let nearestDist = Infinity;
-                for (let i = 0; i < this.SLOT_POSITIONS.length; i++) {
-                    if (this.slotOccupied[i]) continue;
-                    const dist = Vec3.distance(local, this.SLOT_POSITIONS[i]);
-                    if (dist < nearestDist) {
-                        nearestDist = dist;
-                        nearestSlot = i;
-                    }
-                }
+            // 直接用 targetSlot（在 TOUCH_MOVE 中已确定）
+            if (this.canPlace && this.targetSlot >= 0) {
+                const slot = this.targetSlot;
 
-                if (nearestSlot >= 0) {
-                    if (this.dragMode === 'place') {
-                        this.placeTower(nearestSlot, this.dragTowerType);
-                    } else if (this.dragMode === 'move' && this.moveFromSlot >= 0) {
-                        // 找到拖动的塔（在 moveFromSlot 位置）
-                        const movingTowerIdx = this.towers.findIndex(t =>
-                            Vec3.distance(t.node.position, this.SLOT_POSITIONS[this.moveFromSlot]) < 5
-                        );
+                if (this.dragMode === 'place') {
+                    this.placeTower(slot, this.dragTowerType);
+                } else if (this.dragMode === 'move' && this.moveFromSlot >= 0 && this.moveFromSlot !== slot) {
+                    // 找到拖动的塔
+                    const movingTowerIdx = this.towers.findIndex(t =>
+                        Vec3.distance(t.node.position, this.SLOT_POSITIONS[this.moveFromSlot]) < 5
+                    );
 
-                        if (movingTowerIdx >= 0) {
-                            if (this.slotOccupied[nearestSlot]) {
-                                // 目标已占用 → 互换
-                                const swapTowerIdx = this.towers.findIndex(t =>
-                                    Vec3.distance(t.node.position, this.SLOT_POSITIONS[nearestSlot]) < 5
-                                );
-                                if (swapTowerIdx >= 0) {
-                                    // 交换位置
-                                    this.towers[movingTowerIdx].node.setPosition(this.SLOT_POSITIONS[nearestSlot]);
-                                    this.towers[swapTowerIdx].node.setPosition(this.SLOT_POSITIONS[this.moveFromSlot]);
-                                    // towerTimers 跟着塔走（索引一致，不需要交换）
-                                    console.log(`塔互换: 位置 ${this.moveFromSlot + 1} ↔ ${nearestSlot + 1}`);
-                                }
-                            } else {
-                                // 目标空 → 直接移动
-                                this.towers[movingTowerIdx].node.setPosition(this.SLOT_POSITIONS[nearestSlot]);
-                                this.slotOccupied[this.moveFromSlot] = false;
-                                this.slotNodes[this.moveFromSlot].active = true;
-                                this.slotOccupied[nearestSlot] = true;
-                                this.slotNodes[nearestSlot].active = false;
-                                console.log(`塔从位置 ${this.moveFromSlot + 1} 移动到 ${nearestSlot + 1}`);
+                    if (movingTowerIdx >= 0) {
+                        if (this.slotOccupied[slot]) {
+                            // 目标已占用 → 互换
+                            const swapTowerIdx = this.towers.findIndex(t =>
+                                Vec3.distance(t.node.position, this.SLOT_POSITIONS[slot]) < 5
+                            );
+                            if (swapTowerIdx >= 0) {
+                                this.towers[movingTowerIdx].node.setPosition(this.SLOT_POSITIONS[slot]);
+                                this.towers[swapTowerIdx].node.setPosition(this.SLOT_POSITIONS[this.moveFromSlot]);
+                                console.log(`塔互换: 位置 ${this.moveFromSlot + 1} ↔ ${slot + 1}`);
                             }
+                        } else {
+                            // 目标空 → 直接移动
+                            this.towers[movingTowerIdx].node.setPosition(this.SLOT_POSITIONS[slot]);
+                            this.slotOccupied[this.moveFromSlot] = false;
+                            this.slotNodes[this.moveFromSlot].active = true;
+                            this.slotOccupied[slot] = true;
+                            this.slotNodes[slot].active = false;
+                            console.log(`塔从位置 ${this.moveFromSlot + 1} 移动到 ${slot + 1}`);
                         }
-                        this.moveFromSlot = -1;
                     }
+                    this.moveFromSlot = -1;
                 }
             }
             this.canPlace = false;
+            this.targetSlot = -1;
             this.moveFromSlot = -1;
         });
 
@@ -261,6 +249,7 @@ export class SceneInitializer extends Component {
             this.isDragging = false;
             this.ghostNode!.active = false;
             this.canPlace = false;
+            this.targetSlot = -1;
             this.moveFromSlot = -1;
         });
 
@@ -421,6 +410,7 @@ export class SceneInitializer extends Component {
         const cost = this.dragTowerType === 'attack' ? this.TOWER_COST : this.SLOW_TOWER_COST;
         const goldOk = this.dragMode === 'move' || this.gold >= cost;
         this.canPlace = nearestSlot >= 0 && nearestDist < 80 && goldOk;
+        this.targetSlot = this.canPlace ? nearestSlot : -1;
 
         if (this.canPlace && nearestSlot >= 0) {
             this.ghostNode!.setPosition(this.SLOT_POSITIONS[nearestSlot]);
