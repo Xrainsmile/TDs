@@ -215,8 +215,7 @@ export class SceneInitializer extends Component {
 
         // TOUCH_START：触发拖拽 + 立即放置幽灵塔到鼠标位置
         towerButton.on(Node.EventType.TOUCH_START, (event: EventTouch) => {
-            const isFirstTower = placedCount === 0;
-            if (!isFirstTower && gameState.Gold < TOWER_COST) {
+            if (gameState.Gold < TOWER_COST) {
                 console.log(`金币不足，需要 ${TOWER_COST}，当前 ${gameState.Gold}`);
                 return;
             }
@@ -225,7 +224,7 @@ export class SceneInitializer extends Component {
             // 按下时立即放到鼠标位置（GameLayer 局部坐标）
             const local = eventToGameLocal(event);
             ghostNode.setPosition(local);
-            console.log(`开始拖拽塔${isFirstTower ? '（首塔免费）' : ''}`);
+            console.log('开始拖拽塔');
         });
 
         // TOUCH_MOVE 绑定到 Canvas（手指离开按钮后仍能追踪）
@@ -290,14 +289,10 @@ export class SceneInitializer extends Component {
                 const slot = slotNodes[magnetTarget];
                 console.log(`槽位 ${magnetTarget}: active=${slot.active}, pos=(${slotPositions[magnetTarget].x},${slotPositions[magnetTarget].y})`);
                 if (slot.active) {
-                    const isFirstTower = placedCount === 0;
-                    if (isFirstTower) {
-                        gameState.Currency.addGold(TOWER_COST);
-                    }
                     const tower = towerController.placeTower(TowerType.ARROW, slotPositions[magnetTarget]);
                     if (tower) {
                         placedCount++;
-                        console.log(`箭塔放置到位置 ${magnetTarget + 1}${isFirstTower ? '（首塔免费）' : `，花费 ${TOWER_COST} 金币`}`);
+                        console.log(`箭塔放置到位置 ${magnetTarget + 1}，花费 ${TOWER_COST} 金币`);
                         slot.active = false;
                     } else {
                         console.log('placeTower 返回 null，放置失败');
