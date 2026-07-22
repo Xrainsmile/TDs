@@ -38,10 +38,15 @@ export class UIManager extends Component {
             console.log('UIManager: 点击开始游戏');
             const gsm = this.gameStateManager;
             if (gsm) {
-                // 只切换状态到 PREPARING，让玩家先放塔
-                // 关卡加载时已经通过 initGame 设置了金币和生命
+                // 直接隐藏主菜单，显示 HUD
+                if (this._mainMenuPanel) this._mainMenuPanel.active = false;
+                if (this._hudNode) this._hudNode.active = true;
+                if (this._startWaveButton) this._startWaveButton.active = true;
+                if (this._statusLabel) this._statusLabel.string = '准备阶段 - 点击下方按钮开始波次';
+
+                // 切换状态
                 gsm.setGameState(GameState.PREPARING);
-                console.log(`UIManager: 当前状态 ${gsm.State}, 金币 ${gsm.Currency?.Gold}, 生命 ${gsm.Lives}`);
+                console.log(`UIManager: 切换到 PREPARING, 金币 ${gsm.Currency.Gold}, 生命 ${gsm.Lives}`);
             } else {
                 console.error('UIManager: gameStateManager 为空!');
             }

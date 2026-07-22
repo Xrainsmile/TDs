@@ -126,6 +126,9 @@ export class SceneInitializer extends Component {
         gridNode.layer = Layers.Enum.UI_2D;
         gridNode.setParent(gameLayer);
         const gridManager = gridNode.addComponent(GridManager);
+        // 根据实际屏幕尺寸居中网格
+        gridManager.centerToScreen(screenSize.width, screenSize.height);
+        console.log(`SceneInitializer: GridManager 原点 (${gridManager.originX}, ${gridManager.originY}), 格子 ${gridManager.cellSize}px`);
 
         // --- 2g. InputManager ---
         // 注意：InputManager 挂在 Canvas 上（而非 GameLayer），确保在 UILayer 之上能收到触摸事件

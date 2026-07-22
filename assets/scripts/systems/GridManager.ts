@@ -12,11 +12,17 @@ export class GridManager extends Component {
     @property({ tooltip: '格子大小（像素）' })
     public cellSize: number = 64;
 
-    @property({ tooltip: '地图起始 X 坐标' })
+    @property({ tooltip: '地图起始 X 坐标（0 = 屏幕中心）' })
     public originX: number = -320;
 
-    @property({ tooltip: '地图起始 Y 坐标' })
+    @property({ tooltip: '地图起始 Y 坐标（0 = 屏幕中心）' })
     public originY: number = -192;
+
+    /** 根据屏幕尺寸动态设置原点（居中） */
+    public centerToScreen(screenWidth: number, screenHeight: number): void {
+        this.originX = -screenWidth / 2;
+        this.originY = -screenHeight / 2;
+    }
 
     private _buildSlots: Set<string> = new Set();
     private _occupiedSlots: Set<string> = new Set();

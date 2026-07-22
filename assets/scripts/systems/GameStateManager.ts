@@ -38,8 +38,20 @@ export class GameStateManager extends Component {
             return;
         }
         GameStateManager._instance = this;
-        // 不使用 addPersistRootNode，因为 demo 只有一个场景
         this._currency = this.getComponent(CurrencySystem);
+        console.log('GameStateManager: onLoad, currency =', this._currency);
+    }
+
+    /** 确保 Currency 系统可用 */
+    public get Currency(): CurrencySystem {
+        if (!this._currency) {
+            this._currency = this.getComponent(CurrencySystem);
+            if (!this._currency) {
+                this._currency = this.node.addComponent(CurrencySystem);
+                console.warn('GameStateManager: Currency 系统缺失，已自动添加');
+            }
+        }
+        return this._currency;
     }
 
     protected onDestroy(): void {
@@ -93,6 +105,5 @@ export class GameStateManager extends Component {
     public on(eventName: string, cb: (...a: any[]) => void, target?: any): void { this.node.on(eventName, cb, target); }
     public off(eventName: string, cb: (...a: any[]) => void, target?: any): void { this.node.off(eventName, cb, target); }
 
-    /** 货币系统快捷访问 */
-    public get Currency(): CurrencySystem { return this._currency!; }
+    // Currency getter 已在上方定义
 }
