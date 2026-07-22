@@ -34,11 +34,18 @@ export class InputManager extends Component {
     }
 
     protected onLoad(): void {
+        console.log('InputManager: onLoad, node =', this.node.name);
+        this.node.on(Node.EventType.TOUCH_START, this.onTouchStart, this);
         this.node.on(Node.EventType.TOUCH_END, this.onTouchEnded, this);
     }
 
     protected onDestroy(): void {
+        this.node.off(Node.EventType.TOUCH_START, this.onTouchStart, this);
         this.node.off(Node.EventType.TOUCH_END, this.onTouchEnded, this);
+    }
+
+    private onTouchStart(event: EventTouch): void {
+        console.log('InputManager: TOUCH_START 收到');
     }
 
     private onTouchEnded(event: EventTouch): void {

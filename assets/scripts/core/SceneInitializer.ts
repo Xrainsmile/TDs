@@ -113,13 +113,8 @@ export class SceneInitializer extends Component {
         const gridManager = gridNode.addComponent(GridManager);
 
         // --- 2g. InputManager ---
-        const inputNode = new Node('InputManager');
-        inputNode.layer = Layers.Enum.UI_2D;
-        inputNode.setParent(gameLayer);
-        const inputTransform = inputNode.addComponent(UITransform);
-        inputTransform.setContentSize(screenSize.width, screenSize.height);
-        inputTransform.setAnchorPoint(0.5, 0.5);
-        const inputManager = inputNode.addComponent(InputManager);
+        // 注意：InputManager 挂在 Canvas 上（而非 GameLayer），确保在 UILayer 之上能收到触摸事件
+        const inputManager = this.node.addComponent(InputManager);
         inputManager.gridManager = gridManager;
         inputManager.towerController = towerController;
         inputManager.init(gameStateManager);

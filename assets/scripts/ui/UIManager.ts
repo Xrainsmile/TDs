@@ -113,9 +113,8 @@ export class UIManager extends Component {
         label.setParent(panel);
         label.getComponent(Label)!.fontSize = 32;
 
-        // 用 TOUCH_END 代替 Button
+        // 用 TOUCH_END 代替 Button，不阻止冒泡
         panel.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
-            event.propagationStopped = true;
             onClick();
         }, this);
 
@@ -147,9 +146,8 @@ export class UIManager extends Component {
         label.string = text;
         label.fontSize = 18;
 
-        // 用 TOUCH_END 代替 Button
+        // 用 TOUCH_END 代替 Button，不阻止冒泡
         btn.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
-            event.propagationStopped = true;
             onClick();
         }, this);
 
