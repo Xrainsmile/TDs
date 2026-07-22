@@ -124,6 +124,11 @@ export class SceneInitializer extends Component {
 
         // === 塔攻击 ===
         for (let i = 0; i < this.towers.length; i++) {
+            // 只在敌人进入范围时才计时
+            if (!this.enemy) continue;
+            const dist = Vec3.distance(this.towers[i].position, this.enemy.position);
+            if (dist > this.TOWER_RANGE) continue;
+
             this.towerTimers[i] += dt;
             if (this.towerTimers[i] >= this.TOWER_INTERVAL) {
                 this.towerTimers[i] = 0;
@@ -249,7 +254,7 @@ export class SceneInitializer extends Component {
         tower.setParent(this.gameLayer);
 
         this.towers.push(tower);
-        this.towerTimers.push(this.TOWER_INTERVAL);  // 初始设为满，第一发立即发射
+        this.towerTimers.push(this.TOWER_INTERVAL);  // 满值，敌人进入范围立即发射
         this.slotOccupied[slotIndex] = true;
 
         // 隐藏建造点
