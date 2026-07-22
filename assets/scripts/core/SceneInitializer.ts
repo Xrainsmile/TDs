@@ -207,26 +207,13 @@ export class SceneInitializer extends Component {
         let isDragging = false;
         let placedCount = 0;  // 已放置塔数量（第一个免费）
 
-        towerButton.on(Node.EventType.TOUCH_START, (event: EventTouch) => {
-            const isFirstTower = placedCount === 0;
-            if (!isFirstTower && gameState.Gold < TOWER_COST) {
-                console.log(`金币不足，需要 ${TOWER_COST}，当前 ${gameState.Gold}`);
-                return;
-            }
-            isDragging = true;
-            ghostNode.active = true;
-            console.log(`开始拖拽塔${isFirstTower ? '（首塔免费）' : ''}`);
-        });
-
         // 统一坐标转换：getUILocation() + convertToNodeSpaceAR()
-        // getUILocation() 返回 UI 世界坐标（左下角原点）
-        // convertToNodeSpaceAR() 转为目标节点的局部坐标（考虑锚点/缩放/位置）
         const eventToLocal = (event: EventTouch, parentTransform: UITransform): Vec3 => {
             const uiPos = event.getUILocation();
             return parentTransform.convertToNodeSpaceAR(v3(uiPos.x, uiPos.y, 0));
         };
 
-        // TOUCH_START 时也立即放置幽灵塔，避免先出现在默认坐标
+        // TOUCH_START：触发拖拽 + 立即放置幽灵塔到鼠标位置
         towerButton.on(Node.EventType.TOUCH_START, (event: EventTouch) => {
             const isFirstTower = placedCount === 0;
             if (!isFirstTower && gameState.Gold < TOWER_COST) {
@@ -235,7 +222,7 @@ export class SceneInitializer extends Component {
             }
             isDragging = true;
             ghostNode.active = true;
-            // 按下时立即放到鼠标位置
+            // 按下时立即放到鼠标位置，避免幽灵先出现在默认坐标
             const local = eventToLocal(event, uiTransform);
             ghostNode.setPosition(local);
             console.log(`开始拖拽塔${isFirstTower ? '（首塔免费）' : ''}`);
