@@ -197,13 +197,12 @@ export class SceneInitializer extends Component {
         ghostNode.active = false;
 
         // --- 拖拽逻辑 ---
+        // TOUCH_START 绑定在按钮上，TOUCH_MOVE/TOUCH_END 绑定在 Canvas 上
         let isDragging = false;
         let placedCount = 0;  // 已放置塔数量（第一个免费）
-        const screen = canvas.getComponent(UITransform)!;
 
         towerButton.on(Node.EventType.TOUCH_START, (event: EventTouch) => {
             const isFirstTower = placedCount === 0;
-            const cost = isFirstTower ? 0 : TOWER_COST;
             if (!isFirstTower && gameState.Gold < TOWER_COST) {
                 console.log(`金币不足，需要 ${TOWER_COST}，当前 ${gameState.Gold}`);
                 return;
@@ -213,29 +212,28 @@ export class SceneInitializer extends Component {
             console.log(`开始拖拽塔${isFirstTower ? '（首塔免费）' : ''}`);
         });
 
-        towerButton.on(Node.EventType.TOUCH_MOVE, (event: EventTouch) => {
+        // TOUCH_MOVE 绑定到 Canvas（手指离开按钮后仍能追踪）
+        canvas.on(Node.EventType.TOUCH_MOVE, (event: EventTouch) => {
             if (!isDragging) return;
-            // getLocation() 返回屏幕像素坐标（左下角原点）
-            // 转为世界坐标（中心原点）：减去设计分辨率一半
             const loc = event.getLocation();
             const worldX = loc.x - W / 2;
             const worldY = loc.y - H / 2;
             ghostNode.setPosition(worldX, worldY, 0);
         });
 
-        towerButton.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
+        // TOUCH_END 绑定到 Canvas
+        canvas.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
             if (!isDragging) return;
             isDragging = false;
             ghostNode.active = false;
 
-            // 检查是否拖到了某个建造点
             const loc = event.getLocation();
             const dropX = loc.x - W / 2;
             const dropY = loc.y - H / 2;
 
             for (let i = 0; i < slotPositions.length; i++) {
                 const slot = slotNodes[i];
-                if (!slot.active) continue;  // 已被占用或未显示
+                if (!slot.active) continue;
 
                 const dist = Math.sqrt(
                     (dropX - slotPositions[i].x) ** 2 +
@@ -243,10 +241,8 @@ export class SceneInitializer extends Component {
                 );
 
                 if (dist < 40) {
-                    // 放置塔
                     const isFirstTower = placedCount === 0;
                     if (isFirstTower) {
-                        // 首塔免费：先加 300 金币，placeTower 会扣掉
                         gameState.Currency.addGold(TOWER_COST);
                     }
                     const tower = towerController.placeTower(TowerType.ARROW, slotPositions[i]);
@@ -262,11 +258,6 @@ export class SceneInitializer extends Component {
             }
 
             console.log('未拖到建造点，取消放置');
-        });
-
-        towerButton.on(Node.EventType.TOUCH_CANCEL, () => {
-            isDragging = false;
-            ghostNode.active = false;
         });
 
         // --- 开始波次按钮 ---
