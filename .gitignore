@@ -13,6 +13,16 @@
 # --- CodeBuddy 本地数据（不提交） ---
 .codebuddy/
 
+# --- Cocos Creator ---
+library/
+temp/
+local/
+profiles/
+native/
+extensions/
+build/
+!build/.gitkeep
+
 # --- Python ---
 __pycache__/
 *.py[cod]
