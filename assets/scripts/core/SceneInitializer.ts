@@ -215,10 +215,12 @@ export class SceneInitializer extends Component {
 
         towerButton.on(Node.EventType.TOUCH_MOVE, (event: EventTouch) => {
             if (!isDragging) return;
-            // getLocation() 返回世界坐标（中心为原点）
-            const world = event.getLocation();
-            ghostNode.setPosition(world.x, world.y, 0);
-            console.log(`拖拽中: world(${world.x.toFixed(0)},${world.y.toFixed(0)})`);
+            // getLocation() 返回屏幕像素坐标（左下角原点）
+            // 转为世界坐标（中心原点）：减去设计分辨率一半
+            const loc = event.getLocation();
+            const worldX = loc.x - W / 2;
+            const worldY = loc.y - H / 2;
+            ghostNode.setPosition(worldX, worldY, 0);
         });
 
         towerButton.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
@@ -227,16 +229,17 @@ export class SceneInitializer extends Component {
             ghostNode.active = false;
 
             // 检查是否拖到了某个建造点
-            const world = event.getLocation();
-            console.log(`放下: world(${world.x.toFixed(0)},${world.y.toFixed(0)})`);
+            const loc = event.getLocation();
+            const dropX = loc.x - W / 2;
+            const dropY = loc.y - H / 2;
 
             for (let i = 0; i < slotPositions.length; i++) {
                 const slot = slotNodes[i];
                 if (!slot.active) continue;  // 已被占用或未显示
 
                 const dist = Math.sqrt(
-                    (world.x - slotPositions[i].x) ** 2 +
-                    (world.y - slotPositions[i].y) ** 2
+                    (dropX - slotPositions[i].x) ** 2 +
+                    (dropY - slotPositions[i].y) ** 2
                 );
 
                 if (dist < 40) {
