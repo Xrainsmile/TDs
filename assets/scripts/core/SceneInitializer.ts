@@ -75,7 +75,12 @@ export class SceneInitializer extends Component {
     private statusLabel: Label | null = null;
     private goldLabel: Label | null = null;
     private waveLabel: Label | null = null;
+    private livesLabel: Label | null = null;
     private gold = 0;
+
+    // 友军（基地）
+    private readonly ALLY_MAX_HP = 6;
+    private allyHp = 6;
 
     // 波次运行时
     private currentWave = 0;
@@ -207,6 +212,19 @@ export class SceneInitializer extends Component {
         this.waveLabel.fontSize = 24;
         this.waveLabel.string = `Wave: 0/${this.WAVES.length}`;
 
+        // === 友军 HP 显示 ===
+        const livesNode = new Node('Lives');
+        livesNode.layer = Layers.Enum.UI_2D;
+        livesNode.setParent(canvas);
+        livesNode.addComponent(UITransform);
+        livesNode.setPosition(-200, 280, 0);
+        this.livesLabel = livesNode.addComponent(Label);
+        this.livesLabel.fontSize = 24;
+        this.livesLabel.string = `Base: ${this.allyHp}/${this.ALLY_MAX_HP}`;
+
+        // === 终点友军建筑（城堡）===
+        this.drawAlly(this.gameLayer);
+
         // === 启动第一波 ===
         this.startNextWave();
 
@@ -321,9 +339,24 @@ export class SceneInitializer extends Component {
             const dx = this.PATH_END.x - pos.x;
 
             if (Math.abs(dx) < 5) {
-                // 到达终点
+                // 到达终点 → 伤害友军
                 e.node.destroy();
                 this.enemies.splice(i, 1);
+                this.allyHp -= 1;
+                console.log(`漏怪！友军 HP: ${this.allyHp}/${this.ALLY_MAX_HP}`);
+                if (this.livesLabel) {
+                    this.livesLabel.string = `Base: ${this.allyHp}/${this.ALLY_MAX_HP}`;
+                }
+                if (this.allyHp <= 0) {
+                    console.log('友军被摧毁，游戏结束！');
+                    if (this.statusLabel) this.statusLabel.string = '游戏结束！友军被摧毁';
+                    this.waveActive = false;
+                    // 清除所有敌人和子弹
+                    for (const en of this.enemies) en.node.destroy();
+                    this.enemies.length = 0;
+                    for (const b of this.bullets) b.node.destroy();
+                    this.bullets.length = 0;
+                }
             } else {
                 e.node.setPosition(pos.x + Math.sign(dx) * this.ENEMY_SPEED * dt, pos.y, 0);
             }
@@ -557,6 +590,32 @@ export class SceneInitializer extends Component {
         gfx.stroke();
 
         return node;
+    }
+
+    /** 绘制终点友军建筑（城堡）*/
+    private drawAlly(parent: Node): void {
+        const node = new Node('Ally');
+        node.layer = Layers.Enum.UI_2D;
+        node.setParent(parent);
+        node.setPosition(this.PATH_END);
+
+        const transform = node.addComponent(UITransform);
+        transform.setContentSize(60, 60);
+
+        const gfx = node.addComponent(Graphics);
+        // 城堡主体
+        gfx.fillColor = new Color(120, 80, 60, 255);
+        gfx.rect(-20, -20, 40, 40);
+        gfx.fill();
+        // 城垛
+        gfx.rect(-20, 10, 10, 10);
+        gfx.rect(-5, 10, 10, 10);
+        gfx.rect(10, 10, 10, 10);
+        gfx.fill();
+        // 城门
+        gfx.fillColor = new Color(40, 40, 40, 255);
+        gfx.rect(-6, -20, 12, 16);
+        gfx.fill();
     }
 
     private drawPath(parent: Node): void {
