@@ -1,0 +1,42 @@
+{
+    "levelId": 2,
+    "levelName": "第二关 · 蜿蜒峡谷",
+    "initialGold": 250,
+    "initialLives": 18,
+    "pathPoints": [
+        { "x": -360, "y": -128 }, { "x": -192, "y": -128 },
+        { "x": -192, "y": 64 }, { "x": -64, "y": 64 },
+        { "x": -64, "y": -64 }, { "x": 64, "y": -64 },
+        { "x": 64, "y": 128 }, { "x": 192, "y": 128 },
+        { "x": 192, "y": -96 }, { "x": 360, "y": -96 }
+    ],
+    "buildSlots": [
+        { "x": 0, "y": 0 }, { "x": 1, "y": 0 }, { "x": 2, "y": 0 }, { "x": 3, "y": 0 }, { "x": 4, "y": 0 },
+        { "x": 0, "y": 2 }, { "x": 2, "y": 2 }, { "x": 4, "y": 2 },
+        { "x": 0, "y": 4 }, { "x": 1, "y": 4 }, { "x": 3, "y": 4 }, { "x": 4, "y": 4 },
+        { "x": 1, "y": 6 }, { "x": 2, "y": 6 }, { "x": 3, "y": 6 },
+        { "x": 0, "y": -2 }, { "x": 2, "y": -2 }, { "x": 4, "y": -2 },
+        { "x": 0, "y": -4 }, { "x": 1, "y": -4 }, { "x": 2, "y": -4 }, { "x": 3, "y": -4 }, { "x": 4, "y": -4 }, { "x": 5, "y": -4 }
+    ],
+    "waves": [
+        { "waveIndex": 0, "enemies": [ { "enemyType": 1, "count": 8, "interval": 0.9, "delay": 0 } ] },
+        { "waveIndex": 1, "enemies": [
+            { "enemyType": 2, "count": 6, "interval": 0.5, "delay": 0 },
+            { "enemyType": 1, "count": 6, "interval": 0.8, "delay": 2 }
+        ]},
+        { "waveIndex": 2, "enemies": [
+            { "enemyType": 1, "count": 12, "interval": 0.5, "delay": 0 },
+            { "enemyType": 3, "count": 3, "interval": 1.5, "delay": 3 }
+        ]},
+        { "waveIndex": 3, "enemies": [
+            { "enemyType": 2, "count": 10, "interval": 0.4, "delay": 0 },
+            { "enemyType": 3, "count": 5, "interval": 1.2, "delay": 2 },
+            { "enemyType": 2, "count": 8, "interval": 0.3, "delay": 5 }
+        ]},
+        { "waveIndex": 4, "enemies": [
+            { "enemyType": 3, "count": 6, "interval": 1.0, "delay": 0 },
+            { "enemyType": 4, "count": 1, "interval": 1.0, "delay": 3 },
+            { "enemyType": 2, "count": 12, "interval": 0.3, "delay": 5 }
+        ]}
+    ]
+}

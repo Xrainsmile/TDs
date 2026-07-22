@@ -25,7 +25,7 @@
     "_globals": {
       "__id__": 8
     },
-    "_id": "c8fcc2c7-5a9a-4c88-8327-28c689c3cd6d"
+    "_id": "a02ea3fe-f3de-4c2f-af5b-3111e338284e"
   },
   {
     "__type__": "cc.Node",
@@ -49,9 +49,6 @@
       },
       {
         "__id__": 7
-      },
-      {
-        "__id__": 15
       }
     ],
     "_prefab": null,
@@ -377,16 +374,5 @@
     "__type__": "cc.SkinInfo",
     "_enabled": false,
     "_scale": 5
-  },
-  {
-    "__type__": "olF2McK2T8OJnV8LkZxc8g",
-    "_name": "",
-    "_objFlags": 0,
-    "node": {
-      "__id__": 2
-    },
-    "_enabled": true,
-    "__prefab": null,
-    "_id": "AYPJeqmsG4hFci0udmYhex"
   }
 ]

@@ -1,0 +1,36 @@
+{
+    "levelId": 1,
+    "levelName": "第一关 · 草原小径",
+    "initialGold": 200,
+    "initialLives": 20,
+    "pathPoints": [
+        { "x": -320, "y": 160 }, { "x": -128, "y": 160 },
+        { "x": -128, "y": 0 }, { "x": 64, "y": 0 },
+        { "x": 64, "y": 160 }, { "x": 256, "y": 160 },
+        { "x": 256, "y": -96 }, { "x": 320, "y": -96 }
+    ],
+    "buildSlots": [
+        { "x": 0, "y": 6 }, { "x": 1, "y": 6 }, { "x": 2, "y": 6 },
+        { "x": 0, "y": 4 }, { "x": 1, "y": 4 }, { "x": 3, "y": 4 }, { "x": 4, "y": 4 },
+        { "x": 0, "y": 2 }, { "x": 1, "y": 2 }, { "x": 2, "y": 2 }, { "x": 3, "y": 2 }, { "x": 4, "y": 2 },
+        { "x": 0, "y": 0 }, { "x": 1, "y": 0 }, { "x": 2, "y": 0 }, { "x": 3, "y": 0 },
+        { "x": 0, "y": -2 }, { "x": 1, "y": -2 }, { "x": 2, "y": -2 }, { "x": 3, "y": -2 }, { "x": 4, "y": -2 }, { "x": 5, "y": -2 }
+    ],
+    "waves": [
+        { "waveIndex": 0, "enemies": [ { "enemyType": 1, "count": 5, "interval": 1.0, "delay": 0 } ] },
+        { "waveIndex": 1, "enemies": [
+            { "enemyType": 1, "count": 8, "interval": 0.8, "delay": 2 },
+            { "enemyType": 2, "count": 3, "interval": 0.5, "delay": 1 }
+        ]},
+        { "waveIndex": 2, "enemies": [
+            { "enemyType": 1, "count": 10, "interval": 0.6, "delay": 0 },
+            { "enemyType": 2, "count": 5, "interval": 0.5, "delay": 2 },
+            { "enemyType": 3, "count": 2, "interval": 2.0, "delay": 3 }
+        ]},
+        { "waveIndex": 3, "enemies": [
+            { "enemyType": 2, "count": 8, "interval": 0.4, "delay": 0 },
+            { "enemyType": 3, "count": 4, "interval": 1.5, "delay": 2 },
+            { "enemyType": 4, "count": 1, "interval": 1.0, "delay": 5 }
+        ]}
+    ]
+}

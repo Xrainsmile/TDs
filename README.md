@@ -11,79 +11,64 @@
 
 ## 快速开始
 
-### 1. 用 Cocos Creator 打开项目
+### 1. 打开项目
 
-```bash
-open /Applications/Cocos/Creator/3.8.8/CocosCreator.app --args --project /Users/rick/TD
-```
+Cocos Creator 3.8.8 打开 `/Users/rick/TD`
 
-首次打开时 Cocos Creator 会自动生成 `library/`、`temp/`、`local/` 等目录（已在 `.gitignore` 中忽略）。
+### 2. 打开 Battle 场景
 
-### 2. 创建场景
+双击 `assets/scenes/Battle.scene`
 
-项目当前只有代码骨架，无场景文件。需要在 Cocos Creator 中：
+### 3. 添加 SceneInitializer 组件
 
-1. 创建 `assets/scenes/Battle.scene`（战斗场景）
-2. 将 `GameManager` 挂到根节点
-3. 添加子节点并挂载各管理器组件（参照下方架构图）
-4. 绑定引用关系（在 Inspector 面板中拖拽）
+1. 选中场景中的 **Canvas** 节点
+2. 在 Inspector 面板点击 **添加组件**
+3. 搜索并添加 `SceneInitializer`
 
-### 3. 构建微信小游戏
+### 4. 运行
 
-在 Cocos Creator 中：`项目 → 构建发布 → 平台：微信小游戏 → 构建`
+点击运行按钮。SceneInitializer 会自动创建所有系统节点、组件和引用。
 
-构建产物路径：`build/wechatgame/`
-
-### 4. 用微信开发者工具预览
-
-```bash
-/Applications/wechatwebdevtools.app/Contents/MacOS/cli open --project /Users/rick/TD/build/wechatgame
-```
+> **无需美术资源**：demo 使用 Graphics 组件运行时绘制形状（圆形敌人、方形塔等）。
 
 ## 项目架构
 
 ```
-TD/
-├── assets/
-│   ├── scenes/                    # 场景文件
-│   ├── scripts/
-│   │   ├── core/                  # 核心系统
-│   │   │   ├── GameManager.ts     # 游戏总管理器（单例）
-│   │   │   ├── LevelManager.ts    # 关卡加载与初始化
-│   │   │   ├── WaveManager.ts     # 敌人波次调度
-│   │   │   ├── PathManager.ts     # 敌人移动路径
-│   │   │   ├── GridManager.ts     # 网格地图（塔放置位）
-│   │   │   ├── InputManager.ts    # 玩家输入处理
-│   │   │   ├── Constants.ts       # 全局常量与枚举
-│   │   │   └── EventNames.ts     # 事件名常量
-│   │   ├── towers/                # 塔系统
-│   │   │   ├── Tower.ts           # 塔基类（攻击/升级/出售）
-│   │   │   └── TowerManager.ts    # 塔管理（放置/升级/出售）
-│   │   ├── enemies/               # 敌人系统
-│   │   │   ├── Enemy.ts           # 敌人基类（移动/生命/减速）
-│   │   │   └── EnemyManager.ts   # 敌人管理（对象池/查询）
-│   │   ├── bullets/               # 子弹系统
-│   │   │   ├── Bullet.ts          # 子弹基类（追踪/命中）
-│   │   │   └── BulletManager.ts  # 子弹管理（对象池）
-│   │   ├── ui/                    # UI 系统
-│   │   │   ├── UIManager.ts       # UI 总管理
-│   │   │   ├── HUD.ts             # 顶部信息栏
-│   │   │   └── TowerMenu.ts       # 建塔/升级菜单
-│   │   ├── data/
-│   │   │   └── GameData.ts        # 数据接口定义
-│   │   └── utils/
-│   │       └── ObjectPool.ts      # 通用对象池
-│   ├── configs/                   # 游戏配置（JSON）
-│   │   ├── towers.json             # 塔属性
-│   │   ├── enemies.json           # 敌人属性
-│   │   └── levels/level_01.json   # 关卡数据
-│   ├── prefabs/                   # 预制体
-│   ├── textures/                  # 图片资源
-│   ├── animations/                # 动画
-│   └── audio/                     # 音效
-├── package.json                   # Cocos 项目配置
-├── tsconfig.json                  # TypeScript 配置
-└── .gitignore
+通用系统 (assets/scripts/systems/)
+├── GameStateManager    # 游戏状态总管理器（单例）
+├── CurrencySystem      # 货币（金币）系统
+├── DamageSystem        # 伤害结算系统
+├── EnemyController     # 敌人控制器（生成/回收/查询）
+├── TowerController     # 塔控制器（放置/升级/出售）
+├── ProjectileController# 子弹控制器（对象池/发射/命中）
+├── WaveManager         # 波次管理器
+├── PathManager         # 敌人移动路径
+├── GridManager         # 网格地图（塔放置位）
+└── InputManager        # 玩家输入处理
+
+实体 (assets/scripts/entities/)
+├── Enemy               # 敌人实体（移动/生命/减速）
+├── Tower               # 塔实体（攻击/升级/出售）
+└── Projectile          # 子弹实体（追踪/命中）
+
+关卡数据 (assets/data/levels/)
+├── level_01.json       # 第一关 · 草原小径（4波）
+├── level_02.json       # 第二关 · 蜿蜒峡谷（5波）
+└── level_03.json       # 第三关 · 迷宫要塞（6波）
+
+UI (assets/scripts/ui/)
+├── UIManager           # UI 总管理（面板切换）
+├── HUD                 # 顶部信息栏
+└── TowerMenu           # 建塔/升级菜单
+
+工具 (assets/scripts/utils/)
+├── ObjectPool          # 通用对象池
+└── PrefabFactory       # 运行时节点工厂（Graphics 绘制）
+
+配置 (assets/data/)
+├── towers.json          # 塔属性
+├── enemies.json         # 敌人属性
+└── levels/             # 关卡数据
 ```
 
 ## 游戏设计
@@ -100,19 +85,23 @@ TD/
 
 | 敌人 | 生命 | 速度 | 特点 |
 |---|---|---|---|
-| 普通兵 | 100 | 80 | 基础敌人 |
-| 快速兵 | 60 | 160 | 高速低血 |
-| 坦克 | 400 | 40 | 高血低速 |
-| BOSS | 1000 | 50 | 关底Boss |
+| 普通兵 | 100 | 80 | 绿色圆形 |
+| 快速兵 | 60 | 160 | 黄色三角 |
+| 坦克 | 400 | 40 | 灰色方形 |
+| BOSS | 1000 | 50 | 红色六角 |
 
-### 关卡
+### 三个关卡
 
-- 第一关：8 点折线路径、24 个建造位、4 波敌人（含 BOSS）
-- 关卡数据为 JSON 格式，可扩展多关卡
+| 关卡 | 路径 | 建造位 | 波次数 | 初始金币 | 初始生命 |
+|---|---|---|---|---|---|
+| 草原小径 | 8点折线 | 22 | 4 | 200 | 20 |
+| 蜿蜒峡谷 | 10点蜿蜒 | 24 | 5 | 250 | 18 |
+| 迷宫要塞 | 14点迷宫 | 28 | 6 | 300 | 15 |
 
 ## 开发约定
 
 - 主分支：`main`，使用 SSH 推送
-- 提交信息格式：`<type>: <描述>`（如 `feat: 添加箭塔预制体`）
+- 提交信息格式：`<type>: <描述>`
 - `.codebuddy/`、`library/`、`temp/`、`local/`、`build/` 不提交
-- 配置数据统一放在 `assets/configs/` 下（JSON 格式）
+- 配置数据统一放在 `assets/data/` 下（JSON 格式）
+- 运行时资源放在 `assets/resources/` 下（可动态加载）

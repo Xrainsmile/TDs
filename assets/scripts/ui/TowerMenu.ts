@@ -1,144 +1,122 @@
-import { _decorator, Component, Node, Vec3, UITransform, EventTouch } from 'cc';
-import { GameManager } from '../core/GameManager';
-import { EventNames } from '../core/EventNames';
-import { TowerType, GameState, Constants } from '../core/Constants';
-import { TowerManager } from '../towers/TowerManager';
-import { Tower } from '../towers/Tower';
+import { _decorator, Component, Node, Vec3, Label, Button, Layers, UITransform, Color, Sprite } from 'cc';
+import { TowerType, GameState } from '../core/Constants';
+import { GameEvents } from '../core/EventNames';
+import { TowerController } from '../systems/TowerController';
+import { Tower } from '../entities/Tower';
 
 const { ccclass, property } = _decorator;
 
 /**
  * TowerMenu - 塔放置/升级菜单
  *
- * 处理：
- *  - 玩家点击空地弹出塔选择菜单
- *  - 玩家点击已有塔弹出升级/出售菜单
+ * 处理建塔选择和已有塔的升级/出售
  */
 @ccclass('TowerMenu')
 export class TowerMenu extends Component {
-    @property({ type: Node, tooltip: '建塔选择菜单根节点' })
-    public buildMenu: Node | null = null;
+    @property({ type: TowerController })
+    public towerController: TowerController | null = null;
 
-    @property({ type: Node, tooltip: '升级/出售菜单根节点' })
-    public upgradeMenu: Node | null = null;
-
-    @property({ type: TowerManager, tooltip: '塔管理器' })
-    public towerManager: TowerManager | null = null;
-
+    private _buildMenu: Node | null = null;
+    private _upgradeMenu: Node | null = null;
     private _selectedTower: Tower | null = null;
     private _selectedPosition: Vec3 = new Vec3();
+    private _infoLabel: Label | null = null;
 
-    protected onLoad(): void {
-        if (this.buildMenu) this.buildMenu.active = false;
-        if (this.upgradeMenu) this.upgradeMenu.active = false;
-
-        const gm = GameManager.Instance;
-        if (gm) {
-            gm.on(EventNames.TOWER_SELECTED, this.onTowerSelected, this);
-            gm.on(EventNames.TOWER_DESELECTED, this.onTowerDeselected, this);
-        }
+    public init(): void {
+        this.createMenus();
     }
 
-    protected onDestroy(): void {
-        const gm = GameManager.Instance;
-        if (gm) {
-            gm.off(EventNames.TOWER_SELECTED, this.onTowerSelected, this);
-            gm.off(EventNames.TOWER_DESELECTED, this.onTowerDeselected, this);
-        }
+    private createMenus(): void {
+        // 建塔菜单
+        this._buildMenu = new Node('BuildMenu');
+        this._buildMenu.layer = Layers.Enum.UI_2D;
+        this._buildMenu.setParent(this.node);
+        this._buildMenu.addComponent(UITransform);
+        this.createButton(this._buildMenu, '箭塔(50)', -70, 0, () => this.buildTower(TowerType.ARROW));
+        this.createButton(this._buildMenu, '炮塔(100)', 0, 0, () => this.buildTower(TowerType.CANNON));
+        this.createButton(this._buildMenu, '魔法(80)', 70, 0, () => this.buildTower(TowerType.MAGIC));
+        this._buildMenu.active = false;
+
+        // 升级菜单
+        this._upgradeMenu = new Node('UpgradeMenu');
+        this._upgradeMenu.layer = Layers.Enum.UI_2D;
+        this._upgradeMenu.setParent(this.node);
+        this._upgradeMenu.addComponent(UITransform);
+        this.createButton(this._upgradeMenu, '升级', -50, 0, () => this.onUpgrade());
+        this.createButton(this._upgradeMenu, '出售', 50, 0, () => this.onSell());
+        // 信息标签
+        const infoNode = new Node('Info');
+        infoNode.layer = Layers.Enum.UI_2D;
+        infoNode.setParent(this._upgradeMenu);
+        infoNode.addComponent(UITransform);
+        this._infoLabel = infoNode.addComponent(Label);
+        this._infoLabel.fontSize = 16;
+        this._infoLabel.string = '';
+        infoNode.setPosition(0, -40, 0);
+        this._upgradeMenu.active = false;
     }
 
-    /**
-     * 显示建塔菜单
-     */
+    private createButton(parent: Node, text: string, x: number, y: number, callback: () => void): void {
+        const btn = new Node(`Btn_${text}`);
+        btn.layer = Layers.Enum.UI_2D;
+        btn.setParent(parent);
+        const transform = btn.addComponent(UITransform);
+        transform.setContentSize(60, 30);
+        btn.setPosition(x, y, 0);
+
+        const label = btn.addComponent(Label);
+        label.string = text;
+        label.fontSize = 14;
+        label.lineHeight = 16;
+
+        const button = btn.addComponent(Button);
+        button.node.on(Button.EventType.CLICK, callback, this);
+    }
+
     public showBuildMenu(position: Vec3): void {
         this.hideAllMenus();
         this._selectedPosition.set(position);
-
-        if (this.buildMenu) {
-            this.buildMenu.setPosition(position.x, position.y + 80, 0);
-            this.buildMenu.active = true;
+        if (this._buildMenu) {
+            this._buildMenu.setPosition(position.x, position.y + 50, 0);
+            this._buildMenu.active = true;
         }
     }
 
-    /**
-     * 显示升级菜单
-     */
     public showUpgradeMenu(tower: Tower): void {
         this.hideAllMenus();
         this._selectedTower = tower;
-
-        if (this.upgradeMenu) {
+        if (this._upgradeMenu && this._infoLabel) {
             const pos = tower.node.position;
-            this.upgradeMenu.setPosition(pos.x, pos.y + 80, 0);
-            this.upgradeMenu.active = true;
+            this._upgradeMenu.setPosition(pos.x, pos.y + 60, 0);
+            this._infoLabel.string = `Lv.${tower.level}  Atk:${tower.attackDamage}  Sell:${tower.SellValue}`;
+            this._upgradeMenu.active = true;
         }
     }
 
-    /**
-     * 隐藏所有菜单
-     */
     public hideAllMenus(): void {
-        if (this.buildMenu) this.buildMenu.active = false;
-        if (this.upgradeMenu) this.upgradeMenu.active = false;
+        if (this._buildMenu) this._buildMenu.active = false;
+        if (this._upgradeMenu) this._upgradeMenu.active = false;
         this._selectedTower = null;
     }
 
-    // --- 按钮回调（在场景中绑定） ---
-
-    /**
-     * 选择建箭塔
-     */
-    public onSelectArrowTower(): void {
-        this.buildTower(TowerType.ARROW);
-    }
-
-    /**
-     * 选择建炮塔
-     */
-    public onSelectCannonTower(): void {
-        this.buildTower(TowerType.CANNON);
-    }
-
-    /**
-     * 选择建魔法塔
-     */
-    public onSelectMagicTower(): void {
-        this.buildTower(TowerType.MAGIC);
-    }
-
     private buildTower(type: TowerType): void {
-        if (!this.towerManager) return;
-        const tower = this.towerManager.placeTower(type, this._selectedPosition);
-        if (tower) {
-            this.hideAllMenus();
+        if (this.towerController) {
+            const tower = this.towerController.placeTower(type, this._selectedPosition);
+            if (tower) this.hideAllMenus();
         }
     }
 
-    /**
-     * 升级选中的塔
-     */
-    public onUpgradeTower(): void {
-        if (this._selectedTower && this.towerManager) {
-            this.towerManager.upgradeTower(this._selectedTower);
+    private onUpgrade(): void {
+        if (this._selectedTower && this.towerController) {
+            this.towerController.upgradeTower(this._selectedTower);
         }
         this.hideAllMenus();
     }
 
-    /**
-     * 出售选中的塔
-     */
-    public onSellTower(): void {
-        if (this._selectedTower && this.towerManager) {
-            this.towerManager.sellTower(this._selectedTower);
+    private onSell(): void {
+        if (this._selectedTower && this.towerController) {
+            this.towerController.sellTower(this._selectedTower);
         }
-        this.hideAllMenus();
-    }
-
-    private onTowerSelected(tower: Tower): void {
-        this.showUpgradeMenu(tower);
-    }
-
-    private onTowerDeselected(): void {
         this.hideAllMenus();
     }
 }

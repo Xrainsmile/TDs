@@ -1,23 +1,16 @@
 import { TowerType, EnemyType } from '../core/Constants';
 
-/**
- * 塔/敌人/关卡数据接口定义
- * 用于类型安全地加载 JSON 配置
- */
-
-export interface TowerConfigData {
+/** 塔配置 */
+export interface TowerConfig {
     type: TowerType;
     name: string;
     cost: number;
-    /** 每级升级费用倍率 */
     upgradeCostMultiplier: number;
-    /** 基础属性 */
     base: {
         attackRange: number;
         attackDamage: number;
         attackInterval: number;
     };
-    /** 每级属性增长倍率 */
     growth: {
         attackRange: number;
         attackDamage: number;
@@ -25,7 +18,8 @@ export interface TowerConfigData {
     };
 }
 
-export interface EnemyConfigData {
+/** 敌人配置 */
+export interface EnemyConfig {
     type: EnemyType;
     name: string;
     hp: number;
@@ -34,6 +28,7 @@ export interface EnemyConfigData {
     livesCost: number;
 }
 
+/** 单个波次中的敌人组 */
 export interface WaveEnemyConfig {
     enemyType: EnemyType;
     count: number;
@@ -41,19 +36,19 @@ export interface WaveEnemyConfig {
     delay: number;
 }
 
+/** 一整波 */
 export interface LevelWaveConfig {
     waveIndex: number;
     enemies: WaveEnemyConfig[];
 }
 
-export interface LevelConfigData {
+/** 关卡配置 */
+export interface LevelConfig {
     levelId: number;
     levelName: string;
     initialGold: number;
     initialLives: number;
-    /** 路径点（世界坐标） */
     pathPoints: { x: number; y: number }[];
-    /** 可放置塔的格子坐标列表 */
     buildSlots: { x: number; y: number }[];
     waves: LevelWaveConfig[];
 }

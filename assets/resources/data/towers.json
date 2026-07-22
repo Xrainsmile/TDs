@@ -1,0 +1,26 @@
+[
+    {
+        "type": 1,
+        "name": "箭塔",
+        "cost": 50,
+        "upgradeCostMultiplier": 0.8,
+        "base": { "attackRange": 140, "attackDamage": 15, "attackInterval": 0.8 },
+        "growth": { "attackRange": 1.2, "attackDamage": 1.5, "attackInterval": 0.9 }
+    },
+    {
+        "type": 2,
+        "name": "炮塔",
+        "cost": 100,
+        "upgradeCostMultiplier": 0.8,
+        "base": { "attackRange": 120, "attackDamage": 40, "attackInterval": 1.5 },
+        "growth": { "attackRange": 1.15, "attackDamage": 1.6, "attackInterval": 0.95 }
+    },
+    {
+        "type": 3,
+        "name": "魔法塔",
+        "cost": 80,
+        "upgradeCostMultiplier": 0.8,
+        "base": { "attackRange": 160, "attackDamage": 25, "attackInterval": 1.0 },
+        "growth": { "attackRange": 1.2, "attackDamage": 1.5, "attackInterval": 0.9 }
+    }
+]

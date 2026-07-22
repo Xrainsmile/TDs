@@ -1,88 +1,72 @@
-import { _decorator, Component, Node, Prefab, instantiate, Vec3 } from 'cc';
-
-const { ccclass, property } = _decorator;
+import { Node, Prefab, instantiate, clone } from 'cc';
 
 /**
  * ObjectPool - 通用对象池
  *
- * 用于复用频繁创建/销毁的对象（子弹、敌人等），减少 GC 压力
- *
- * 用法：
- *  const pool = new ObjectPool();
- *  pool.init(prefab, 20, parentNode);
- *  const node = pool.get();
- *  pool.put(node);
+ * 支持 Prefab 或 Node 模板。
+ * 使用 Node 模板时，通过 clone() 复制节点（用于运行时无 Prefab 的情况）。
  */
 export class ObjectPool {
     private _prefab: Prefab | null = null;
+    private _template: Node | null = null;
     private _pool: Node[] = [];
     private _activeCount: number = 0;
 
-    /**
-     * 初始化对象池
-     * @param prefab 预制体
-     * @param preAllocate 预分配数量
-     * @param parent 父节点
-     */
+    /** 用 Prefab 初始化 */
     public init(prefab: Prefab, preAllocate: number = 10, parent?: Node): void {
         this._prefab = prefab;
+        this._template = null;
         for (let i = 0; i < preAllocate; i++) {
             const node = instantiate(prefab);
             node.active = false;
-            if (parent) {
-                node.parent = parent;
-            }
+            if (parent) node.parent = parent;
             this._pool.push(node);
         }
     }
 
-    /**
-     * 从池中获取一个节点（如池空则新建）
-     */
+    /** 用 Node 模板初始化（运行时无 Prefab 时使用） */
+    public initWithTemplate(template: Node, preAllocate: number = 10, parent?: Node): void {
+        this._prefab = null;
+        this._template = template;
+        for (let i = 0; i < preAllocate; i++) {
+            const node = instantiate(template);
+            node.active = false;
+            if (parent) node.parent = parent;
+            this._pool.push(node);
+        }
+    }
+
     public get(parent?: Node): Node {
         let node: Node;
         if (this._pool.length > 0) {
             node = this._pool.pop()!;
         } else if (this._prefab) {
             node = instantiate(this._prefab);
+        } else if (this._template) {
+            node = instantiate(this._template);
         } else {
             return new Node();
         }
         node.active = true;
-        if (parent && node.parent !== parent) {
-            node.parent = parent;
-        }
+        if (parent && node.parent !== parent) node.parent = parent;
         this._activeCount++;
         return node;
     }
 
-    /**
-     * 将节点归还池中
-     */
     public put(node: Node): void {
         node.active = false;
         this._pool.push(node);
         this._activeCount = Math.max(0, this._activeCount - 1);
     }
 
-    /**
-     * 清空池中所有节点
-     */
     public clear(): void {
         for (const node of this._pool) {
-            if (node.isValid) {
-                node.destroy();
-            }
+            if (node.isValid) node.destroy();
         }
         this._pool.length = 0;
         this._activeCount = 0;
     }
 
-    public get PoolSize(): number {
-        return this._pool.length;
-    }
-
-    public get ActiveCount(): number {
-        return this._activeCount;
-    }
+    public get PoolSize(): number { return this._pool.length; }
+    public get ActiveCount(): number { return this._activeCount; }
 }
