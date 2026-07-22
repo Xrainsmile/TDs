@@ -119,9 +119,11 @@ export class SceneInitializer extends Component {
         gridNode.layer = Layers.Enum.UI_2D;
         gridNode.setParent(gameLayer);
         const gridManager = gridNode.addComponent(GridManager);
-        // 使用设计分辨率的原点（960x640 的一半）
-        gridManager.originX = -DESIGN_WIDTH / 2;
-        gridManager.originY = -DESIGN_HEIGHT / 2;
+        // 让格子居中：col=3 处于 x=0，row=0 处于 y=0
+        // originX = -col*cellSize - cellSize/2 = -3*64 - 32 = -224
+        // originY = -row*cellSize - cellSize/2 = 0*64 - 32 = -32
+        gridManager.originX = -224;
+        gridManager.originY = -32;
         console.log(`SceneInitializer: GridManager 原点 (${gridManager.originX}, ${gridManager.originY}), 格子 ${gridManager.cellSize}px`);
 
         // --- 2g. InputManager ---
