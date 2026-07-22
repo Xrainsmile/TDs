@@ -46,7 +46,7 @@ export class SceneInitializer extends Component {
         // 使用设计分辨率（与关卡数据坐标匹配）
         const DESIGN_WIDTH = 960;
         const DESIGN_HEIGHT = 640;
-        view.setDesignResolutionSize(DESIGN_WIDTH, DESIGN_HEIGHT, view.ResolutionPolicy.SHOW_ALL);
+        view.setDesignResolutionSize(DESIGN_WIDTH, DESIGN_HEIGHT, 3); // 3 = SHOW_ALL
         console.log(`SceneInitializer: 设计分辨率 ${DESIGN_WIDTH}x${DESIGN_HEIGHT}`);
 
         // === 1. GameManager 根节点（持久化）===
