@@ -193,8 +193,10 @@ export class SceneInitializer extends Component {
         ghostNode.setParent(uiLayer);
         const ghostTransform = ghostNode.addComponent(UITransform);
         ghostTransform.setContentSize(48, 48);
+        ghostTransform.setAnchorPoint(0.5, 0.5);
         const ghostGfx = ghostNode.addComponent(Graphics);
         ghostGfx.fillColor = new Color(50, 150, 255, 120);
+        // 画在节点中心（-24~24 范围内居中）
         ghostGfx.circle(0, 0, 20);
         ghostGfx.fill();
         ghostNode.active = false;
@@ -230,6 +232,27 @@ export class SceneInitializer extends Component {
             if (!isDragging) return;
             const local = touchToCanvasLocal(event);
             ghostNode.setPosition(local.x, local.y, 0);
+
+            // 磁吸高亮：拖拽时高亮最近的建造点
+            for (let i = 0; i < slotNodes.length; i++) {
+                const slot = slotNodes[i];
+                if (!slot.active) continue;
+                const dist = Math.sqrt(
+                    (local.x - slotPositions[i].x) ** 2 +
+                    (local.y - slotPositions[i].y) ** 2
+                );
+                const gfx = slot.getComponent(Graphics);
+                if (gfx) {
+                    if (dist < 120) {
+                        // 高亮：绿色边框变亮
+                        gfx.strokeColor = new Color(100, 255, 100, 255);
+                        gfx.fillColor = new Color(100, 255, 100, 80);
+                    } else {
+                        gfx.strokeColor = new Color(100, 200, 100, 200);
+                        gfx.fillColor = new Color(100, 200, 100, 60);
+                    }
+                }
+            }
         });
 
         // TOUCH_END 绑定到 Canvas
@@ -259,8 +282,8 @@ export class SceneInitializer extends Component {
                 }
             }
 
-            // 磁吸半径 80 像素
-            if (nearestSlot >= 0 && nearestDist < 80) {
+            // 磁吸半径 120 像素（放宽）
+            if (nearestSlot >= 0 && nearestDist < 120) {
                 const isFirstTower = placedCount === 0;
                 if (isFirstTower) {
                     gameState.Currency.addGold(TOWER_COST);
