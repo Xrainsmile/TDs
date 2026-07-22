@@ -189,15 +189,15 @@ export class SceneInitializer extends Component {
         towerButton.setParent(towerBar);
 
         // --- 拖拽幽灵（跟随手指的半透明塔）---
+        // 幽灵塔放在 GameLayer 下，与建造点/塔/敌人同一坐标系
         const ghostNode = new Node('DragGhost');
         ghostNode.layer = Layers.Enum.UI_2D;
-        ghostNode.setParent(uiLayer);
+        ghostNode.setParent(gameLayer);
         const ghostTransform = ghostNode.addComponent(UITransform);
         ghostTransform.setContentSize(48, 48);
         ghostTransform.setAnchorPoint(0.5, 0.5);
         const ghostGfx = ghostNode.addComponent(Graphics);
         ghostGfx.fillColor = new Color(50, 150, 255, 120);
-        // 画在节点中心（-24~24 范围内居中）
         ghostGfx.circle(0, 0, 20);
         ghostGfx.fill();
         ghostNode.active = false;
@@ -207,10 +207,10 @@ export class SceneInitializer extends Component {
         let isDragging = false;
         let placedCount = 0;  // 已放置塔数量（第一个免费）
 
-        // 统一坐标转换：getUILocation() + convertToNodeSpaceAR()
-        const eventToLocal = (event: EventTouch, parentTransform: UITransform): Vec3 => {
+        // 统一坐标转换：所有触摸坐标都转为 GameLayer 局部坐标
+        const eventToGameLocal = (event: EventTouch): Vec3 => {
             const uiPos = event.getUILocation();
-            return parentTransform.convertToNodeSpaceAR(v3(uiPos.x, uiPos.y, 0));
+            return gameLayerTransform.convertToNodeSpaceAR(v3(uiPos.x, uiPos.y, 0));
         };
 
         // TOUCH_START：触发拖拽 + 立即放置幽灵塔到鼠标位置
@@ -222,8 +222,8 @@ export class SceneInitializer extends Component {
             }
             isDragging = true;
             ghostNode.active = true;
-            // 按下时立即放到鼠标位置，避免幽灵先出现在默认坐标
-            const local = eventToLocal(event, uiTransform);
+            // 按下时立即放到鼠标位置（GameLayer 局部坐标）
+            const local = eventToGameLocal(event);
             ghostNode.setPosition(local);
             console.log(`开始拖拽塔${isFirstTower ? '（首塔免费）' : ''}`);
         });
@@ -234,7 +234,7 @@ export class SceneInitializer extends Component {
 
         canvas.on(Node.EventType.TOUCH_MOVE, (event: EventTouch) => {
             if (!isDragging) return;
-            const local = eventToLocal(event, uiTransform);
+            const local = eventToGameLocal(event);
 
             // 找最近的可用建造点
             let nearestSlot = -1;
