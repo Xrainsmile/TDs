@@ -1,4 +1,4 @@
-import { _decorator, Component, Node, EventTouch, v3, Vec3 } from 'cc';
+import { _decorator, Component, Node, EventTouch, v3, Vec3, view } from 'cc';
 import { GameState } from '../core/Constants';
 import { GameStateManager } from '../systems/GameStateManager';
 import { GridManager } from './GridManager';
@@ -60,8 +60,13 @@ export class InputManager extends Component {
             return;
         }
 
+        // getUILocation() 返回屏幕像素坐标（左下角为原点）
+        // 需要转换为世界坐标（屏幕中心为原点）
         const uiPos = event.getUILocation();
-        const worldPos = v3(uiPos.x, uiPos.y, 0);
+        const screenSize = view.getVisibleSize();
+        const worldX = uiPos.x - screenSize.width / 2;
+        const worldY = uiPos.y - screenSize.height / 2;
+        const worldPos = v3(worldX, worldY, 0);
 
         if (!this.gridManager) {
             console.log('InputManager: gridManager 为空');
@@ -69,7 +74,7 @@ export class InputManager extends Component {
         }
 
         const grid = this.gridManager.worldToGrid(worldPos);
-        console.log(`InputManager: 点击坐标 (${uiPos.x.toFixed(0)}, ${uiPos.y.toFixed(0)}) → 网格 (${grid.col}, ${grid.row})`);
+        console.log(`InputManager: 屏幕坐标 (${uiPos.x.toFixed(0)}, ${uiPos.y.toFixed(0)}) → 世界坐标 (${worldX.toFixed(0)}, ${worldY.toFixed(0)}) → 网格 (${grid.col}, ${grid.row})`);
 
         if (this.gridManager.canBuildAt(grid.col, grid.row)) {
             const slotPos = this.gridManager.gridToWorld(grid.col, grid.row);

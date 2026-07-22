@@ -1,4 +1,4 @@
-import { _decorator, Component, Node, director, Vec3, view, UITransform, Layers, JsonAsset, resources, Camera, Color, find } from 'cc';
+import { _decorator, Component, Node, director, view, UITransform, Layers, JsonAsset, resources } from 'cc';
 import { GameStateManager } from '../systems/GameStateManager';
 import { CurrencySystem } from '../systems/CurrencySystem';
 import { DamageSystem } from '../systems/DamageSystem';
@@ -37,18 +37,6 @@ export class SceneInitializer extends Component {
 
     protected start(): void {
         console.log('========== SceneInitializer: start() 被调用 ==========');
-        console.log('SceneInitializer: node =', this.node.name, 'active =', this.node.active);
-
-        // 视觉标记：找到 Camera 并改变背景色为绿色，确认脚本在运行
-        const camera = find('Canvas/Camera');
-        if (camera) {
-            const cam = camera.getComponent(Camera);
-            if (cam) {
-                cam.backgroundColor = new Color(30, 60, 30, 255);
-                console.log('SceneInitializer: Camera 背景色已改为绿色');
-            }
-        }
-
         this.setupScene();
     }
 
@@ -63,9 +51,11 @@ export class SceneInitializer extends Component {
         gmNode.layer = Layers.Enum.UI_2D;
         director.getScene()?.addChild(gmNode);
 
-        const gameStateManager = gmNode.addComponent(GameStateManager);
+        // 先添加 CurrencySystem 和 DamageSystem，再添加 GameStateManager
+        // 这样 GameStateManager.onLoad 时能正确获取 CurrencySystem
         const currencySystem = gmNode.addComponent(CurrencySystem);
         const damageSystem = gmNode.addComponent(DamageSystem);
+        const gameStateManager = gmNode.addComponent(GameStateManager);
 
         // === 2. GameLayer（游戏逻辑层）===
         const gameLayer = new Node('GameLayer');

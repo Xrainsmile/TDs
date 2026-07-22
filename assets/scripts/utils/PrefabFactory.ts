@@ -132,7 +132,10 @@ export function createProjectileNode(type: TowerType): Node {
 export function createPathNode(waypoints: { x: number; y: number }[]): Node {
     const node = new Node('PathVisual');
     node.layer = Layers.Enum.UI_2D;
-    node.addComponent(UITransform);
+    const transform = node.addComponent(UITransform);
+    // 设置足够大的 ContentSize 确保 Graphics 能渲染
+    transform.setContentSize(2000, 2000);
+    transform.setAnchorPoint(0.5, 0.5);
     const gfx = node.addComponent(Graphics);
 
     gfx.lineWidth = 40;
