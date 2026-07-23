@@ -32,12 +32,12 @@ export class SceneInitializer extends Component {
     // 塔属性（攻击塔）
     private readonly TOWER_RANGE = 200;
     private readonly TOWER_DAMAGE = 20;  // 提升 100%（10→20）
-    private readonly TOWER_INTERVAL = 0.8;
+    private readonly TOWER_INTERVAL = 0.56;  // 0.8 × 0.7（提升30%攻速）
     private readonly TOWER_COST = 100;
 
     // 减速塔属性
     private readonly SLOW_TOWER_RANGE = 200;
-    private readonly SLOW_TOWER_INTERVAL = 1.0;
+    private readonly SLOW_TOWER_INTERVAL = 0.7;  // 1.0 × 0.7（提升30%攻速）
     private readonly SLOW_TOWER_COST = 150;
     private readonly SLOW_MULTIPLIER = 0.7;   // 速度降为 70%（即降低 30%）
     private readonly SLOW_DURATION = 2.0;      // 持续 2 秒
@@ -464,7 +464,7 @@ export class SceneInitializer extends Component {
             // 当前波次全部生成且全部死亡 → 下一波
             if (this.spawnedInWave >= wave.count && this.enemies.length === 0) {
                 this.waveActive = false;
-                this.waveDelay = 2;
+                this.waveDelay = 10;  // 波次间等待 10 秒
                 console.log(`Wave ${this.currentWave} 完成（spawned=${this.spawnedInWave}/${wave.count}, enemies=0），等待 2 秒后启动 Wave ${this.currentWave + 1}`);
             }
         } else if (this.waveDelay > 0) {
