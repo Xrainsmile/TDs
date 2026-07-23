@@ -1,4 +1,5 @@
 import { _decorator, Component, Node, view, UITransform, Layers, Vec3, Graphics, Color, Label, EventTouch, v3 } from 'cc';
+import { HUD } from '../ui/HUD';
 
 const { ccclass } = _decorator;
 
@@ -158,6 +159,15 @@ export class SceneInitializer extends Component {
     // 金币
     private readonly INITIAL_GOLD = 300;
     private readonly KILL_REWARD = 20;
+    private readonly TOWER_REMOVE_COST = 40;       // 删塔花费
+    private readonly LONG_PRESS_THRESHOLD = 0.5;   // 长按触发阈值（秒）
+    private readonly LONG_PRESS_MOVE_TOLERANCE = 10; // 波次间长按手指允许移动距离（超过转移动拖拽）
+    private readonly LONG_PRESS_MOVE_TOLERANCE_COMBAT = 30; // 进攻中长按手指允许移动距离（更大，避免误取消）
+    private readonly EXPLOSION_RADIUS = 60;          // 自爆 AOE 半径
+    private readonly EXPLOSION_DAMAGE = 80;         // 自爆 AOE 伤害
+
+    // 关卡开始倒计时（秒）
+    private readonly LEVEL_START_COUNTDOWN = 5;
 
     // 子弹
     private readonly BULLET_SPEED = 500;
@@ -237,7 +247,7 @@ export class SceneInitializer extends Component {
             id: 'healer',
             name: '治疗兵',
             speedMultiplier: 0.9,
-            hpMultiplier: 0.8,
+            hpMultiplier: 1.0,
             color: new Color(255, 150, 200, 255),
             radius: 14,
             onUpdate: (enemy, dt, allEnemies) => {
@@ -282,88 +292,91 @@ export class SceneInitializer extends Component {
     // type:  'normal' 普通兵 / 'healer' 治疗兵（治疗兵速度慢10%、血量建议是普通的 0.8 倍）
     // hp:    这只敌人多少血
     private readonly WAVES: WaveConfig[] = [
-        // Wave 1：30 只普通兵，HP=40，每隔 1.0s 一只
+        // Wave 1：30 只普通兵，HP=35，每隔 1.2s 一只
         { entries: [
-            { time: 0.0,  type: 'normal', hp: 40 },  { time: 1.0,  type: 'normal', hp: 40 },
-            { time: 2.0,  type: 'normal', hp: 40 },  { time: 3.0,  type: 'normal', hp: 40 },
-            { time: 4.0,  type: 'normal', hp: 40 },  { time: 5.0,  type: 'normal', hp: 40 },
-            { time: 6.0,  type: 'normal', hp: 40 },  { time: 7.0,  type: 'normal', hp: 40 },
-            { time: 8.0,  type: 'normal', hp: 40 },  { time: 9.0,  type: 'normal', hp: 40 },
-            { time: 10.0, type: 'normal', hp: 40 },  { time: 11.0, type: 'normal', hp: 40 },
-            { time: 12.0, type: 'normal', hp: 40 },  { time: 13.0, type: 'normal', hp: 40 },
-            { time: 14.0, type: 'normal', hp: 40 },  { time: 15.0, type: 'normal', hp: 40 },
-            { time: 16.0, type: 'normal', hp: 40 },  { time: 17.0, type: 'normal', hp: 40 },
-            { time: 18.0, type: 'normal', hp: 40 },  { time: 19.0, type: 'normal', hp: 40 },
-            { time: 20.0, type: 'normal', hp: 40 },  { time: 21.0, type: 'normal', hp: 40 },
-            { time: 22.0, type: 'normal', hp: 40 },  { time: 23.0, type: 'normal', hp: 40 },
-            { time: 24.0, type: 'normal', hp: 40 },  { time: 25.0, type: 'normal', hp: 40 },
-            { time: 26.0, type: 'normal', hp: 40 },  { time: 27.0, type: 'normal', hp: 40 },
-            { time: 28.0, type: 'normal', hp: 40 },  { time: 29.0, type: 'normal', hp: 40 },
+            { time: 0.0,  type: 'normal', hp: 35 },  { time: 1.2,  type: 'normal', hp: 35 },
+            { time: 2.4,  type: 'normal', hp: 35 },  { time: 3.6,  type: 'normal', hp: 35 },
+            { time: 4.8,  type: 'normal', hp: 35 },  { time: 6.0,  type: 'normal', hp: 35 },
+            { time: 7.2,  type: 'normal', hp: 35 },  { time: 8.4,  type: 'normal', hp: 35 },
+            { time: 9.6,  type: 'normal', hp: 35 },  { time: 10.8, type: 'normal', hp: 35 },
+            { time: 12.0, type: 'normal', hp: 35 },  { time: 13.2, type: 'normal', hp: 35 },
+            { time: 14.4, type: 'normal', hp: 35 },  { time: 15.6, type: 'normal', hp: 35 },
+            { time: 16.8, type: 'normal', hp: 35 },  { time: 18.0, type: 'normal', hp: 35 },
+            { time: 19.2, type: 'normal', hp: 35 },  { time: 20.4, type: 'normal', hp: 35 },
+            { time: 21.6, type: 'normal', hp: 35 },  { time: 22.8, type: 'normal', hp: 35 },
+            { time: 24.0, type: 'normal', hp: 35 },  { time: 25.2, type: 'normal', hp: 35 },
+            { time: 26.4, type: 'normal', hp: 35 },  { time: 27.6, type: 'normal', hp: 35 },
+            { time: 28.8, type: 'normal', hp: 35 },  { time: 30.0, type: 'normal', hp: 35 },
+            { time: 31.2, type: 'normal', hp: 35 },  { time: 32.4, type: 'normal', hp: 35 },
+            { time: 33.6, type: 'normal', hp: 35 },  { time: 34.8, type: 'normal', hp: 35 },
         ]},
-        // Wave 2：30 只普通兵，HP=60，每隔 0.8s 一只
+        // Wave 2：30 只普通兵，HP=85，每隔 1.0s 一只
         { entries: [
-            { time: 0.0,  type: 'normal', hp: 60 },  { time: 0.8,  type: 'normal', hp: 60 },
-            { time: 1.6,  type: 'normal', hp: 60 },  { time: 2.4,  type: 'normal', hp: 60 },
-            { time: 3.2,  type: 'normal', hp: 60 },  { time: 4.0,  type: 'normal', hp: 60 },
-            { time: 4.8,  type: 'normal', hp: 60 },  { time: 5.6,  type: 'normal', hp: 60 },
-            { time: 6.4,  type: 'normal', hp: 60 },  { time: 7.2,  type: 'normal', hp: 60 },
-            { time: 8.0,  type: 'normal', hp: 60 },  { time: 8.8,  type: 'normal', hp: 60 },
-            { time: 9.6,  type: 'normal', hp: 60 },  { time: 10.4, type: 'normal', hp: 60 },
-            { time: 11.2, type: 'normal', hp: 60 },  { time: 12.0, type: 'normal', hp: 60 },
-            { time: 12.8, type: 'normal', hp: 60 },  { time: 13.6, type: 'normal', hp: 60 },
-            { time: 14.4, type: 'normal', hp: 60 },  { time: 15.2, type: 'normal', hp: 60 },
-            { time: 16.0, type: 'normal', hp: 60 },  { time: 16.8, type: 'normal', hp: 60 },
-            { time: 17.6, type: 'normal', hp: 60 },  { time: 18.4, type: 'normal', hp: 60 },
-            { time: 19.2, type: 'normal', hp: 60 },  { time: 20.0, type: 'normal', hp: 60 },
-            { time: 20.8, type: 'normal', hp: 60 },  { time: 21.6, type: 'normal', hp: 60 },
-            { time: 22.4, type: 'normal', hp: 60 },  { time: 23.2, type: 'normal', hp: 60 },
+            { time: 0.0,  type: 'normal', hp: 85 },  { time: 1.0,  type: 'normal', hp: 85 },
+            { time: 2.0,  type: 'normal', hp: 85 },  { time: 3.0,  type: 'normal', hp: 85 },
+            { time: 4.0,  type: 'normal', hp: 85 },  { time: 5.0,  type: 'normal', hp: 85 },
+            { time: 6.0,  type: 'normal', hp: 85 },  { time: 7.0,  type: 'normal', hp: 85 },
+            { time: 8.0,  type: 'normal', hp: 85 },  { time: 9.0,  type: 'normal', hp: 85 },
+            { time: 10.0, type: 'normal', hp: 85 },  { time: 11.0, type: 'normal', hp: 85 },
+            { time: 12.0, type: 'normal', hp: 85 },  { time: 13.0, type: 'normal', hp: 85 },
+            { time: 14.0, type: 'normal', hp: 85 },  { time: 15.0, type: 'normal', hp: 85 },
+            { time: 16.0, type: 'normal', hp: 85 },  { time: 17.0, type: 'normal', hp: 85 },
+            { time: 18.0, type: 'normal', hp: 85 },  { time: 19.0, type: 'normal', hp: 85 },
+            { time: 20.0, type: 'normal', hp: 85 },  { time: 21.0, type: 'normal', hp: 85 },
+            { time: 22.0, type: 'normal', hp: 85 },  { time: 23.0, type: 'normal', hp: 85 },
+            { time: 24.0, type: 'normal', hp: 85 },  { time: 25.0, type: 'normal', hp: 85 },
+            { time: 26.0, type: 'normal', hp: 85 },  { time: 27.0, type: 'normal', hp: 85 },
+            { time: 28.0, type: 'normal', hp: 85 },  { time: 29.0, type: 'normal', hp: 85 },
         ]},
-        // Wave 3：30 只，3 普通 + 1 治疗循环穿插（23 普通 HP=100 + 7 治疗 HP=80），每隔 0.6s 一只
+        // Wave 3：30 只，3 普通 + 1 治疗循环穿插（23 普通 HP=140 + 7 治疗 HP=175），每隔 1.4s 一只
         { entries: [
-            { time: 0.0,  type: 'normal', hp: 200 },  { time: 0.6,  type: 'normal', hp: 200 },
-            { time: 1.2,  type: 'normal', hp: 200 },  { time: 1.8,  type: 'healer', hp: 80 },
-            { time: 2.4,  type: 'normal', hp: 200 },  { time: 3.0,  type: 'normal', hp: 200 },
-            { time: 3.6,  type: 'normal', hp: 200 },  { time: 4.2,  type: 'healer', hp: 80 },
-            { time: 4.8,  type: 'normal', hp: 200 },  { time: 5.4,  type: 'normal', hp: 200 },
-            { time: 6.0,  type: 'normal', hp: 200 },  { time: 6.6,  type: 'healer', hp: 80 },
-            { time: 7.2,  type: 'normal', hp: 200 },  { time: 7.8,  type: 'normal', hp: 200 },
-            { time: 8.4,  type: 'normal', hp: 200 },  { time: 9.0,  type: 'healer', hp: 80 },
-            { time: 9.6,  type: 'normal', hp: 200 },  { time: 10.2, type: 'normal', hp: 200 },
-            { time: 10.8, type: 'normal', hp: 200 },  { time: 11.4, type: 'healer', hp: 80 },
-            { time: 12.0, type: 'normal', hp: 200 },  { time: 12.6, type: 'normal', hp: 200 },
-            { time: 13.2, type: 'normal', hp: 200 },  { time: 13.8, type: 'healer', hp: 80 },
-            { time: 14.4, type: 'normal', hp: 200 },  { time: 15.0, type: 'normal', hp: 200 },
-            { time: 15.6, type: 'normal', hp: 200 },  { time: 16.2, type: 'healer', hp: 80 },
-            { time: 16.8, type: 'normal', hp: 200 },  { time: 17.4, type: 'normal', hp: 200 },
+            { time: 0.0,  type: 'normal', hp: 140 },  { time: 1.4,  type: 'normal', hp: 140 },
+            { time: 2.8,  type: 'normal', hp: 140 },  { time: 4.2,  type: 'healer', hp: 175 },
+            { time: 5.6,  type: 'normal', hp: 140 },  { time: 7.0,  type: 'normal', hp: 140 },
+            { time: 8.4,  type: 'normal', hp: 140 },  { time: 9.8,  type: 'healer', hp: 175 },
+            { time: 11.2, type: 'normal', hp: 140 },  { time: 12.6, type: 'normal', hp: 140 },
+            { time: 14.0, type: 'normal', hp: 140 },  { time: 15.4, type: 'healer', hp: 175 },
+            { time: 16.8, type: 'normal', hp: 140 },  { time: 18.2, type: 'normal', hp: 140 },
+            { time: 19.6, type: 'normal', hp: 140 },  { time: 21.0, type: 'healer', hp: 175 },
+            { time: 22.4, type: 'normal', hp: 140 },  { time: 23.8, type: 'normal', hp: 140 },
+            { time: 25.2, type: 'normal', hp: 140 },  { time: 26.6, type: 'healer', hp: 175 },
+            { time: 28.0, type: 'normal', hp: 140 },  { time: 29.4, type: 'normal', hp: 140 },
+            { time: 30.8, type: 'normal', hp: 140 },  { time: 32.2, type: 'healer', hp: 175 },
+            { time: 33.6, type: 'normal', hp: 140 },  { time: 35.0, type: 'normal', hp: 140 },
+            { time: 36.4, type: 'normal', hp: 140 },  { time: 37.8, type: 'healer', hp: 175 },
+            { time: 39.2, type: 'normal', hp: 140 },  { time: 40.6, type: 'normal', hp: 140 },
         ]},
-        // Wave 4：30 只普通兵，HP=200，每隔 1.5s 一只
+        // Wave 4：30 只普通兵，HP=180，每隔 0.8s 一只
         { entries: [
-            { time: 0.0,  type: 'normal', hp: 200 },  { time: 1.5,  type: 'normal', hp: 200 },
-            { time: 3.0,  type: 'normal', hp: 200 },  { time: 4.5,  type: 'normal', hp: 200 },
-            { time: 6.0,  type: 'normal', hp: 200 },  { time: 7.5,  type: 'normal', hp: 200 },
-            { time: 9.0,  type: 'normal', hp: 200 },  { time: 10.5, type: 'normal', hp: 200 },
-            { time: 12.0, type: 'normal', hp: 200 },  { time: 13.5, type: 'normal', hp: 200 },
-            { time: 15.0, type: 'normal', hp: 200 },  { time: 16.5, type: 'normal', hp: 200 },
-            { time: 18.0, type: 'normal', hp: 200 },  { time: 19.5, type: 'normal', hp: 200 },
-            { time: 21.0, type: 'normal', hp: 200 },  { time: 22.5, type: 'normal', hp: 200 },
-            { time: 24.0, type: 'normal', hp: 200 },  { time: 25.5, type: 'normal', hp: 200 },
-            { time: 27.0, type: 'normal', hp: 200 },  { time: 28.5, type: 'normal', hp: 200 },
-            { time: 30.0, type: 'normal', hp: 200 },  { time: 31.5, type: 'normal', hp: 200 },
-            { time: 33.0, type: 'normal', hp: 200 },  { time: 34.5, type: 'normal', hp: 200 },
-            { time: 36.0, type: 'normal', hp: 200 },  { time: 37.5, type: 'normal', hp: 200 },
-            { time: 39.0, type: 'normal', hp: 200 },  { time: 40.5, type: 'normal', hp: 200 },
-            { time: 42.0, type: 'normal', hp: 200 },  { time: 43.5, type: 'normal', hp: 200 },
+            { time: 0.0,  type: 'normal', hp: 180 },  { time: 0.8,  type: 'normal', hp: 180 },
+            { time: 1.6,  type: 'normal', hp: 180 },  { time: 2.4,  type: 'normal', hp: 180 },
+            { time: 3.2,  type: 'normal', hp: 180 },  { time: 4.0,  type: 'normal', hp: 180 },
+            { time: 4.8,  type: 'normal', hp: 180 },  { time: 5.6,  type: 'normal', hp: 180 },
+            { time: 6.4,  type: 'normal', hp: 180 },  { time: 7.2,  type: 'normal', hp: 180 },
+            { time: 8.0,  type: 'normal', hp: 180 },  { time: 8.8,  type: 'normal', hp: 180 },
+            { time: 9.6,  type: 'normal', hp: 180 },  { time: 10.4, type: 'normal', hp: 180 },
+            { time: 11.2, type: 'normal', hp: 180 },  { time: 12.0, type: 'normal', hp: 180 },
+            { time: 12.8, type: 'normal', hp: 180 },  { time: 13.6, type: 'normal', hp: 180 },
+            { time: 14.4, type: 'normal', hp: 180 },  { time: 15.2, type: 'normal', hp: 180 },
+            { time: 16.0, type: 'normal', hp: 180 },  { time: 16.8, type: 'normal', hp: 180 },
+            { time: 17.6, type: 'normal', hp: 180 },  { time: 18.4, type: 'normal', hp: 180 },
+            { time: 19.2, type: 'normal', hp: 180 },  { time: 20.0, type: 'normal', hp: 180 },
+            { time: 20.8, type: 'normal', hp: 180 },  { time: 21.6, type: 'normal', hp: 180 },
+            { time: 22.4, type: 'normal', hp: 180 },  { time: 23.2, type: 'normal', hp: 180 },
         ]},
     ];
 
-    // 建造点
+    // 建造点（下面 3 个 + 上面 3 个，路径在 y=0 上下对称）
     private readonly SLOT_POSITIONS = [
         new Vec3(-150, -64, 0),
         new Vec3(0, -64, 0),
         new Vec3(150, -64, 0),
+        new Vec3(-150, 64, 0),
+        new Vec3(0, 64, 0),
+        new Vec3(150, 64, 0),
     ];
     private slotNodes: Node[] = [];
-    private slotOccupied: boolean[] = [false, false, false];
+    private slotOccupied: boolean[] = [false, false, false, false, false, false];
 
     // 拖拽
     private ghostNode: Node | null = null;
@@ -383,6 +396,7 @@ export class SceneInitializer extends Component {
     private goldLabel: Label | null = null;
     private waveLabel: Label | null = null;
     private livesLabel: Label | null = null;
+    private hud: HUD | null = null;
     private gold = 0;
 
     // 友军（基地）
@@ -396,6 +410,7 @@ export class SceneInitializer extends Component {
     private waveTotalCount = 0;  // 当前波次总敌人数
     private waveActive = false;
     private waveDelay = 0;  // 波次间延迟（保留兼容，未使用）
+    private levelCountdown = 0;  // 关卡开始倒计时剩余秒数（>0 时正在倒计时）
     // 暂停状态：
     // - isWavePaused: 波次结束后的"自动暂停"→ 可以建塔/移塔，点"开始下一波"继续
     // - isUserPaused: 用户在波次进行中主动暂停 → 完全冻结，不能拖拽
@@ -429,6 +444,14 @@ export class SceneInitializer extends Component {
     private dragMode: 'place' | 'move' = 'place';
     // 移动塔时记录原槽位
     private moveFromSlot = -1;
+    // 长按删塔状态
+    private longPressTower = -1;     // 长按中的塔索引（>=0 时正在长按）
+    private longPressTimer = 0;       // 长按计时（秒）
+    private longPressStartPos: Vec3 | null = null;  // 长按起始触摸点（gameLocal）
+    private longPressTriggered = false;  // 长按是否已触发（弹出选项框）
+    // 自爆选项框（长按塔后弹出）
+    private explodeMenu: Node | null = null;
+    private explodeMenuTowerIndex = -1;  // 选项框对应的塔索引
 
     protected start(): void {
         view.setDesignResolutionSize(960, 640, 3);
@@ -501,6 +524,30 @@ export class SceneInitializer extends Component {
             const buttonLocal = this.eventToCanvasLocal(event);
             const gameLocal = this.eventToGameLocal(event);
 
+            // 0. 判定：是否点中了自爆选项框的按钮（长按塔后弹出）
+            if (this.explodeMenu && this.explodeMenu.active) {
+                const menuWorldPos = this.explodeMenu.getPosition();
+                // 选项框在 canvas 下，buttonLocal 也是 canvas 坐标系
+                const explodeBtnPos = new Vec3(menuWorldPos.x, menuWorldPos.y - 25, 0);
+                const cancelBtnPos = new Vec3(menuWorldPos.x, menuWorldPos.y - 65, 0);
+                // 自爆按钮
+                if (Math.abs(buttonLocal.x - explodeBtnPos.x) <= 70 && Math.abs(buttonLocal.y - explodeBtnPos.y) <= 18) {
+                    this.executeExplode(this.explodeMenuTowerIndex);
+                    this.hideExplodeMenu();
+                    this.resetLongPress();
+                    return;
+                }
+                // 取消按钮
+                if (Math.abs(buttonLocal.x - cancelBtnPos.x) <= 70 && Math.abs(buttonLocal.y - cancelBtnPos.y) <= 18) {
+                    this.hideExplodeMenu();
+                    this.resetLongPress();
+                    return;
+                }
+                // 点了选项框外部 → 关闭选项框并继续后续判定
+                this.hideExplodeMenu();
+                this.resetLongPress();
+            }
+
             // 0a. 判定：是否点中了 buff 卡片（仅波次间暂停且未选时可见）
             if (this.isWavePaused && !this.buffSelected) {
                 for (let i = 0; i < this.buffCards.length; i++) {
@@ -541,7 +588,7 @@ export class SceneInitializer extends Component {
                 }
             }
             if (!hitButton) {
-                // 2. 判断是否点中了已建好的塔（移动）
+                // 2. 判断是否点中了已建好的塔（长按删除 / 短按移动）
                 let hitTower = -1;
                 for (let i = 0; i < this.towers.length; i++) {
                     if (Vec3.distance(gameLocal, this.towers[i].node.position) < 30) {
@@ -551,13 +598,9 @@ export class SceneInitializer extends Component {
                 }
                 if (hitTower < 0) return;
 
-                // 波次进行中不能移动塔（波次间暂停 isWavePaused 时可以移）
-                if (this.waveActive) {
-                    console.log('波次进行中，不能移动塔');
-                    return;
-                }
+                // 波次进行中也能长按删塔/移动塔
 
-                // 记录原槽位
+                // 记录原槽位（移动时用）
                 const towerPos = this.towers[hitTower].node.position;
                 for (let s = 0; s < this.SLOT_POSITIONS.length; s++) {
                     if (Vec3.distance(towerPos, this.SLOT_POSITIONS[s]) < 5) {
@@ -567,8 +610,17 @@ export class SceneInitializer extends Component {
                 }
                 this.dragTowerDef = this.towers[hitTower].def;
                 this.dragMode = 'move';
+
+                // 启动长按检测：不立即拖拽，update 推进计时到阈值则进入删除模式；
+                // 若 TOUCH_MOVE 移动超过容忍距离则转为移动拖拽
+                this.longPressTower = hitTower;
+                this.longPressTimer = 0;
+                this.longPressStartPos = gameLocal.clone();
+                this.longPressTriggered = false;
+                return;  // 不进入 isDragging，等长按触发或移动转拖拽
             }
 
+            // place 模式：立即进入拖拽
             this.isDragging = true;
             this.ghostNode!.active = true;
             this.drawGhost(false);
@@ -577,6 +629,31 @@ export class SceneInitializer extends Component {
         });
 
         canvas.on(Node.EventType.TOUCH_MOVE, (event: EventTouch) => {
+            // 长按检测中：手指移动超过容忍距离 → 取消长按
+            if (this.longPressTower >= 0 && this.longPressStartPos) {
+                const local = this.eventToGameLocal(event);
+                const moved = Vec3.distance(local, this.longPressStartPos);
+                // 未触发：小移动即取消；已触发：大移动才取消（给玩家反悔机会）
+                const baseTolerance = this.waveActive
+                    ? this.LONG_PRESS_MOVE_TOLERANCE_COMBAT
+                    : this.LONG_PRESS_MOVE_TOLERANCE;
+                const tolerance = this.longPressTriggered
+                    ? baseTolerance * 3
+                    : baseTolerance;
+                if (moved > tolerance) {
+                    if (!this.longPressTriggered && !this.waveActive) {
+                        // 波次之间：转为移动拖拽（moveFromSlot/dragTowerDef/dragMode='move' 已在 TOUCH_START 设好）
+                        this.isDragging = true;
+                        this.ghostNode!.active = true;
+                        this.drawGhost(false);
+                        this.ghostNode!.setPosition(local);
+                        this.updateGhostState(local);
+                    }
+                    // 进攻中或已触发的删除模式被移动取消 → 直接清空，不进入拖拽
+                    this.resetLongPress();
+                }
+                return;
+            }
             if (!this.isDragging) return;
             const local = this.eventToGameLocal(event);
             this.ghostNode!.setPosition(local);
@@ -584,12 +661,22 @@ export class SceneInitializer extends Component {
         });
 
         canvas.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
+            // 长按已触发（选项框已弹出）→ 松手不做操作，等用户点选项框按钮
+            if (this.longPressTriggered) {
+                return;
+            }
+            // 长按未触发但还在检测中 → 松手取消，什么都不做
+            if (this.longPressTower >= 0) {
+                this.resetLongPress();
+                return;
+            }
             if (!this.isDragging) return;
             this.isDragging = false;
             this.ghostNode!.active = false;
 
             // 直接用 targetSlot（在 TOUCH_MOVE 中已确定）
-            if (this.canPlace && this.targetSlot >= 0) {
+            // 进攻中禁止移动已放置的塔（只允许新建放置）
+            if (this.canPlace && this.targetSlot >= 0 && !(this.dragMode === 'move' && this.waveActive)) {
                 const slot = this.targetSlot;
 
                 if (this.dragMode === 'place') {
@@ -635,54 +722,31 @@ export class SceneInitializer extends Component {
             this.canPlace = false;
             this.targetSlot = -1;
             this.moveFromSlot = -1;
+            this.resetLongPress();
         });
 
-        // === 状态显示 ===
-        const statusNode = new Node('Status');
-        statusNode.layer = Layers.Enum.UI_2D;
-        statusNode.setParent(canvas);
-        statusNode.addComponent(UITransform);
-        statusNode.setPosition(0, 280, 0);
-        this.statusLabel = statusNode.addComponent(Label);
-        this.statusLabel.string = '拖拽左侧塔按钮到绿色格子';
-        this.statusLabel.fontSize = 20;
-
-        // === 金币显示 ===
-        const goldNode = new Node('Gold');
-        goldNode.layer = Layers.Enum.UI_2D;
-        goldNode.setParent(canvas);
-        goldNode.addComponent(UITransform);
-        goldNode.setPosition(-420, 280, 0);
-        this.goldLabel = goldNode.addComponent(Label);
-        this.goldLabel.fontSize = 24;
+        // === HUD（统一顶部状态栏：Gold / Base / Status / Wave）===
+        const hudNode = new Node('HUD');
+        hudNode.layer = Layers.Enum.UI_2D;
+        hudNode.setParent(canvas);
+        this.hud = hudNode.addComponent(HUD);
+        this.hud.init();
+        // 兼容旧字段引用：现有 goldLabel/waveLabel/livesLabel/statusLabel 调用无需改动
+        this.goldLabel = this.hud.goldLabel;
+        this.waveLabel = this.hud.waveLabel;
+        this.livesLabel = this.hud.livesLabel;
+        this.statusLabel = this.hud.statusLabel;
         this.gold = this.INITIAL_GOLD;
-        this.updateGoldLabel();
-
-        // === 波次显示 ===
-        const waveNode = new Node('Wave');
-        waveNode.layer = Layers.Enum.UI_2D;
-        waveNode.setParent(canvas);
-        waveNode.addComponent(UITransform);
-        waveNode.setPosition(420, 280, 0);
-        this.waveLabel = waveNode.addComponent(Label);
-        this.waveLabel.fontSize = 24;
-        this.waveLabel.string = `Wave: 0/${this.WAVES.length}`;
-
-        // === 友军 HP 显示 ===
-        const livesNode = new Node('Lives');
-        livesNode.layer = Layers.Enum.UI_2D;
-        livesNode.setParent(canvas);
-        livesNode.addComponent(UITransform);
-        livesNode.setPosition(-200, 280, 0);
-        this.livesLabel = livesNode.addComponent(Label);
-        this.livesLabel.fontSize = 24;
-        this.livesLabel.string = `Base: ${this.allyHp}/${this.ALLY_MAX_HP}`;
+        this.hud.setGold(this.gold);
+        this.hud.setWave(0, this.WAVES.length);
+        this.hud.setLives(this.allyHp, this.ALLY_MAX_HP);
+        this.hud.setStatus('拖拽左侧塔按钮到绿色格子');
 
         // === 终点友军建筑（城堡）===
         this.drawAlly(this.gameLayer);
 
-        // === 启动第一波 ===
-        this.startNextWave();
+        // === 关卡开始倒计时 ===
+        this.startLevelCountdown();
 
         console.log('SceneInitializer: 极简版启动');
         console.log(`波次配置: ${this.WAVES.length} 波`);
@@ -697,6 +761,15 @@ export class SceneInitializer extends Component {
         this.isUserPaused = !this.isUserPaused;
         console.log(this.isUserPaused ? '游戏暂停' : '游戏继续');
         this.updatePauseButton();
+    }
+
+    /** 关卡开始倒计时：给玩家时间建塔布防，结束后启动第一波 */
+    private startLevelCountdown(): void {
+        this.levelCountdown = this.LEVEL_START_COUNTDOWN;
+        if (this.statusLabel) {
+            this.statusLabel.string = `${Math.ceil(this.levelCountdown)} 秒后开始 - 可建塔布防`;
+        }
+        console.log(`关卡开始倒计时 ${this.LEVEL_START_COUNTDOWN} 秒`);
     }
 
     /** 开始下一波按钮：波次间自动暂停时点击启动下一波 */
@@ -872,6 +945,8 @@ export class SceneInitializer extends Component {
         this.isWavePaused = false;
         this.isUserPaused = false;
         this.buffSelected = false;
+        this.hideExplodeMenu();
+        this.resetLongPress();
         this.hideBuffCards();
         this.updatePauseButton();
         this.updateNextWaveButton();
@@ -993,11 +1068,212 @@ export class SceneInitializer extends Component {
         return this.node.getComponent(UITransform)!.convertToNodeSpaceAR(v3(uiPos.x, uiPos.y, 0));
     }
 
+    /** 重置长按状态 */
+    private resetLongPress(): void {
+        this.longPressTower = -1;
+        this.longPressTimer = 0;
+        this.longPressStartPos = null;
+        this.longPressTriggered = false;
+    }
+
+    /** 弹出自爆选项框（跟随塔位置） */
+    private showExplodeMenu(towerIndex: number): void {
+        if (towerIndex < 0 || towerIndex >= this.towers.length) return;
+        this.hideExplodeMenu();  // 先清理已有的
+        const tower = this.towers[towerIndex];
+        const pos = tower.node.position;
+        // 选项框挂在 canvas 下（与塔不同坐标系，需转换）
+        const canvasPos = this.gameTransform!.convertToNodeSpaceAR(pos);
+
+        const menu = new Node('ExplodeMenu');
+        menu.layer = Layers.Enum.UI_2D;
+        menu.setParent(this.node);
+        menu.setPosition(canvasPos.x, canvasPos.y + 60, 0);
+        const transform = menu.addComponent(UITransform);
+        transform.setContentSize(160, 100);
+
+        const gfx = menu.addComponent(Graphics);
+        // 深色半透明背景
+        gfx.fillColor = new Color(30, 30, 40, 230);
+        gfx.roundRect(-80, -50, 160, 100, 10);
+        gfx.fill();
+        gfx.strokeColor = new Color(255, 150, 80, 255);
+        gfx.lineWidth = 2;
+        gfx.roundRect(-80, -50, 160, 100, 10);
+        gfx.stroke();
+
+        // 自爆按钮（红橙）
+        gfx.fillColor = new Color(200, 60, 40, 255);
+        gfx.roundRect(-70, -43, 140, 36, 8);
+        gfx.fill();
+        const explodeLabelNode = new Node('ExplodeLabel');
+        explodeLabelNode.layer = Layers.Enum.UI_2D;
+        explodeLabelNode.setParent(menu);
+        explodeLabelNode.addComponent(UITransform);
+        explodeLabelNode.setPosition(0, -25, 0);
+        const explodeLabel = explodeLabelNode.addComponent(Label);
+        explodeLabel.string = `自爆（-${this.TOWER_REMOVE_COST}金币）`;
+        explodeLabel.fontSize = 16;
+        explodeLabel.color = new Color(255, 255, 255, 255);
+        explodeLabel.horizontalAlign = Label.HorizontalAlign.CENTER;
+        explodeLabel.verticalAlign = Label.VerticalAlign.CENTER;
+        const explodeT = explodeLabelNode.getComponent(UITransform)!;
+        explodeT.setContentSize(140, 36);
+
+        // 取消按钮（灰色）
+        gfx.fillColor = new Color(70, 70, 80, 255);
+        gfx.roundRect(-70, -83, 140, 36, 8);
+        gfx.fill();
+        const cancelLabelNode = new Node('CancelLabel');
+        cancelLabelNode.layer = Layers.Enum.UI_2D;
+        cancelLabelNode.setParent(menu);
+        cancelLabelNode.addComponent(UITransform);
+        cancelLabelNode.setPosition(0, -65, 0);
+        const cancelLabel = cancelLabelNode.addComponent(Label);
+        cancelLabel.string = '取消';
+        cancelLabel.fontSize = 16;
+        cancelLabel.color = new Color(220, 220, 220, 255);
+        cancelLabel.horizontalAlign = Label.HorizontalAlign.CENTER;
+        cancelLabel.verticalAlign = Label.VerticalAlign.CENTER;
+        const cancelT = cancelLabelNode.getComponent(UITransform)!;
+        cancelT.setContentSize(140, 36);
+
+        this.explodeMenu = menu;
+        this.explodeMenuTowerIndex = towerIndex;
+        console.log(`长按塔 ${towerIndex}，弹出选项框`);
+    }
+
+    /** 隐藏自爆选项框 */
+    private hideExplodeMenu(): void {
+        if (this.explodeMenu) {
+            this.explodeMenu.destroy();
+            this.explodeMenu = null;
+        }
+        this.explodeMenuTowerIndex = -1;
+    }
+
+    /** 执行自爆：扣金币 + 删除塔 + AOE 爆炸伤害 + 光波动画 */
+    private executeExplode(towerIndex: number): void {
+        if (towerIndex < 0 || towerIndex >= this.towers.length) return;
+        if (this.gold < this.TOWER_REMOVE_COST) {
+            console.log(`金币不足，自爆需要 ${this.TOWER_REMOVE_COST}`);
+            if (this.statusLabel) this.statusLabel.string = `金币不足！自爆需要 ${this.TOWER_REMOVE_COST} 金币`;
+            return;
+        }
+        const tower = this.towers[towerIndex];
+        const explodePos = tower.node.position.clone();
+        const def = tower.def;
+        // 扣金币
+        this.gold -= this.TOWER_REMOVE_COST;
+        this.updateGoldLabel();
+        // 释放槽位
+        for (let s = 0; s < this.SLOT_POSITIONS.length; s++) {
+            if (Vec3.distance(explodePos, this.SLOT_POSITIONS[s]) < 5) {
+                this.slotOccupied[s] = false;
+                this.slotNodes[s].active = true;
+                break;
+            }
+        }
+        // 删除塔
+        tower.node.destroy();
+        this.towers.splice(towerIndex, 1);
+        this.towerTimers.splice(towerIndex, 1);
+        // AOE 伤害
+        for (let j = this.enemies.length - 1; j >= 0; j--) {
+            const e = this.enemies[j];
+            if (!e.node.isValid) continue;
+            const d = Vec3.distance(explodePos, e.node.position);
+            if (d <= this.EXPLOSION_RADIUS) {
+                e.hp -= this.EXPLOSION_DAMAGE;
+                def.onBulletHit?.(e);  // 触发塔的命中效果（如毒 buff）
+                if (e.hp <= 0) {
+                    e.node.destroy();
+                    this.enemies.splice(j, 1);
+                    this.gold += this.KILL_REWARD;
+                    this.updateGoldLabel();
+                    console.log(`爆炸击杀！+${this.KILL_REWARD} 金币`);
+                }
+            }
+        }
+        // 爆炸光波动画
+        this.createExplosionWave(explodePos);
+        console.log(`塔自爆！位置 (${explodePos.x}, ${explodePos.y})，AOE ${this.EXPLOSION_RADIUS}px / ${this.EXPLOSION_DAMAGE} 伤害`);
+    }
+
+    /** 创建爆炸光波动画（扩散+淡出，约 0.4 秒） */
+    private createExplosionWave(pos: Vec3): void {
+        if (!this.gameLayer) return;
+        const wave = new Node('ExplosionWave');
+        wave.layer = Layers.Enum.UI_2D;
+        wave.setParent(this.gameLayer);
+        wave.setPosition(pos);
+        const transform = wave.addComponent(UITransform);
+        transform.setContentSize(this.EXPLOSION_RADIUS * 2, this.EXPLOSION_RADIUS * 2);
+        transform.setAnchorPoint(0.5, 0.5);
+        const gfx = wave.addComponent(Graphics);
+
+        // 初始光波
+        const drawWave = (radius: number, alpha: number) => {
+            gfx.clear();
+            // 外圈光波（橙色，扩散）
+            gfx.strokeColor = new Color(255, 180, 80, alpha);
+            gfx.lineWidth = 6;
+            gfx.circle(0, 0, radius);
+            gfx.stroke();
+            // 内圈填充（红橙，淡出）
+            gfx.fillColor = new Color(255, 100, 50, alpha * 0.4);
+            gfx.circle(0, 0, radius * 0.7);
+            gfx.fill();
+        };
+
+        // 动画分 5 帧，半径从 10 扩散到 60，alpha 从 255 淡出到 0
+        let frame = 0;
+        const totalFrames = 5;
+        const startRadius = 10;
+        const endRadius = this.EXPLOSION_RADIUS;
+        drawWave(startRadius, 255);
+
+        this.schedule(() => {
+            frame++;
+            const t = frame / totalFrames;  // 0→1
+            const radius = startRadius + (endRadius - startRadius) * t;
+            const alpha = Math.round(255 * (1 - t));
+            if (frame >= totalFrames) {
+                wave.destroy();
+            } else {
+                drawWave(radius, alpha);
+            }
+        }, 0.08, totalFrames - 1, 0);
+    }
+
     protected update(dt: number): void {
         if (this.isGameOver) return;
 
         // 用户暂停：完全冻结游戏逻辑（敌人/塔/子弹都不动），拖拽也在 TOUCH_START 中被阻止
         if (this.isUserPaused) return;
+
+        // === 关卡开始倒计时 ===
+        if (this.levelCountdown > 0) {
+            this.levelCountdown -= dt;
+            if (this.levelCountdown <= 0) {
+                this.levelCountdown = 0;
+                this.startNextWave();
+            } else {
+                if (this.statusLabel) {
+                    this.statusLabel.string = `${Math.ceil(this.levelCountdown)} 秒后开始 - 可建塔布防`;
+                }
+            }
+            return;  // 倒计时期间不推进波次/敌人/塔逻辑
+        }
+
+        // === 长按删塔检测 ===
+        if (this.longPressTower >= 0 && !this.longPressTriggered) {
+            this.longPressTimer += dt;
+            if (this.longPressTimer >= this.LONG_PRESS_THRESHOLD) {
+                this.longPressTriggered = true;
+                this.showExplodeMenu(this.longPressTower);
+            }
+        }
 
         // === 波次完成检测 ===
         if (this.waveActive) {
@@ -1049,8 +1325,8 @@ export class SceneInitializer extends Component {
             }
         }
 
-        // === HP 显示 ===
-        if (this.statusLabel) {
+        // === HP 显示（选项框显示时保留提示，不覆盖）===
+        if (this.statusLabel && !this.explodeMenu) {
             if (this.isWavePaused && !this.buffSelected && this.currentWave < this.WAVES.length) {
                 this.statusLabel.string = `选择强化 - 三选一  塔: ${this.towers.length}`;
             } else if (this.isWavePaused) {
@@ -1093,37 +1369,16 @@ export class SceneInitializer extends Component {
             if (this.towerTimers[i] >= effectiveInterval(def)) {
                 this.towerTimers[i] = 0;
 
-                // 收集要攻击的目标列表（主目标 + 分裂目标）
-                const targetIndices: number[] = [nearestEnemy];
-                if (ts.splitCount > 0) {
-                    // 找范围内的其他敌人，按距离排序
-                    const others: { idx: number; dist: number }[] = [];
-                    for (let j = 0; j < this.enemies.length; j++) {
-                        if (j === nearestEnemy || !this.enemies[j].node.isValid) continue;
-                        const dist = Vec3.distance(tower.node.position, this.enemies[j].node.position);
-                        if (dist <= effectiveRange(def)) {
-                            others.push({ idx: j, dist });
-                        }
-                    }
-                    others.sort((a, b) => a.dist - b.dist);
-                    for (let s = 0; s < ts.splitCount && s < others.length; s++) {
-                        targetIndices.push(others[s].idx);
-                    }
-                }
+                // 只对主目标发射 1 颗子弹；分裂在主弹命中后触发（见子弹更新段）
+                const target = this.enemies[nearestEnemy];
+                if (!target || !target.node.isValid) continue;
 
-                // 对每个目标执行攻击
-                for (const targetIdx of targetIndices) {
-                    const target = this.enemies[targetIdx];
-                    if (!target || !target.node.isValid) continue;
-
-                    if (def.attackKind === 'bullet') {
-                        // 发射子弹型
-                        this.fireBullet(tower.node.position, target.node.position, target.node, def);
-                    } else {
-                        // 瞬间效果型：调用注册的 applyInstant
-                        def.applyInstant?.(target);
-                        this.fireBullet(tower.node.position, target.node.position, target.node, def);
-                    }
+                if (def.attackKind === 'bullet') {
+                    this.fireBullet(tower.node.position, target.node.position, target.node, def);
+                } else {
+                    // 瞬间效果型：调用注册的 applyInstant
+                    def.applyInstant?.(target);
+                    this.fireBullet(tower.node.position, target.node.position, target.node, def);
                 }
             }
         }
@@ -1403,6 +1658,8 @@ export class SceneInitializer extends Component {
         this.isWavePaused = false;
         this.isUserPaused = false;
         this.buffSelected = false;
+        this.hideExplodeMenu();
+        this.resetLongPress();
         this.hideBuffCards();
         this.updatePauseButton();
         this.updateNextWaveButton();
@@ -1506,6 +1763,8 @@ export class SceneInitializer extends Component {
         this.isUserPaused = false;
         this.buffSelected = false;
         this.towerStats.reset();
+        this.resetLongPress();
+        this.hideExplodeMenu();
         this.hideBuffCards();
         this.updatePauseButton();
         this.updateNextWaveButton();
@@ -1516,8 +1775,8 @@ export class SceneInitializer extends Component {
         if (this.waveLabel) this.waveLabel.string = `Wave: 0/${this.WAVES.length}`;
         if (this.statusLabel) this.statusLabel.string = '拖拽左侧塔按钮到绿色格子';
 
-        // 启动第一波
-        this.startNextWave();
+        // 关卡开始倒计时
+        this.startLevelCountdown();
         console.log('游戏重新开始');
     }
 
