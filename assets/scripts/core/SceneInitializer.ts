@@ -21,13 +21,15 @@ interface TowerDef {
     cost: number;            // 花费
     range: number;           // 攻击范围
     interval: number;        // 攻击间隔（秒）
-    damage: number;          // 子弹伤害（bullet 类型用，instant 可填 0）
+    damage: number;          // 子弹伤害（命中扣血，instant 类型也可填非 0）
     attackKind: TowerAttackKind;
     color: Color;            // 塔主体颜色
     rangeColor: Color;       // 范围圈颜色
     buttonPos: Vec3;         // 拖拽按钮位置
     /** 瞬间效果：直接修改敌人状态（返回值无意义，直接改入参 enemy） */
     applyInstant?: (enemy: EnemyRuntime) => void;
+    /** 子弹命中时的额外效果（如施加 buff），在扣血之后调用 */
+    onBulletHit?: (enemy: EnemyRuntime) => void;
 }
 
 /** 敌人运行时数据（定义在配置表之外，因为含运行时状态） */
@@ -38,6 +40,9 @@ interface EnemyRuntime {
     healTimer: number;      // 治疗者光环计时
     // 扩展字段：新敌人的特殊计时器都挂这里，避免改结构
     extraTimer: number;
+    // 通用 buff 字典：存 { timer: 剩余秒数, dps: 每秒掉血量 }
+    // 新增 buff 只需往这里写一个 key，update 中自动处理掉血
+    buffs: Record<string, { timer: number; dps: number }>;
 }
 
 /** 敌人定义（新增敌人时注册此结构） */
@@ -118,8 +123,8 @@ export class SceneInitializer extends Component {
             name: '减速塔',
             cost: 150,
             range: 200,
-            interval: 0.7,
-            damage: 0,
+            interval: 0.84,       // 攻速降低 20%（0.7 × 1.2）
+            damage: 2,            // 攻击力为普通塔的 10%（20 × 0.1）
             attackKind: 'instant',
             color: new Color(180, 80, 220, 255),
             rangeColor: new Color(180, 80, 220, 60),
@@ -127,6 +132,29 @@ export class SceneInitializer extends Component {
             applyInstant: (enemy) => {
                 enemy.slowMultiplier = 0.7;
                 enemy.slowTimer = 2.0;
+            },
+        },
+        {
+            id: 'poison',
+            name: '毒塔',
+            cost: 180,
+            range: 180,
+            interval: 0.8,
+            damage: 10,           // 子弹直接伤害
+            attackKind: 'bullet',
+            color: new Color(100, 200, 50, 255),   // 绿色
+            rangeColor: new Color(100, 200, 50, 60),
+            buttonPos: new Vec3(-400, 0, 0),       // 新按钮位置
+            // 命中时施加毒性 buff：每秒掉 8 血，持续 5 秒
+            onBulletHit: (enemy) => {
+                // 刷新或叠加毒 buff（取更强的）
+                const existing = enemy.buffs['poison'];
+                if (existing) {
+                    existing.timer = 5.0;  // 刷新持续时间
+                    existing.dps = Math.max(existing.dps, 8);
+                } else {
+                    enemy.buffs['poison'] = { timer: 5.0, dps: 8 };
+                }
             },
         },
     ];
@@ -875,6 +903,27 @@ export class SceneInitializer extends Component {
             }
         }
 
+        // === 通用 buff 处理（毒 buff 等：每秒掉血 + 倒计时）===
+        for (let i = this.enemies.length - 1; i >= 0; i--) {
+            const e = this.enemies[i];
+            for (const key in e.buffs) {
+                const buff = e.buffs[key];
+                buff.timer -= dt;
+                e.hp -= buff.dps * dt;   // 每秒掉 dps 血
+                if (buff.timer <= 0) {
+                    delete e.buffs[key];
+                }
+            }
+            // buff 掉血致死
+            if (e.hp <= 0) {
+                e.node.destroy();
+                this.enemies.splice(i, 1);
+                this.gold += this.KILL_REWARD;
+                this.updateGoldLabel();
+                console.log(`buff击杀！+${this.KILL_REWARD} 金币`);
+            }
+        }
+
         // === 敌人特殊行为（治疗者光环等）——遍历注册表的 onUpdate ===
         for (const e of this.enemies) {
             const def = this.getEnemyDef(e.type);
@@ -904,6 +953,8 @@ export class SceneInitializer extends Component {
                 const d = Vec3.distance(b.node.position, e.node.position);
                 if (d < 16) {
                     e.hp -= b.def.damage;
+                    // 子弹命中额外效果（如施加毒 buff）
+                    b.def.onBulletHit?.(e);
                     b.node.destroy();
                     this.bullets.splice(i, 1);
                     hit = true;
@@ -969,6 +1020,7 @@ export class SceneInitializer extends Component {
             node: enemy, hp: actualHp, maxHp: actualHp,
             slowTimer: 0, slowMultiplier: 1,
             type, healTimer: 0, extraTimer: 0,
+            buffs: {},
         });
     }
 

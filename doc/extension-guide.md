@@ -49,19 +49,48 @@
 | `cost` | number | 花费金币 |
 | `range` | number | 攻击范围（像素） |
 | `interval` | number | 攻击间隔（秒） |
-| `damage` | number | 子弹伤害（`bullet` 类型用） |
+| `damage` | number | 子弹命中扣血量（bullet 和 instant 类型都会扣） |
 | `attackKind` | `'bullet'` \| `'instant'` | bullet=发射子弹命中扣血；instant=瞬间效果（如减速） |
 | `color` | Color | 塔主体颜色（按钮、塔身、子弹都用这个色） |
 | `rangeColor` | Color | 范围圈颜色 |
 | `buttonPos` | Vec3 | 拖拽按钮的屏幕位置（别和已有的重叠） |
 | `applyInstant` | (enemy) => void | 仅 `instant` 类型需要：直接修改敌人状态 |
+| `onBulletHit` | (enemy) => void | 子弹命中时额外效果（如施加 buff），在扣血之后调用 |
 
 ### 两种攻击模式
 
 - **`bullet`（子弹型）**：塔会发射一颗子弹飞向敌人，命中后扣 `damage` 点血。攻击塔属于此类。
 - **`instant`（瞬间型）**：不发射子弹扣血，而是直接改敌人状态。必须在 `applyInstant` 里写逻辑。减速塔属于此类（它写了 `enemy.slowMultiplier = 0.7; enemy.slowTimer = 2.0`）。
 
-> 注意：instant 类型也会发射一颗视觉子弹（用塔颜色），但命中时不扣血，只触发 `applyInstant`。
+> 注意：instant 类型也会发射一颗视觉子弹（用塔颜色），命中时也会扣 `damage` 血，并触发 `onBulletHit`（如果定义了的话）。
+
+### 进阶示例：毒塔（攻击附带毒性 buff，每秒掉血）
+
+利用 `onBulletHit` 钩子 + 通用 buff 字典，实现"命中施加持续伤害"效果：
+
+```typescript
+{
+    id: 'poison',
+    name: '毒塔',
+    cost: 180, range: 180, interval: 0.8, damage: 10,
+    attackKind: 'bullet',
+    color: new Color(100, 200, 50, 255),
+    rangeColor: new Color(100, 200, 50, 60),
+    buttonPos: new Vec3(-400, 0, 0),
+    // 命中时施加毒 buff：每秒掉 8 血，持续 5 秒
+    onBulletHit: (enemy) => {
+        const existing = enemy.buffs['poison'];
+        if (existing) {
+            existing.timer = 5.0;      // 刷新持续时间
+            existing.dps = Math.max(existing.dps, 8);
+        } else {
+            enemy.buffs['poison'] = { timer: 5.0, dps: 8 };
+        }
+    },
+},
+```
+
+**buff 机制说明**：每个敌人的 `buffs` 字典存 `{ timer: 剩余秒数, dps: 每秒掉血量 }`。`update` 中有通用逻辑自动处理掉血和倒计时，新增 buff 只需往字典写一个 key，不用改任何逻辑。
 
 ---
 
