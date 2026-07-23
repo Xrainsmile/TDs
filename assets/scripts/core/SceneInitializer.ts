@@ -173,6 +173,12 @@ export class SceneInitializer extends Component {
                 }
                 if (hitTower < 0) return;
 
+                // 波次进行中不能移动塔
+                if (this.waveActive) {
+                    console.log('波次进行中，不能移动塔');
+                    return;
+                }
+
                 // 记录原槽位
                 const towerPos = this.towers[hitTower].node.position;
                 for (let s = 0; s < this.SLOT_POSITIONS.length; s++) {
