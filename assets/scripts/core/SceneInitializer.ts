@@ -31,7 +31,7 @@ export class SceneInitializer extends Component {
 
     // 塔属性（攻击塔）
     private readonly TOWER_RANGE = 200;
-    private readonly TOWER_DAMAGE = 10;
+    private readonly TOWER_DAMAGE = 20;  // 提升 100%（10→20）
     private readonly TOWER_INTERVAL = 0.8;
     private readonly TOWER_COST = 100;
 
