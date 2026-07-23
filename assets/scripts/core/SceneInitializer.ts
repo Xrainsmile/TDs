@@ -1081,9 +1081,11 @@ export class SceneInitializer extends Component {
         if (towerIndex < 0 || towerIndex >= this.towers.length) return;
         this.hideExplodeMenu();  // 先清理已有的
         const tower = this.towers[towerIndex];
-        const pos = tower.node.position;
-        // 选项框挂在 canvas 下（与塔不同坐标系，需转换）
-        const canvasPos = this.gameTransform!.convertToNodeSpaceAR(pos);
+        // 塔在 gameLayer 下，选项框挂在 canvas 下，需把塔世界坐标转为 canvas 局部坐标
+        const worldPos = new Vec3();
+        tower.node.getWorldPosition(worldPos);
+        const canvasTransform = this.node.getComponent(UITransform)!;
+        const canvasPos = canvasTransform.convertToNodeSpaceAR(worldPos);
 
         const menu = new Node('ExplodeMenu');
         menu.layer = Layers.Enum.UI_2D;
