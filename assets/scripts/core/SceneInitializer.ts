@@ -2,11 +2,15 @@ import { _decorator, Component, Node, view, UITransform, Layers, Vec3, Graphics,
 
 const { ccclass } = _decorator;
 
+/** 敌人类型 */
+type EnemyType = 'normal' | 'healer';
+
 /** 波次配置 */
 interface WaveConfig {
-    count: number;      // 敌人数量
-    hp: number;         // 敌人血量
-    interval: number;   // 生成间隔（秒）
+    count: number;
+    hp: number;
+    interval: number;
+    type?: EnemyType;  // 默认 'normal'
 }
 
 /**
@@ -49,11 +53,19 @@ export class SceneInitializer extends Component {
     // 子弹
     private readonly BULLET_SPEED = 500;
 
+    // 治疗者属性
+    private readonly HEALER_SPEED_MULT = 0.9;   // 速度慢 10%
+    private readonly HEALER_HP_MULT = 0.8;      // 血量少 20%
+    private readonly HEAL_RADIUS = 120;         // 治疗光环范围
+    private readonly HEAL_INTERVAL = 3.0;       // 每 3 秒治疗一次
+    private readonly HEAL_AMOUNT = 5;           // 回复 5 点 HP
+
     // 波次配置
     private readonly WAVES: WaveConfig[] = [
         { count: 5,  hp: 20,  interval: 1.0 },
         { count: 8,  hp: 30,  interval: 0.8 },
-        { count: 10, hp: 50,  interval: 0.6 },
+        { count: 8,  hp: 50,  interval: 0.6, type: 'normal' },
+        { count: 2,  hp: 50,  interval: 1.5, type: 'healer' },
         { count: 5,  hp: 100, interval: 1.5 },
     ];
 
@@ -76,7 +88,11 @@ export class SceneInitializer extends Component {
     // 运行时状态
     private gameLayer: Node | null = null;
     private gameTransform: UITransform | null = null;
-    private enemies: { node: Node; hp: number; maxHp: number; slowTimer: number; slowMultiplier: number }[] = [];
+    private enemies: {
+        node: Node; hp: number; maxHp: number;
+        slowTimer: number; slowMultiplier: number;
+        type: EnemyType; healTimer: number;
+    }[] = [];
     private towers: { node: Node; type: 'attack' | 'slow' }[] = [];
     private towerTimers: number[] = [];
     private bullets: { node: Node; vx: number; vy: number; target: Node }[] = [];
@@ -464,7 +480,7 @@ export class SceneInitializer extends Component {
                 if (this.spawnTimer >= wave.interval) {
                     this.spawnTimer = 0;
                     this.spawnedInWave++;
-                    this.spawnEnemy(wave.hp);
+                    this.spawnEnemy(wave.hp, wave.type);
                 }
             }
             // 当前波次全部生成且全部死亡 → 下一波
@@ -505,7 +521,8 @@ export class SceneInitializer extends Component {
                     this.gameOver();
                 }
             } else {
-                const speed = this.ENEMY_SPEED * e.slowMultiplier;
+                const speedMult = e.type === 'healer' ? this.HEALER_SPEED_MULT : 1;
+                const speed = this.ENEMY_SPEED * speedMult * e.slowMultiplier;
                 e.node.setPosition(pos.x + Math.sign(dx) * speed * dt, pos.y, 0);
             }
         }
@@ -570,6 +587,27 @@ export class SceneInitializer extends Component {
             }
         }
 
+        // === 治疗者光环 ===
+        for (const healer of this.enemies) {
+            if (healer.type !== 'healer') continue;
+            healer.healTimer += dt;
+            if (healer.healTimer >= this.HEAL_INTERVAL) {
+                healer.healTimer = 0;
+                // 治疗光环范围内的其他敌人
+                for (const target of this.enemies) {
+                    if (target === healer) continue;
+                    const dist = Vec3.distance(healer.node.position, target.node.position);
+                    if (dist <= this.HEAL_RADIUS && target.hp < target.maxHp) {
+                        const before = target.hp;
+                        target.hp = Math.min(target.maxHp, target.hp + this.HEAL_AMOUNT);
+                        if (target.hp > before) {
+                            console.log(`治疗者治疗 +${target.hp - before} HP（${before}→${target.hp}）`);
+                        }
+                    }
+                }
+            }
+        }
+
         // === 子弹更新 ===
         for (let i = this.bullets.length - 1; i >= 0; i--) {
             const b = this.bullets[i];
@@ -622,10 +660,13 @@ export class SceneInitializer extends Component {
     }
 
     /** 生成敌人 */
-    private spawnEnemy(hp: number): void {
+    private spawnEnemy(hp: number, type: EnemyType = 'normal'): void {
         if (!this.gameLayer) return;
 
-        const enemy = new Node('Enemy');
+        // 治疗者：血量少 20%
+        const actualHp = type === 'healer' ? Math.floor(hp * this.HEALER_HP_MULT) : hp;
+
+        const enemy = new Node(type === 'healer' ? 'Healer' : 'Enemy');
         enemy.layer = Layers.Enum.UI_2D;
         enemy.setParent(this.gameLayer);
         enemy.setPosition(this.PATH_START);
@@ -634,11 +675,33 @@ export class SceneInitializer extends Component {
         transform.setContentSize(28, 28);
 
         const gfx = enemy.addComponent(Graphics);
-        gfx.fillColor = new Color(80, 200, 80, 255);
-        gfx.circle(0, 0, 14);
-        gfx.fill();
 
-        this.enemies.push({ node: enemy, hp, maxHp: hp, slowTimer: 0, slowMultiplier: 1 });
+        if (type === 'healer') {
+            // 治疗者：粉色，带治疗光环
+            gfx.fillColor = new Color(255, 150, 200, 255);
+            gfx.circle(0, 0, 14);
+            gfx.fill();
+            // 治疗光环范围
+            gfx.strokeColor = new Color(100, 255, 150, 100);
+            gfx.lineWidth = 2;
+            gfx.circle(0, 0, this.HEAL_RADIUS);
+            gfx.stroke();
+            // 光环填充
+            gfx.fillColor = new Color(100, 255, 150, 20);
+            gfx.circle(0, 0, this.HEAL_RADIUS);
+            gfx.fill();
+        } else {
+            // 普通敌人：绿色
+            gfx.fillColor = new Color(80, 200, 80, 255);
+            gfx.circle(0, 0, 14);
+            gfx.fill();
+        }
+
+        this.enemies.push({
+            node: enemy, hp: actualHp, maxHp: actualHp,
+            slowTimer: 0, slowMultiplier: 1,
+            type, healTimer: 0,
+        });
     }
 
     private fireBullet(from: Vec3, to: Vec3, target: Node, isSlow: boolean = false): void {
