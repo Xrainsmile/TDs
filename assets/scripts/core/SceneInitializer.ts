@@ -225,7 +225,7 @@ export class SceneInitializer extends Component {
             buttonPos: this.SLOW_BUTTON_POS,
             applyInstant: (enemy) => {
                 enemy.slowMultiplier = 0.7;
-                enemy.slowTimer = 2.0;
+                enemy.slowTimer = 1.0;
             },
         },
         {
@@ -244,10 +244,10 @@ export class SceneInitializer extends Component {
                 // 刷新或叠加毒 buff（取更强的）
                 const existing = enemy.buffs['poison'];
                 if (existing) {
-                    existing.timer = 5.0;  // 刷新持续时间
+                    existing.timer = 3.0;  // 刷新持续时间
                     existing.dps = Math.max(existing.dps, 8);
                 } else {
-                    enemy.buffs['poison'] = { timer: 5.0, dps: 8 };
+                    enemy.buffs['poison'] = { timer: 3.0, dps: 8 };
                 }
             },
         },
