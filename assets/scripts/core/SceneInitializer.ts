@@ -2,14 +2,66 @@ import { _decorator, Component, Node, view, UITransform, Layers, Vec3, Graphics,
 
 const { ccclass } = _decorator;
 
-/** 敌人类型 */
-type EnemyType = 'normal' | 'healer';
+// ============================================================
+//  系统扩展约定：塔/敌人配置表
+//  新增一种塔 → 在 TOWER_REGISTRY 注册一个 TowerDef
+//  新增一种敌人 → 在 ENEMY_REGISTRY 注册一个 EnemyDef
+//  注册后自动接入：按钮/外观/属性/攻击逻辑/移动逻辑/光环逻辑
+//  详见 doc/extension-guide.md
+// ============================================================
+
+/** 塔攻击行为类型 */
+type TowerAttackKind = 'bullet'   // 发射子弹（命中扣血）
+                      | 'instant'; // 瞬间效果（如减速，直接改敌人状态）
+
+/** 塔定义（新增塔时注册此结构） */
+interface TowerDef {
+    id: string;              // 唯一标识（如 'attack' / 'slow'）
+    name: string;            // 中文名（日志用）
+    cost: number;            // 花费
+    range: number;           // 攻击范围
+    interval: number;        // 攻击间隔（秒）
+    damage: number;          // 子弹伤害（bullet 类型用，instant 可填 0）
+    attackKind: TowerAttackKind;
+    color: Color;            // 塔主体颜色
+    rangeColor: Color;       // 范围圈颜色
+    buttonPos: Vec3;         // 拖拽按钮位置
+    /** 瞬间效果：直接修改敌人状态（返回值无意义，直接改入参 enemy） */
+    applyInstant?: (enemy: EnemyRuntime) => void;
+}
+
+/** 敌人运行时数据（定义在配置表之外，因为含运行时状态） */
+interface EnemyRuntime {
+    node: Node; hp: number; maxHp: number;
+    slowTimer: number; slowMultiplier: number;
+    type: string;           // 对应 EnemyDef.id
+    healTimer: number;      // 治疗者光环计时
+    // 扩展字段：新敌人的特殊计时器都挂这里，避免改结构
+    extraTimer: number;
+}
+
+/** 敌人定义（新增敌人时注册此结构） */
+interface EnemyDef {
+    id: string;              // 唯一标识（如 'normal' / 'healer'）
+    name: string;            // 中文名
+    speedMultiplier: number; // 相对基础速度的倍率（1=普通，0.9=慢10%）
+    hpMultiplier: number;    // 相对配置 hp 的倍率（1=普通，0.8=血少20%）
+    color: Color;            // 敌人主体颜色
+    radius: number;          // 敌人半径（碰撞+绘制）
+    /** 特殊行为：每帧调用，返回值无意义（直接改入参 enemy） */
+    onUpdate?: (enemy: EnemyRuntime, dt: number, allEnemies: EnemyRuntime[]) => void;
+    /** 绘制特殊外观（在主体圆之后画，如治疗光环） */
+    drawExtra?: (gfx: Graphics, def: EnemyDef) => void;
+}
+
+/** 敌人类型（向后兼容，实际用 string） */
+type EnemyType = string;
 
 /** 单只敌人生成配置（时间线格式） */
 interface SpawnEntry {
     time: number;       // 从波次开始第几秒生成这只（秒，可写小数）
-    type: EnemyType;    // 'normal' 普通兵 / 'healer' 治疗兵
-    hp: number;         // 这只敌人的血量
+    type: EnemyType;    // 敌人 id（对应 EnemyDef.id）
+    hp: number;         // 这只敌人的基础血量（实际 hp = hp * EnemyDef.hpMultiplier）
 }
 
 /** 波次配置 */
@@ -34,21 +86,8 @@ export class SceneInitializer extends Component {
     private readonly PATH_START = new Vec3(-400, 0, 0);
     private readonly PATH_END = new Vec3(400, 0, 0);
 
-    // 敌人属性
+    // 敌人属性（基础值，各类型用 multiplier 调整）
     private readonly ENEMY_SPEED = 80;
-
-    // 塔属性（攻击塔）
-    private readonly TOWER_RANGE = 200;
-    private readonly TOWER_DAMAGE = 20;  // 提升 100%（10→20）
-    private readonly TOWER_INTERVAL = 0.56;  // 0.8 × 0.7（提升30%攻速）
-    private readonly TOWER_COST = 100;
-
-    // 减速塔属性
-    private readonly SLOW_TOWER_RANGE = 200;
-    private readonly SLOW_TOWER_INTERVAL = 0.7;  // 1.0 × 0.7（提升30%攻速）
-    private readonly SLOW_TOWER_COST = 150;
-    private readonly SLOW_MULTIPLIER = 0.7;   // 速度降为 70%（即降低 30%）
-    private readonly SLOW_DURATION = 2.0;      // 持续 2 秒
 
     // 金币
     private readonly INITIAL_GOLD = 300;
@@ -57,12 +96,95 @@ export class SceneInitializer extends Component {
     // 子弹
     private readonly BULLET_SPEED = 500;
 
-    // 治疗者属性
-    private readonly HEALER_SPEED_MULT = 0.9;   // 速度慢 10%
-    private readonly HEALER_HP_MULT = 0.8;      // 血量少 20%
-    private readonly HEAL_RADIUS = 120;         // 治疗光环范围
+    // ===== 塔注册表：新增塔只需在此数组追加一个 TowerDef =====
+    // 位置常量（供注册表引用）
+    private readonly ATTACK_BUTTON_POS = new Vec3(-400, -200, 0);
+    private readonly SLOW_BUTTON_POS = new Vec3(-400, -100, 0);
+    private readonly TOWER_REGISTRY: TowerDef[] = [
+        {
+            id: 'attack',
+            name: '攻击塔',
+            cost: 100,
+            range: 200,
+            interval: 0.56,
+            damage: 20,
+            attackKind: 'bullet',
+            color: new Color(50, 150, 255, 255),
+            rangeColor: new Color(50, 150, 255, 60),
+            buttonPos: this.ATTACK_BUTTON_POS,
+        },
+        {
+            id: 'slow',
+            name: '减速塔',
+            cost: 150,
+            range: 200,
+            interval: 0.7,
+            damage: 0,
+            attackKind: 'instant',
+            color: new Color(180, 80, 220, 255),
+            rangeColor: new Color(180, 80, 220, 60),
+            buttonPos: this.SLOW_BUTTON_POS,
+            applyInstant: (enemy) => {
+                enemy.slowMultiplier = 0.7;
+                enemy.slowTimer = 2.0;
+            },
+        },
+    ];
+
+    // ===== 敌人注册表：新增敌人只需在此数组追加一个 EnemyDef =====
+    private readonly HEAL_RADIUS = 120;         // 治疗光环范围（healer 用）
     private readonly HEAL_INTERVAL = 3.0;       // 每 3 秒治疗一次
     private readonly HEAL_AMOUNT = 5;           // 回复 5 点 HP
+    private readonly ENEMY_REGISTRY: EnemyDef[] = [
+        {
+            id: 'normal',
+            name: '普通兵',
+            speedMultiplier: 1,
+            hpMultiplier: 1,
+            color: new Color(80, 200, 80, 255),
+            radius: 14,
+        },
+        {
+            id: 'healer',
+            name: '治疗兵',
+            speedMultiplier: 0.9,
+            hpMultiplier: 0.8,
+            color: new Color(255, 150, 200, 255),
+            radius: 14,
+            onUpdate: (enemy, dt, allEnemies) => {
+                enemy.healTimer += dt;
+                if (enemy.healTimer >= this.HEAL_INTERVAL) {
+                    enemy.healTimer = 0;
+                    for (const target of allEnemies) {
+                        if (target === enemy) continue;
+                        const dist = Vec3.distance(enemy.node.position, target.node.position);
+                        if (dist <= this.HEAL_RADIUS && target.hp < target.maxHp) {
+                            target.hp = Math.min(target.maxHp, target.hp + this.HEAL_AMOUNT);
+                        }
+                    }
+                }
+            },
+            drawExtra: (gfx) => {
+                // 治疗光环范围
+                gfx.strokeColor = new Color(100, 255, 150, 100);
+                gfx.lineWidth = 2;
+                gfx.circle(0, 0, this.HEAL_RADIUS);
+                gfx.stroke();
+                gfx.fillColor = new Color(100, 255, 150, 20);
+                gfx.circle(0, 0, this.HEAL_RADIUS);
+                gfx.fill();
+            },
+        },
+    ];
+
+    /** 按 id 查塔定义 */
+    private getTowerDef(id: string): TowerDef | undefined {
+        return this.TOWER_REGISTRY.find(t => t.id === id);
+    }
+    /** 按 id 查敌人定义 */
+    private getEnemyDef(id: string): EnemyDef | undefined {
+        return this.ENEMY_REGISTRY.find(e => e.id === id);
+    }
 
     // ===== 波次配置（时间线格式：一行一只敌人）=====
     // time:  从波次开始第几秒生成（秒，可写小数）
@@ -162,14 +284,10 @@ export class SceneInitializer extends Component {
     // 运行时状态
     private gameLayer: Node | null = null;
     private gameTransform: UITransform | null = null;
-    private enemies: {
-        node: Node; hp: number; maxHp: number;
-        slowTimer: number; slowMultiplier: number;
-        type: EnemyType; healTimer: number;
-    }[] = [];
-    private towers: { node: Node; type: 'attack' | 'slow' }[] = [];
+    private enemies: EnemyRuntime[] = [];
+    private towers: { node: Node; def: TowerDef }[] = [];
     private towerTimers: number[] = [];
-    private bullets: { node: Node; vx: number; vy: number; target: Node }[] = [];
+    private bullets: { node: Node; vx: number; vy: number; target: Node; def: TowerDef }[] = [];
     private statusLabel: Label | null = null;
     private goldLabel: Label | null = null;
     private waveLabel: Label | null = null;
@@ -199,9 +317,7 @@ export class SceneInitializer extends Component {
     private nextWaveButton: Node | null = null;
     private nextWaveButtonLabel: Label | null = null;
 
-    // 塔按钮位置
-    private readonly TOWER_BUTTON_POS = new Vec3(-400, -200, 0);
-    private readonly SLOW_BUTTON_POS = new Vec3(-400, -100, 0);
+    // 塔按钮位置已移入 TOWER_REGISTRY.buttonPos
     // 游戏暂停按钮：右上角（避开 Wave 标签 y=280）
     private readonly PAUSE_BUTTON_POS = new Vec3(420, 220, 0);
     private readonly PAUSE_BUTTON_RADIUS = 36;  // 触摸判定半径
@@ -209,8 +325,8 @@ export class SceneInitializer extends Component {
     private readonly NEXT_WAVE_BUTTON_POS = new Vec3(0, 220, 0);
     private readonly NEXT_WAVE_BUTTON_RADIUS = 80;  // 触摸判定半径（按钮加宽）
 
-    // 拖拽中的塔类型
-    private dragTowerType: 'attack' | 'slow' = 'attack';
+    // 拖拽中的塔定义
+    private dragTowerDef: TowerDef | null = null;
     // 拖拽模式：'place' 新建 / 'move' 移动已建好的塔
     private dragMode: 'place' | 'move' = 'place';
     // 移动塔时记录原槽位
@@ -252,11 +368,11 @@ export class SceneInitializer extends Component {
         this.drawGhost(false);
         this.ghostNode.active = false;
 
-        // === 塔按钮 ===
-        const towerButton = this.createTowerButton('attack');
-        towerButton.setParent(canvas);
-        const slowButton = this.createTowerButton('slow');
-        slowButton.setParent(canvas);
+        // === 塔按钮（从注册表自动生成）===
+        for (const def of this.TOWER_REGISTRY) {
+            const btn = this.createTowerButton(def);
+            btn.setParent(canvas);
+        }
 
         // === 游戏暂停按钮（右上角）===
         this.pauseButton = this.createPauseButton();
@@ -291,14 +407,17 @@ export class SceneInitializer extends Component {
             // 2. 游戏暂停时完全冻结，不允许拖拽
             if (this.isUserPaused) return;
 
-            // 3. 判断是否点中了塔按钮（新建）
-            if (Vec3.distance(buttonLocal, this.TOWER_BUTTON_POS) <= 40) {
-                this.dragTowerType = 'attack';
-                this.dragMode = 'place';
-            } else if (Vec3.distance(buttonLocal, this.SLOW_BUTTON_POS) <= 40) {
-                this.dragTowerType = 'slow';
-                this.dragMode = 'place';
-            } else {
+            // 3. 判断是否点中了塔按钮（新建）——遍历注册表
+            let hitButton = false;
+            for (const def of this.TOWER_REGISTRY) {
+                if (Vec3.distance(buttonLocal, def.buttonPos) <= 40) {
+                    this.dragTowerDef = def;
+                    this.dragMode = 'place';
+                    hitButton = true;
+                    break;
+                }
+            }
+            if (!hitButton) {
                 // 2. 判断是否点中了已建好的塔（移动）
                 let hitTower = -1;
                 for (let i = 0; i < this.towers.length; i++) {
@@ -323,7 +442,7 @@ export class SceneInitializer extends Component {
                         break;
                     }
                 }
-                this.dragTowerType = this.towers[hitTower].type;
+                this.dragTowerDef = this.towers[hitTower].def;
                 this.dragMode = 'move';
             }
 
@@ -351,7 +470,7 @@ export class SceneInitializer extends Component {
                 const slot = this.targetSlot;
 
                 if (this.dragMode === 'place') {
-                    this.placeTower(slot, this.dragTowerType);
+                    this.placeTower(slot, this.dragTowerDef!);
                 } else if (this.dragMode === 'move' && this.moveFromSlot >= 0 && this.moveFromSlot !== slot) {
                     // 找到拖动的塔
                     const movingTowerIdx = this.towers.findIndex(t =>
@@ -604,7 +723,7 @@ export class SceneInitializer extends Component {
             }
         }
 
-        const cost = this.dragTowerType === 'attack' ? this.TOWER_COST : this.SLOW_TOWER_COST;
+        const cost = this.dragTowerDef?.cost ?? 0;
         const goldOk = this.dragMode === 'move' || this.gold >= cost;
         this.canPlace = nearestSlot >= 0 && nearestDist < 80 && goldOk;
         this.targetSlot = this.canPlace ? nearestSlot : -1;
@@ -619,9 +738,9 @@ export class SceneInitializer extends Component {
     private drawGhost(canPlace: boolean): void {
         const gfx = this.ghostGfx!;
         gfx.clear();
-        // 攻击塔蓝色，减速塔紫色
-        const isSlow = this.dragTowerType === 'slow';
-        const baseColor = isSlow ? new Color(180, 80, 220, 120) : new Color(50, 150, 255, 120);
+        // 用当前拖拽塔定义的颜色
+        const def = this.dragTowerDef;
+        const baseColor = def ? new Color(def.color.r, def.color.g, def.color.b, 120) : new Color(255, 255, 255, 120);
         gfx.fillColor = baseColor;
         gfx.circle(0, 0, 20);
         gfx.fill();
@@ -688,7 +807,8 @@ export class SceneInitializer extends Component {
                     this.gameOver();
                 }
             } else {
-                const speedMult = e.type === 'healer' ? this.HEALER_SPEED_MULT : 1;
+                const eDef = this.getEnemyDef(e.type);
+                const speedMult = eDef?.speedMultiplier ?? 1;
                 const speed = this.ENEMY_SPEED * speedMult * e.slowMultiplier;
                 e.node.setPosition(pos.x + Math.sign(dx) * speed * dt, pos.y, 0);
             }
@@ -714,8 +834,7 @@ export class SceneInitializer extends Component {
         for (let i = 0; i < this.towers.length; i++) {
             if (this.enemies.length === 0) continue;
             const tower = this.towers[i];
-            const range = tower.type === 'attack' ? this.TOWER_RANGE : this.SLOW_TOWER_RANGE;
-            const interval = tower.type === 'attack' ? this.TOWER_INTERVAL : this.SLOW_TOWER_INTERVAL;
+            const def = tower.def;
 
             // 找最近的敌人
             let nearestEnemy = -1;
@@ -729,20 +848,19 @@ export class SceneInitializer extends Component {
                 }
             }
 
-            if (nearestEnemy < 0 || nearestDist > range) continue;
+            if (nearestEnemy < 0 || nearestDist > def.range) continue;
 
             this.towerTimers[i] += dt;
-            if (this.towerTimers[i] >= interval) {
+            if (this.towerTimers[i] >= def.interval) {
                 this.towerTimers[i] = 0;
-                if (tower.type === 'attack') {
-                    // 攻击塔：发射子弹
-                    this.fireBullet(tower.node.position, this.enemies[nearestEnemy].node.position, this.enemies[nearestEnemy].node);
+                if (def.attackKind === 'bullet') {
+                    // 发射子弹型
+                    this.fireBullet(tower.node.position, this.enemies[nearestEnemy].node.position, this.enemies[nearestEnemy].node, def);
                 } else {
-                    // 减速塔：直接施加减速效果
-                    this.enemies[nearestEnemy].slowMultiplier = this.SLOW_MULTIPLIER;
-                    this.enemies[nearestEnemy].slowTimer = this.SLOW_DURATION;
-                    // 发射紫色减速弹（视觉）
-                    this.fireBullet(tower.node.position, this.enemies[nearestEnemy].node.position, this.enemies[nearestEnemy].node, true);
+                    // 瞬间效果型：调用注册的 applyInstant
+                    def.applyInstant?.(this.enemies[nearestEnemy]);
+                    // 发射视觉子弹（用塔颜色区分）
+                    this.fireBullet(tower.node.position, this.enemies[nearestEnemy].node.position, this.enemies[nearestEnemy].node, def);
                 }
             }
         }
@@ -757,24 +875,11 @@ export class SceneInitializer extends Component {
             }
         }
 
-        // === 治疗者光环 ===
-        for (const healer of this.enemies) {
-            if (healer.type !== 'healer') continue;
-            healer.healTimer += dt;
-            if (healer.healTimer >= this.HEAL_INTERVAL) {
-                healer.healTimer = 0;
-                // 治疗光环范围内的其他敌人
-                for (const target of this.enemies) {
-                    if (target === healer) continue;
-                    const dist = Vec3.distance(healer.node.position, target.node.position);
-                    if (dist <= this.HEAL_RADIUS && target.hp < target.maxHp) {
-                        const before = target.hp;
-                        target.hp = Math.min(target.maxHp, target.hp + this.HEAL_AMOUNT);
-                        if (target.hp > before) {
-                            console.log(`治疗者治疗 +${target.hp - before} HP（${before}→${target.hp}）`);
-                        }
-                    }
-                }
+        // === 敌人特殊行为（治疗者光环等）——遍历注册表的 onUpdate ===
+        for (const e of this.enemies) {
+            const def = this.getEnemyDef(e.type);
+            if (def?.onUpdate) {
+                def.onUpdate(e, dt, this.enemies);
             }
         }
 
@@ -798,7 +903,7 @@ export class SceneInitializer extends Component {
 
                 const d = Vec3.distance(b.node.position, e.node.position);
                 if (d < 16) {
-                    e.hp -= this.TOWER_DAMAGE;
+                    e.hp -= b.def.damage;
                     b.node.destroy();
                     this.bullets.splice(i, 1);
                     hit = true;
@@ -829,52 +934,45 @@ export class SceneInitializer extends Component {
         }
     }
 
-    /** 生成敌人 */
-    private spawnEnemy(hp: number, type: EnemyType = 'normal'): void {
+    /** 生成敌人（从注册表取属性和外观） */
+    private spawnEnemy(hp: number, type: string = 'normal'): void {
         if (!this.gameLayer) return;
 
-        // 治疗者：血量少 20%
-        const actualHp = type === 'healer' ? Math.floor(hp * this.HEALER_HP_MULT) : hp;
+        const def = this.getEnemyDef(type);
+        if (!def) {
+            console.warn(`未注册的敌人类型: ${type}`);
+            return;
+        }
 
-        const enemy = new Node(type === 'healer' ? 'Healer' : 'Enemy');
+        // 实际血量 = 配置 hp × 注册表 hpMultiplier
+        const actualHp = Math.floor(hp * def.hpMultiplier);
+
+        const enemy = new Node(def.name);
         enemy.layer = Layers.Enum.UI_2D;
         enemy.setParent(this.gameLayer);
         enemy.setPosition(this.PATH_START);
 
         const transform = enemy.addComponent(UITransform);
-        transform.setContentSize(28, 28);
+        transform.setContentSize(def.radius * 2, def.radius * 2);
 
         const gfx = enemy.addComponent(Graphics);
 
-        if (type === 'healer') {
-            // 治疗者：粉色，带治疗光环
-            gfx.fillColor = new Color(255, 150, 200, 255);
-            gfx.circle(0, 0, 14);
-            gfx.fill();
-            // 治疗光环范围
-            gfx.strokeColor = new Color(100, 255, 150, 100);
-            gfx.lineWidth = 2;
-            gfx.circle(0, 0, this.HEAL_RADIUS);
-            gfx.stroke();
-            // 光环填充
-            gfx.fillColor = new Color(100, 255, 150, 20);
-            gfx.circle(0, 0, this.HEAL_RADIUS);
-            gfx.fill();
-        } else {
-            // 普通敌人：绿色
-            gfx.fillColor = new Color(80, 200, 80, 255);
-            gfx.circle(0, 0, 14);
-            gfx.fill();
-        }
+        // 主体圆
+        gfx.fillColor = def.color;
+        gfx.circle(0, 0, def.radius);
+        gfx.fill();
+
+        // 额外外观（如治疗光环）
+        def.drawExtra?.(gfx, def);
 
         this.enemies.push({
             node: enemy, hp: actualHp, maxHp: actualHp,
             slowTimer: 0, slowMultiplier: 1,
-            type, healTimer: 0,
+            type, healTimer: 0, extraTimer: 0,
         });
     }
 
-    private fireBullet(from: Vec3, to: Vec3, target: Node, isSlow: boolean = false): void {
+    private fireBullet(from: Vec3, to: Vec3, target: Node, def: TowerDef): void {
         if (!this.gameLayer) return;
 
         const bullet = new Node('Bullet');
@@ -886,7 +984,8 @@ export class SceneInitializer extends Component {
         transform.setContentSize(12, 12);
 
         const gfx = bullet.addComponent(Graphics);
-        gfx.fillColor = isSlow ? new Color(180, 80, 220, 255) : new Color(100, 180, 255, 255);
+        // 用塔定义的颜色画子弹
+        gfx.fillColor = new Color(def.color.r, def.color.g, def.color.b, 255);
         gfx.circle(0, 0, 6);
         gfx.fill();
 
@@ -899,26 +998,26 @@ export class SceneInitializer extends Component {
             vx: (dx / dist) * this.BULLET_SPEED,
             vy: (dy / dist) * this.BULLET_SPEED,
             target,
+            def,
         });
     }
 
-    private placeTower(slotIndex: number, type: 'attack' | 'slow'): void {
+    private placeTower(slotIndex: number, def: TowerDef): void {
         if (this.slotOccupied[slotIndex] || !this.gameLayer) return;
-        const cost = type === 'attack' ? this.TOWER_COST : this.SLOW_TOWER_COST;
-        if (this.gold < cost) return;
+        if (this.gold < def.cost) return;
 
-        this.gold -= cost;
+        this.gold -= def.cost;
         this.updateGoldLabel();
 
-        const tower = this.createTower(this.SLOT_POSITIONS[slotIndex], type);
+        const tower = this.createTower(this.SLOT_POSITIONS[slotIndex], def);
         tower.setParent(this.gameLayer);
 
-        this.towers.push({ node: tower, type });
-        this.towerTimers.push(type === 'attack' ? this.TOWER_INTERVAL : this.SLOW_TOWER_INTERVAL);
+        this.towers.push({ node: tower, def });
+        this.towerTimers.push(def.interval);
         this.slotOccupied[slotIndex] = true;
         this.slotNodes[slotIndex].active = false;
 
-        console.log(`${type === 'attack' ? '攻击塔' : '减速塔'}放置到位置 ${slotIndex + 1}，花费 ${cost}，当前 ${this.towers.length} 塔`);
+        console.log(`${def.name}放置到位置 ${slotIndex + 1}，花费 ${def.cost}，当前 ${this.towers.length} 塔`);
     }
 
     private updateGoldLabel(): void {
@@ -1052,23 +1151,19 @@ export class SceneInitializer extends Component {
         console.log('游戏重新开始');
     }
 
-    private createTowerButton(type: 'attack' | 'slow'): Node {
-        const isSlow = type === 'slow';
-        const pos = isSlow ? this.SLOW_BUTTON_POS : this.TOWER_BUTTON_POS;
-        const name = isSlow ? 'SlowButton' : 'TowerButton';
-
-        const node = new Node(name);
+    private createTowerButton(def: TowerDef): Node {
+        const node = new Node(def.id + '_Button');
         node.layer = Layers.Enum.UI_2D;
         const transform = node.addComponent(UITransform);
         transform.setContentSize(80, 80);
-        node.setPosition(pos);
+        node.setPosition(def.buttonPos);
 
         const gfx = node.addComponent(Graphics);
         gfx.fillColor = new Color(60, 60, 70, 255);
         gfx.rect(-30, -30, 60, 60);
         gfx.fill();
-        // 攻击塔蓝色，减速塔紫色
-        gfx.fillColor = isSlow ? new Color(180, 80, 220, 255) : new Color(50, 150, 255, 255);
+        // 塔主体色
+        gfx.fillColor = def.color;
         gfx.circle(0, 0, 16);
         gfx.fill();
 
@@ -1079,7 +1174,7 @@ export class SceneInitializer extends Component {
         labelNode.setParent(node);
         labelNode.setPosition(0, -32, 0);
         const label = labelNode.addComponent(Label);
-        label.string = `${isSlow ? this.SLOW_TOWER_COST : this.TOWER_COST}`;
+        label.string = `${def.cost}`;
         label.fontSize = 12;
 
         return node;
@@ -1157,9 +1252,8 @@ export class SceneInitializer extends Component {
         return node;
     }
 
-    private createTower(pos: Vec3, type: 'attack' | 'slow'): Node {
-        const isSlow = type === 'slow';
-        const node = new Node(isSlow ? 'SlowTower' : 'Tower');
+    private createTower(pos: Vec3, def: TowerDef): Node {
+        const node = new Node(def.name + 'Tower');
         node.layer = Layers.Enum.UI_2D;
         node.setPosition(pos);
 
@@ -1170,16 +1264,15 @@ export class SceneInitializer extends Component {
         gfx.fillColor = new Color(60, 60, 70, 255);
         gfx.rect(-20, -20, 40, 40);
         gfx.fill();
-        gfx.fillColor = isSlow ? new Color(180, 80, 220, 255) : new Color(50, 150, 255, 255);
+        gfx.fillColor = def.color;
         gfx.circle(0, 0, 14);
         gfx.fill();
         gfx.fillColor = new Color(255, 255, 255, 255);
         gfx.circle(0, 0, 4);
         gfx.fill();
-        const range = isSlow ? this.SLOW_TOWER_RANGE : this.TOWER_RANGE;
-        gfx.strokeColor = isSlow ? new Color(180, 80, 220, 60) : new Color(50, 150, 255, 60);
+        gfx.strokeColor = def.rangeColor;
         gfx.lineWidth = 2;
-        gfx.circle(0, 0, range);
+        gfx.circle(0, 0, def.range);
         gfx.stroke();
 
         return node;
