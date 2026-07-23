@@ -5,12 +5,18 @@ const { ccclass } = _decorator;
 /** 敌人类型 */
 type EnemyType = 'normal' | 'healer';
 
-/** 波次配置 */
-interface WaveConfig {
+/** 单段敌人生成配置 */
+interface WaveSegment {
     count: number;
     hp: number;
     interval: number;
-    type?: EnemyType;  // 默认 'normal'
+    type?: EnemyType;
+    delay?: number;  // 距波次开始的延迟（秒）
+}
+
+/** 波次配置 */
+interface WaveConfig {
+    segments: WaveSegment[];
 }
 
 /**
@@ -62,11 +68,13 @@ export class SceneInitializer extends Component {
 
     // 波次配置
     private readonly WAVES: WaveConfig[] = [
-        { count: 5,  hp: 20,  interval: 1.0 },
-        { count: 8,  hp: 30,  interval: 0.8 },
-        { count: 8,  hp: 50,  interval: 0.6, type: 'normal' },
-        { count: 2,  hp: 50,  interval: 1.5, type: 'healer' },
-        { count: 5,  hp: 100, interval: 1.5 },
+        { segments: [{ count: 5, hp: 20, interval: 1.0 }] },
+        { segments: [{ count: 8, hp: 30, interval: 0.8 }] },
+        { segments: [
+            { count: 5, hp: 50, interval: 0.6 },
+            { count: 3, hp: 50, interval: 1.5, type: 'healer', delay: 5 },
+        ]},
+        { segments: [{ count: 5, hp: 100, interval: 1.5 }] },
     ];
 
     // 建造点
@@ -110,6 +118,7 @@ export class SceneInitializer extends Component {
     private currentWave = 0;
     private spawnTimer = 0;
     private spawnedInWave = 0;
+    private waveTotalCount = 0;  // 当前波次总敌人数
     private waveActive = false;
     private waveDelay = 0;  // 波次间延迟
 
@@ -339,10 +348,26 @@ export class SceneInitializer extends Component {
         const wave = this.WAVES[this.currentWave];
         this.currentWave++;
         this.spawnedInWave = 0;
-        this.spawnTimer = 0;
         this.waveActive = true;
 
-        console.log(`Wave ${this.currentWave} 开始: ${wave.count}只 HP=${wave.hp}`);
+        // 计算总敌人数
+        this.waveTotalCount = wave.segments.reduce((sum, s) => sum + s.count, 0);
+
+        // 按段调度生成
+        for (const seg of wave.segments) {
+            const delay = seg.delay ?? 0;
+            const type = seg.type ?? 'normal';
+            for (let i = 0; i < seg.count; i++) {
+                const spawnDelay = delay + i * seg.interval;
+                this.scheduleOnce(() => {
+                    if (this.isGameOver) return;
+                    this.spawnEnemy(seg.hp, type);
+                    this.spawnedInWave++;
+                }, spawnDelay);
+            }
+        }
+
+        console.log(`Wave ${this.currentWave} 开始: ${this.waveTotalCount} 只`);
         if (this.waveLabel) {
             this.waveLabel.string = `Wave: ${this.currentWave}/${this.WAVES.length}`;
         }
@@ -472,22 +497,13 @@ export class SceneInitializer extends Component {
     protected update(dt: number): void {
         if (this.isGameOver) return;
 
-        // === 波次生成 ===
+        // === 波次完成检测 ===
         if (this.waveActive) {
-            const wave = this.WAVES[this.currentWave - 1];
-            if (this.spawnedInWave < wave.count) {
-                this.spawnTimer += dt;
-                if (this.spawnTimer >= wave.interval) {
-                    this.spawnTimer = 0;
-                    this.spawnedInWave++;
-                    this.spawnEnemy(wave.hp, wave.type);
-                }
-            }
-            // 当前波次全部生成且全部死亡 → 下一波
-            if (this.spawnedInWave >= wave.count && this.enemies.length === 0) {
+            // 全部生成且全部死亡 → 下一波
+            if (this.spawnedInWave >= this.waveTotalCount && this.enemies.length === 0) {
                 this.waveActive = false;
-                this.waveDelay = 10;  // 波次间等待 10 秒
-                console.log(`Wave ${this.currentWave} 完成（spawned=${this.spawnedInWave}/${wave.count}, enemies=0），等待 2 秒后启动 Wave ${this.currentWave + 1}`);
+                this.waveDelay = 6;  // 波次间等待 6 秒
+                console.log(`Wave ${this.currentWave} 完成（${this.waveTotalCount} 只全部消灭），等待 6 秒后启动 Wave ${this.currentWave + 1}`);
             }
         } else if (this.waveDelay > 0) {
             this.waveDelay -= dt;
@@ -531,7 +547,7 @@ export class SceneInitializer extends Component {
         if (this.statusLabel) {
             if (this.waveActive) {
                 const wave = this.WAVES[this.currentWave - 1];
-                const remaining = wave.count - this.spawnedInWave + this.enemies.length;
+                const remaining = this.waveTotalCount - this.spawnedInWave + this.enemies.length;
                 this.statusLabel.string = `剩余敌人: ${remaining}  塔: ${this.towers.length}`;
             } else if (this.waveDelay > 0) {
                 this.statusLabel.string = `下一波倒计时: ${Math.ceil(this.waveDelay)}s  塔: ${this.towers.length}`;
