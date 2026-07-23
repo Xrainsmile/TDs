@@ -22,9 +22,7 @@ export const BULLET_SPEED = 500;
 // ===== 金币 =====
 export const INITIAL_GOLD = 260;
 export const KILL_REWARD = 6;
-export const TOWER_REMOVE_COST = 40;
 export const WAVE_BONUSES = [50, 60, 70, 80];
-export const SELL_RETURN_RATIO = 0.5;
 
 // ===== 自爆 =====
 export const EXPLOSION_RADIUS = 60;

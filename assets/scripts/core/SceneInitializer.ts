@@ -3,7 +3,7 @@ import { HUD } from '../ui/HUD';
 import { EffectManager } from './EffectManager';
 import {
     PATH_WAYPOINTS, ENEMY_SPEED, BULLET_SPEED,
-    INITIAL_GOLD, KILL_REWARD, TOWER_REMOVE_COST, WAVE_BONUSES, SELL_RETURN_RATIO,
+    INITIAL_GOLD, KILL_REWARD, WAVE_BONUSES,
     EXPLOSION_RADIUS, EXPLOSION_DAMAGE, LEVEL_START_COUNTDOWN,
     SLOT_POSITIONS, HEAL_RADIUS, HEAL_INTERVAL, HEAL_AMOUNT,
     ATTACK_BUTTON_POS, SLOW_BUTTON_POS, POISON_BUTTON_POS,
@@ -201,11 +201,9 @@ export class SceneInitializer extends Component {
     private get BULLET_SPEED() { return BULLET_SPEED; }
     private get INITIAL_GOLD() { return INITIAL_GOLD; }
     private get KILL_REWARD() { return KILL_REWARD; }
-    private get TOWER_REMOVE_COST() { return TOWER_REMOVE_COST; }
     private get WAVE_BONUSES() { return WAVE_BONUSES; }
     private get EXPLOSION_RADIUS() { return EXPLOSION_RADIUS; }
     private get EXPLOSION_DAMAGE() { return EXPLOSION_DAMAGE; }
-    private get SELL_RETURN_RATIO() { return SELL_RETURN_RATIO; }
     private get LEVEL_START_COUNTDOWN() { return LEVEL_START_COUNTDOWN; }
     private get HEAL_RADIUS() { return HEAL_RADIUS; }
     private get HEAL_INTERVAL() { return HEAL_INTERVAL; }
@@ -477,10 +475,9 @@ export class SceneInitializer extends Component {
             // 0. 判定：是否点中了塔操作菜单的按钮（点击塔后弹出）
             if (this.towerMenu && this.towerMenu.active) {
                 const menuPos = this.towerMenu.getPosition();
-                // 三个按钮从上到下：移动(y=44) / 出售(y=0) / 自爆(y=-44)
-                const moveBtn = new Vec3(menuPos.x, menuPos.y + 44, 0);
-                const sellBtn = new Vec3(menuPos.x, menuPos.y, 0);
-                const explodeBtn = new Vec3(menuPos.x, menuPos.y - 44, 0);
+                // 两个按钮从上到下：移动(y=22) / 自爆(y=-22)
+                const moveBtn = new Vec3(menuPos.x, menuPos.y + 22, 0);
+                const explodeBtn = new Vec3(menuPos.x, menuPos.y - 22, 0);
                 // 移动按钮（仅波次之间可用）
                 if (Math.abs(buttonLocal.x - moveBtn.x) <= 70 && Math.abs(buttonLocal.y - moveBtn.y) <= 18) {
                     if (this.waveActive) {
@@ -491,19 +488,13 @@ export class SceneInitializer extends Component {
                     this.hideTowerMenu();
                     return;
                 }
-                // 出售按钮（仅波次之间可用，返还50%）
-                if (Math.abs(buttonLocal.x - sellBtn.x) <= 70 && Math.abs(buttonLocal.y - sellBtn.y) <= 18) {
-                    if (this.waveActive) {
-                        if (this.statusLabel) this.statusLabel.string = '战斗中不能出售塔！';
-                    } else {
-                        this.sellTower(this.towerMenuIndex);
-                    }
-                    this.hideTowerMenu();
-                    return;
-                }
-                // 自爆按钮（战斗中免费，波次之间也可用但需花费）
+                // 自爆按钮（仅战斗中可用，免费）
                 if (Math.abs(buttonLocal.x - explodeBtn.x) <= 70 && Math.abs(buttonLocal.y - explodeBtn.y) <= 18) {
-                    this.executeExplode(this.towerMenuIndex);
+                    if (!this.waveActive) {
+                        if (this.statusLabel) this.statusLabel.string = '波次间不能自爆！';
+                    } else {
+                        this.executeExplode(this.towerMenuIndex);
+                    }
                     this.hideTowerMenu();
                     return;
                 }
@@ -594,25 +585,29 @@ export class SceneInitializer extends Component {
                 if (this.dragMode === 'place') {
                     this.placeTower(slot, this.dragTowerDef!);
                 } else if (this.dragMode === 'move' && this.moveFromSlot >= 0 && this.moveFromSlot !== slot) {
-                    // 找到拖动的塔
+                    // 通过原槽位找到正在移动的塔
                     const movingTowerIdx = this.towers.findIndex(t =>
                         Vec3.distance(t.node.position, this.SLOT_POSITIONS[this.moveFromSlot]) < 5
                     );
 
                     if (movingTowerIdx >= 0) {
+                        const movingTower = this.towers[movingTowerIdx];
                         if (this.slotOccupied[slot]) {
                             // 目标已占用 → 互换
                             const swapTowerIdx = this.towers.findIndex(t =>
                                 Vec3.distance(t.node.position, this.SLOT_POSITIONS[slot]) < 5
                             );
                             if (swapTowerIdx >= 0) {
-                                this.towers[movingTowerIdx].node.setPosition(this.SLOT_POSITIONS[slot]);
                                 this.towers[swapTowerIdx].node.setPosition(this.SLOT_POSITIONS[this.moveFromSlot]);
+                                this.restoreTowerAppearance(this.towers[swapTowerIdx].node, this.towers[swapTowerIdx].def);
+                                movingTower.node.setPosition(this.SLOT_POSITIONS[slot]);
+                                this.restoreTowerAppearance(movingTower.node, movingTower.def);
                                 console.log(`塔互换: 位置 ${this.moveFromSlot + 1} ↔ ${slot + 1}`);
                             }
                         } else {
                             // 目标空 → 直接移动
-                            this.towers[movingTowerIdx].node.setPosition(this.SLOT_POSITIONS[slot]);
+                            movingTower.node.setPosition(this.SLOT_POSITIONS[slot]);
+                            this.restoreTowerAppearance(movingTower.node, movingTower.def);
                             this.slotOccupied[this.moveFromSlot] = false;
                             this.slotNodes[this.moveFromSlot].active = true;
                             this.slotOccupied[slot] = true;
@@ -623,17 +618,37 @@ export class SceneInitializer extends Component {
                     this.moveFromSlot = -1;
                 }
             }
+            // 移动模式下未成功放置 → 恢复原塔外观
+            if (this.dragMode === 'move' && this.moveFromSlot >= 0 && this.dragTowerDef) {
+                const movingTowerIdx = this.towers.findIndex(t =>
+                    Vec3.distance(t.node.position, this.SLOT_POSITIONS[this.moveFromSlot]) < 5
+                );
+                if (movingTowerIdx >= 0) {
+                    this.restoreTowerAppearance(this.towers[movingTowerIdx].node, this.towers[movingTowerIdx].def);
+                }
+            }
             this.canPlace = false;
             this.targetSlot = -1;
             this.moveFromSlot = -1;
+            this.dragMode = 'place';
         });
 
         canvas.on(Node.EventType.TOUCH_CANCEL, () => {
+            // 移动取消时恢复原塔外观
+            if (this.dragMode === 'move' && this.moveFromSlot >= 0 && this.dragTowerDef) {
+                const movingTowerIdx = this.towers.findIndex(t =>
+                    Vec3.distance(t.node.position, this.SLOT_POSITIONS[this.moveFromSlot]) < 5
+                );
+                if (movingTowerIdx >= 0) {
+                    this.restoreTowerAppearance(this.towers[movingTowerIdx].node, this.towers[movingTowerIdx].def);
+                }
+            }
             this.isDragging = false;
             this.ghostNode!.active = false;
             this.canPlace = false;
             this.targetSlot = -1;
             this.moveFromSlot = -1;
+            this.dragMode = 'place';
             this.hideTowerMenu();
         });
 
@@ -930,7 +945,7 @@ export class SceneInitializer extends Component {
         this.isUserPaused = false;
         this.buffSelected = false;
         this.hideTowerMenu();
-        this.resetLongPress();
+        this.hideTowerMenu();
         this.hideBuffCards();
         this.updatePauseButton();
         this.updateNextWaveButton();
@@ -1132,7 +1147,7 @@ export class SceneInitializer extends Component {
         return this.node.getComponent(UITransform)!.convertToNodeSpaceAR(v3(uiPos.x, uiPos.y, 0));
     }
 
-    /** 弹出塔操作菜单（移动/出售/自爆） */
+    /** 弹出塔操作菜单（移动/自爆） */
     private showTowerMenu(towerIndex: number): void {
         if (towerIndex < 0 || towerIndex >= this.towers.length) return;
         this.hideTowerMenu();  // 先清理已有的
@@ -1141,23 +1156,22 @@ export class SceneInitializer extends Component {
         tower.node.getWorldPosition(worldPos);
         const canvasTransform = this.node.getComponent(UITransform)!;
         const canvasPos = canvasTransform.convertToNodeSpaceAR(worldPos);
-        const def = tower.def;
 
         const menu = new Node('TowerMenu');
         menu.layer = Layers.Enum.UI_2D;
         menu.setParent(this.node);
-        menu.setPosition(canvasPos.x, canvasPos.y + 90, 0);
+        menu.setPosition(canvasPos.x, canvasPos.y + 70, 0);
         const transform = menu.addComponent(UITransform);
-        transform.setContentSize(160, 140);
+        transform.setContentSize(160, 100);
 
         const gfx = menu.addComponent(Graphics);
         // 深色半透明背景
         gfx.fillColor = new Color(30, 30, 40, 230);
-        gfx.roundRect(-80, -70, 160, 140, 10);
+        gfx.roundRect(-80, -50, 160, 100, 10);
         gfx.fill();
         gfx.strokeColor = new Color(255, 150, 80, 255);
         gfx.lineWidth = 2;
-        gfx.roundRect(-80, -70, 160, 140, 10);
+        gfx.roundRect(-80, -50, 160, 100, 10);
         gfx.stroke();
 
         const makeButton = (y: number, label: string, bgColor: Color, textColor: Color) => {
@@ -1178,14 +1192,11 @@ export class SceneInitializer extends Component {
             l.verticalAlign = Label.VerticalAlign.CENTER;
         };
 
-        // 三个按钮：移动(上) / 出售(中) / 自爆(下)
+        // 两个按钮：移动(上) / 自爆(下)
         const moveLabel = this.waveActive ? '移动（战斗中禁用）' : '移动';
-        makeButton(44, moveLabel, new Color(60, 120, 200, 255), new Color(255, 255, 255, 255));
-        const sellAmount = Math.floor(def.cost * this.SELL_RETURN_RATIO);
-        const sellLabel = this.waveActive ? `出售（战斗中禁用）` : `出售（+${sellAmount}金币）`;
-        makeButton(0, sellLabel, new Color(80, 160, 80, 255), new Color(255, 255, 255, 255));
-        const explodeLabel = this.waveActive ? '自爆（免费）' : `自爆（-${this.TOWER_REMOVE_COST}金币）`;
-        makeButton(-44, explodeLabel, new Color(200, 60, 40, 255), new Color(255, 255, 255, 255));
+        makeButton(22, moveLabel, new Color(60, 120, 200, 255), new Color(255, 255, 255, 255));
+        const explodeLabel = this.waveActive ? '自爆' : '自爆（波次间禁用）';
+        makeButton(-22, explodeLabel, new Color(200, 60, 40, 255), new Color(255, 255, 255, 255));
 
         this.towerMenu = menu;
         this.towerMenuIndex = towerIndex;
@@ -1200,7 +1211,7 @@ export class SceneInitializer extends Component {
         this.towerMenuIndex = -1;
     }
 
-    /** 开始移动塔（设置拖拽状态） */
+    /** 开始移动塔（设置拖拽状态，保留原塔降低透明度） */
     private startMoveTower(towerIndex: number): void {
         if (towerIndex < 0 || towerIndex >= this.towers.length) return;
         const tower = this.towers[towerIndex];
@@ -1219,58 +1230,54 @@ export class SceneInitializer extends Component {
         this.drawGhost(false);
         this.ghostNode!.setPosition(towerPos);
         this.updateGhostState(towerPos);
-        // 立即移除原塔（移动模式下放下来再创建新的）
-        tower.node.removeFromParent();
-        tower.node.destroy();
-        this.towers.splice(towerIndex, 1);
-        this.towerTimers.splice(towerIndex, 1);
-        // 释放原槽位
-        if (this.moveFromSlot >= 0) {
-            this.slotOccupied[this.moveFromSlot] = false;
-            this.slotNodes[this.moveFromSlot].active = true;
+        // 原塔保留，降低透明度表示正在移动
+        const gfx = tower.node.getComponent(Graphics);
+        if (gfx) {
+            const c = gfx.fillColor;
+            gfx.clear();
+            gfx.fillColor = new Color(c.r, c.g, c.b, 80);
+            gfx.rect(-20, -20, 40, 40);
+            gfx.fill();
+            gfx.fillColor = tower.def.color;
+            gfx.circle(0, 0, 14);
+            gfx.fill();
+            gfx.fillColor = new Color(255, 255, 255, 80);
+            gfx.circle(0, 0, 4);
+            gfx.fill();
+            gfx.strokeColor = new Color(tower.def.rangeColor.r, tower.def.rangeColor.g, tower.def.rangeColor.b, 30);
+            gfx.lineWidth = 2;
+            gfx.circle(0, 0, tower.def.range);
+            gfx.stroke();
         }
     }
 
-    /** 出售塔（返还50%金币，仅波次之间） */
-    private sellTower(towerIndex: number): void {
-        if (towerIndex < 0 || towerIndex >= this.towers.length) return;
-        const tower = this.towers[towerIndex];
-        const refund = Math.floor(tower.def.cost * this.SELL_RETURN_RATIO);
-        this.gold += refund;
-        this.updateGoldLabel();
-        // 释放槽位
-        const pos = tower.node.position;
-        for (let s = 0; s < this.SLOT_POSITIONS.length; s++) {
-            if (Vec3.distance(pos, this.SLOT_POSITIONS[s]) < 5) {
-                this.slotOccupied[s] = false;
-                this.slotNodes[s].active = true;
-                break;
-            }
-        }
-        tower.node.removeFromParent();
-        tower.node.destroy();
-        this.towers.splice(towerIndex, 1);
-        this.towerTimers.splice(towerIndex, 1);
-        console.log(`塔已出售，返还 ${refund} 金币，当前 ${this.gold}`);
+    /** 恢复被移动塔的正常外观 */
+    private restoreTowerAppearance(towerNode: Node, def: TowerDef): void {
+        const gfx = towerNode.getComponent(Graphics);
+        if (!gfx) return;
+        gfx.clear();
+        gfx.fillColor = new Color(60, 60, 70, 255);
+        gfx.rect(-20, -20, 40, 40);
+        gfx.fill();
+        gfx.fillColor = def.color;
+        gfx.circle(0, 0, 14);
+        gfx.fill();
+        gfx.fillColor = new Color(255, 255, 255, 255);
+        gfx.circle(0, 0, 4);
+        gfx.fill();
+        gfx.strokeColor = def.rangeColor;
+        gfx.lineWidth = 2;
+        gfx.circle(0, 0, def.range);
+        gfx.stroke();
     }
 
-    /** 执行自爆：删除塔 + AOE 爆炸（战斗中免费，波次间扣40金币）+ 按塔类型不同效果 */
+    /** 执行自爆：删除塔 + AOE 爆炸（免费，仅战斗中可用）+ 按塔类型不同效果 */
     private executeExplode(towerIndex: number): void {
         if (towerIndex < 0 || towerIndex >= this.towers.length) return;
-        // 波次之间自爆扣金币，战斗中免费
-        if (!this.waveActive && this.gold < this.TOWER_REMOVE_COST) {
-            console.log(`金币不足，自爆需要 ${this.TOWER_REMOVE_COST}`);
-            if (this.statusLabel) this.statusLabel.string = `金币不足！自爆需要 ${this.TOWER_REMOVE_COST} 金币`;
-            return;
-        }
+        if (!this.waveActive) return;  // 波次间禁用自爆
         const tower = this.towers[towerIndex];
         const explodePos = tower.node.position.clone();
         const def = tower.def;
-        // 扣金币（仅波次之间）
-        if (!this.waveActive) {
-            this.gold -= this.TOWER_REMOVE_COST;
-            this.updateGoldLabel();
-        }
         // 释放槽位
         for (let s = 0; s < this.SLOT_POSITIONS.length; s++) {
             if (Vec3.distance(explodePos, this.SLOT_POSITIONS[s]) < 5) {
@@ -1801,7 +1808,7 @@ export class SceneInitializer extends Component {
         this.isUserPaused = false;
         this.buffSelected = false;
         this.hideTowerMenu();
-        this.resetLongPress();
+        this.hideTowerMenu();
         this.hideBuffCards();
         this.updatePauseButton();
         this.updateNextWaveButton();
@@ -1907,7 +1914,7 @@ export class SceneInitializer extends Component {
         this.isUserPaused = false;
         this.buffSelected = false;
         this.towerStats.reset();
-        this.resetLongPress();
+        this.hideTowerMenu();
         this.hideTowerMenu();
         this.hideBuffCards();
         this.updatePauseButton();
