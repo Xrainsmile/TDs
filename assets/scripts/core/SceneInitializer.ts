@@ -2,10 +2,10 @@ import { _decorator, Component, Node, view, UITransform, Layers, Vec3, Graphics,
 import { HUD } from '../ui/HUD';
 import { EffectManager } from './EffectManager';
 import {
-    PATH_WAYPOINTS, ENEMY_SPEED, BULLET_SPEED,
+    PATH_WAYPOINTS as _PATH_WAYPOINTS, ENEMY_SPEED, BULLET_SPEED,
     INITIAL_GOLD, KILL_REWARD, WAVE_BONUSES,
     EXPLOSION_RADIUS, EXPLOSION_DAMAGE, LEVEL_START_COUNTDOWN,
-    SLOT_POSITIONS, HEAL_RADIUS, HEAL_INTERVAL, HEAL_AMOUNT,
+    SLOT_POSITIONS as _SLOT_POSITIONS, HEAL_RADIUS, HEAL_INTERVAL, HEAL_AMOUNT,
     ATTACK_BUTTON_POS, SLOW_BUTTON_POS, POISON_BUTTON_POS,
     WAVES,
     type TowerDef, type EnemyDef, type SpawnEntry, type WaveConfig, type TowerAttackKind,
@@ -170,6 +170,8 @@ interface EnemyRuntime {
     healTimer: number;      // 治疗者光环计时
     // 扩展字段：新敌人的特殊计时器都挂这里，避免改结构
     extraTimer: number;
+    // 路径目标索引（当前前往的 waypoint）
+    pathIdx: number;
     // 通用 buff 字典：存 { timer: 剩余秒数, dps: 每秒掉血量 }
     // 新增 buff 只需往这里写一个 key，update 中自动处理掉血
     buffs: Record<string, { timer: number; dps: number }>;
@@ -191,10 +193,10 @@ type EnemyType = string;
 @ccclass('SceneInitializer')
 export class SceneInitializer extends Component {
 
-    // 路径（从 GameBalance 引用）
-    private get PATH_WAYPOINTS() { return PATH_WAYPOINTS; }
-    private get PATH_START() { return PATH_WAYPOINTS[0]; }
-    private get PATH_END() { return PATH_WAYPOINTS[PATH_WAYPOINTS.length - 1]; }
+    // 路径（响应式：优先用动态计算，fallback 到 GameBalance 静态值）
+    private get PATH_WAYPOINTS() { return this._dynamicPath.length > 0 ? this._dynamicPath : _PATH_WAYPOINTS; }
+    private get PATH_START() { return this.PATH_WAYPOINTS[0]; }
+    private get PATH_END() { return this.PATH_WAYPOINTS[this.PATH_WAYPOINTS.length - 1]; }
 
     // 基础数值（从 GameBalance 引用）
     private get ENEMY_SPEED() { return ENEMY_SPEED; }
@@ -322,10 +324,10 @@ export class SceneInitializer extends Component {
     // 波次配置（从 GameBalance 引用）
     private get WAVES() { return WAVES; }
 
-    // 建造点（从 GameBalance 引用）
-    private get SLOT_POSITIONS() { return SLOT_POSITIONS; }
+    // 建造点（响应式：优先用动态计算，fallback 到 GameBalance 静态值）
+    private get SLOT_POSITIONS() { return this._dynamicSlots.length > 0 ? this._dynamicSlots : _SLOT_POSITIONS; }
     private slotNodes: Node[] = [];
-    private slotOccupied: boolean[] = new Array(SLOT_POSITIONS.length).fill(false);
+    private slotOccupied: boolean[] = new Array(6).fill(false);
 
     // 拖拽
     private ghostNode: Node | null = null;
@@ -382,12 +384,22 @@ export class SceneInitializer extends Component {
     private buffSelected = false;             // 本轮是否已选 buff
 
     // 塔按钮位置已移入 TOWER_REGISTRY.buttonPos
-    // 游戏暂停按钮：右上角（避开 Wave 标签 y=280）
-    private readonly PAUSE_BUTTON_POS = new Vec3(420, 220, 0);
+    // 游戏暂停按钮：右侧（setupScene 中动态赋值）
+    private PAUSE_BUTTON_POS = new Vec3(420, 220, 0);
     private readonly PAUSE_BUTTON_RADIUS = 36;  // 触摸判定半径
     // 开始下一波按钮：中上（独立一行，避开顶部 HUD）
-    private readonly NEXT_WAVE_BUTTON_POS = new Vec3(0, 220, 0);
+    private NEXT_WAVE_BUTTON_POS = new Vec3(0, 220, 0);
     private readonly NEXT_WAVE_BUTTON_RADIUS = 80;  // 触摸判定半径（按钮加宽）
+
+    // 响应式布局动态计算结果（setupScene 中赋值）
+    private _visibleSize: { width: number; height: number } = { width: 960, height: 640 };
+    private _battleLeft = -300;
+    private _battleRight = 300;
+    private _dynamicSlots: Vec3[] = [];
+    private _dynamicPath: Vec3[] = [];
+    private _dynamicBtnPos: Vec3[] = [];
+    private _dynamicPausePos = new Vec3();
+    private _dynamicNextWavePos = new Vec3();
 
     // 拖拽中的塔定义
     private dragTowerDef: TowerDef | null = null;
@@ -407,21 +419,69 @@ export class SceneInitializer extends Component {
     private setupScene(): void {
         const canvas = this.node;
 
+        // === 响应式布局：获取真实可见宽度，计算三块区域 ===
+        const visible = view.getVisibleSize();
+        const halfW = visible.width / 2;
+        const halfH = visible.height / 2;
+        const margin = 24;
+        const leftPanelWidth = 120;
+        const rightPanelWidth = 150;
+        const battleLeft = -halfW + leftPanelWidth + margin;
+        const battleRight = halfW - rightPanelWidth - margin;
+        const battleWidth = battleRight - battleLeft;
+
+        // 动态计算塔位（下排 y=-80，上排 y=80）
+        const slotX1 = battleLeft + battleWidth * 0.25;
+        const slotX2 = battleLeft + battleWidth * 0.50;
+        const slotX3 = battleLeft + battleWidth * 0.75;
+        const dynamicSlots: Vec3[] = [
+            new Vec3(slotX1, -80, 0), new Vec3(slotX2, -80, 0), new Vec3(slotX3, -80, 0),
+            new Vec3(slotX1, 80, 0),  new Vec3(slotX2, 80, 0),  new Vec3(slotX3, 80, 0),
+        ];
+        // 动态计算路径（折线，水平段在塔位之间）
+        const dynamicPath: Vec3[] = [
+            new Vec3(battleLeft, -halfH * 0.4, 0),   // 起点（左下）
+            new Vec3(battleLeft, 0, 0),               // 拐点1（左中）
+            new Vec3(battleRight, 0, 0),              // 拐点2（右中）
+            new Vec3(battleRight, halfH * 0.4, 0),    // 终点（右上）
+        ];
+        // 动态塔按钮位置（左侧面板竖排）
+        const btnX = -halfW + margin + 48;
+        const dynamicBtnPos = [
+            new Vec3(btnX, -180, 0),
+            new Vec3(btnX, -60, 0),
+            new Vec3(btnX, 60, 0),
+        ];
+        // 动态暂停/开始按钮位置（右侧面板）
+        const pauseBtnX = halfW - rightPanelWidth / 2;
+        const dynamicPausePos = new Vec3(pauseBtnX, halfH - 60, 0);
+        const dynamicNextWavePos = new Vec3(0, halfH - 100, 0);
+
+        // 保存到实例字段供后续使用
+        this._visibleSize = visible;
+        this._battleLeft = battleLeft;
+        this._battleRight = battleRight;
+        this._dynamicSlots = dynamicSlots;
+        this._dynamicPath = dynamicPath;
+        this._dynamicBtnPos = dynamicBtnPos;
+        this._dynamicPausePos = dynamicPausePos;
+        this._dynamicNextWavePos = dynamicNextWavePos;
+
         // === GameLayer ===
         this.gameLayer = new Node('GameLayer');
         this.gameLayer.layer = Layers.Enum.UI_2D;
         this.gameLayer.setParent(canvas);
         this.gameTransform = this.gameLayer.addComponent(UITransform);
-        this.gameTransform.setContentSize(960, 640);
+        this.gameTransform.setContentSize(visible.width, visible.height);
         // 挂载特效管理器
         this.gameLayer.addComponent(EffectManager);
 
         // === 路径 ===
         this.drawPath(this.gameLayer);
 
-        // === 3个建造点 ===
-        for (let i = 0; i < this.SLOT_POSITIONS.length; i++) {
-            const slot = this.createTowerSlot(this.SLOT_POSITIONS[i], i);
+        // === 6个建造点 ===
+        for (let i = 0; i < dynamicSlots.length; i++) {
+            const slot = this.createTowerSlot(dynamicSlots[i], i);
             slot.setParent(this.gameLayer);
             this.slotNodes.push(slot);
         }
@@ -431,25 +491,30 @@ export class SceneInitializer extends Component {
         this.ghostNode.layer = Layers.Enum.UI_2D;
         this.ghostNode.setParent(this.gameLayer);
         const ghostTransform = this.ghostNode.addComponent(UITransform);
-        ghostTransform.setContentSize(48, 48);
+        ghostTransform.setContentSize(64, 64);
         ghostTransform.setAnchorPoint(0.5, 0.5);
         this.ghostGfx = this.ghostNode.addComponent(Graphics);
         this.drawGhost(false);
         this.ghostNode.active = false;
 
-        // === 塔按钮（从注册表自动生成）===
+        // === 塔按钮（从注册表自动生成，位置用动态计算）===
+        for (let i = 0; i < this.TOWER_REGISTRY.length; i++) {
+            this.TOWER_REGISTRY[i].buttonPos = dynamicBtnPos[i] ?? dynamicBtnPos[0];
+        }
         for (const def of this.TOWER_REGISTRY) {
             const btn = this.createTowerButton(def);
             btn.setParent(canvas);
         }
 
-        // === 游戏暂停按钮（右上角）===
+        // === 游戏暂停按钮（右侧）===
+        this.PAUSE_BUTTON_POS = dynamicPausePos;
         this.pauseButton = this.createPauseButton();
         this.pauseButton.setParent(canvas);
         this.pauseButtonLabel = this.pauseButton.getChildByName('Text')?.getComponent(Label) ?? null;
         this.updatePauseButton();
 
         // === 开始下一波按钮（中上，波次间自动暂停时才显示）===
+        this.NEXT_WAVE_BUTTON_POS = dynamicNextWavePos;
         this.nextWaveButton = this.createNextWaveButton();
         this.nextWaveButton.setParent(canvas);
         this.nextWaveButtonLabel = this.nextWaveButton.getChildByName('Text')?.getComponent(Label) ?? null;
@@ -657,7 +722,7 @@ export class SceneInitializer extends Component {
         hudNode.layer = Layers.Enum.UI_2D;
         hudNode.setParent(canvas);
         this.hud = hudNode.addComponent(HUD);
-        this.hud.init();
+        this.hud.init(this._visibleSize.width, this._visibleSize.height);
         // 兼容旧字段引用：现有 goldLabel/waveLabel/livesLabel/statusLabel 调用无需改动
         this.goldLabel = this.hud.goldLabel;
         this.waveLabel = this.hud.waveLabel;
@@ -1236,13 +1301,13 @@ export class SceneInitializer extends Component {
             const c = gfx.fillColor;
             gfx.clear();
             gfx.fillColor = new Color(c.r, c.g, c.b, 80);
-            gfx.rect(-20, -20, 40, 40);
+            gfx.rect(-28, -28, 56, 56);
             gfx.fill();
             gfx.fillColor = tower.def.color;
-            gfx.circle(0, 0, 14);
+            gfx.circle(0, 0, 20);
             gfx.fill();
             gfx.fillColor = new Color(255, 255, 255, 80);
-            gfx.circle(0, 0, 4);
+            gfx.circle(0, 0, 6);
             gfx.fill();
             gfx.strokeColor = new Color(tower.def.rangeColor.r, tower.def.rangeColor.g, tower.def.rangeColor.b, 30);
             gfx.lineWidth = 2;
@@ -1257,13 +1322,13 @@ export class SceneInitializer extends Component {
         if (!gfx) return;
         gfx.clear();
         gfx.fillColor = new Color(60, 60, 70, 255);
-        gfx.rect(-20, -20, 40, 40);
+        gfx.rect(-28, -28, 56, 56);
         gfx.fill();
         gfx.fillColor = def.color;
-        gfx.circle(0, 0, 14);
+        gfx.circle(0, 0, 20);
         gfx.fill();
         gfx.fillColor = new Color(255, 255, 255, 255);
-        gfx.circle(0, 0, 4);
+        gfx.circle(0, 0, 6);
         gfx.fill();
         gfx.strokeColor = def.rangeColor;
         gfx.lineWidth = 2;
@@ -1504,16 +1569,19 @@ export class SceneInitializer extends Component {
                 const eDef = this.getEnemyDef(e.type);
                 const speedMult = eDef?.speedMultiplier ?? 1;
                 const speed = this.ENEMY_SPEED * speedMult * e.slowMultiplier;
-                // 找到当前目标 waypoint（第一个距离 > 5 的点）
-                let target = endPos;
-                for (const wp of this.PATH_WAYPOINTS) {
-                    if (Vec3.distance(pos, wp) > 5) {
-                        target = wp;
-                        break;
-                    }
+                // 用 pathIdx 跟踪当前目标 waypoint
+                if (e.pathIdx >= this.PATH_WAYPOINTS.length) {
+                    // 已到达终点 waypoint，目标就是终点
+                    e.pathIdx = this.PATH_WAYPOINTS.length - 1;
                 }
+                const target = this.PATH_WAYPOINTS[e.pathIdx];
+                // 到达当前 waypoint → 前往下一个
+                if (Vec3.distance(pos, target) <= 5 && e.pathIdx < this.PATH_WAYPOINTS.length - 1) {
+                    e.pathIdx++;
+                }
+                const finalTarget = this.PATH_WAYPOINTS[Math.min(e.pathIdx, this.PATH_WAYPOINTS.length - 1)];
                 // 朝目标移动
-                const dir = new Vec3(target.x - pos.x, target.y - pos.y, 0);
+                const dir = new Vec3(finalTarget.x - pos.x, finalTarget.y - pos.y, 0);
                 const dist = dir.length();
                 if (dist > 0) {
                     const moveDist = Math.min(speed * dt, dist);
@@ -1737,6 +1805,7 @@ export class SceneInitializer extends Component {
             node: enemy, hp: actualHp, maxHp: actualHp,
             slowTimer: 0, slowMultiplier: 1,
             type, healTimer: 0, extraTimer: 0,
+            pathIdx: 1,  // 从起点 waypoint[0] 出发，目标是 waypoint[1]
             buffs: {},
         });
     }
@@ -1935,16 +2004,16 @@ export class SceneInitializer extends Component {
         const node = new Node(def.id + '_Button');
         node.layer = Layers.Enum.UI_2D;
         const transform = node.addComponent(UITransform);
-        transform.setContentSize(80, 80);
+        transform.setContentSize(96, 96);
         node.setPosition(def.buttonPos);
 
         const gfx = node.addComponent(Graphics);
         gfx.fillColor = new Color(60, 60, 70, 255);
-        gfx.rect(-30, -30, 60, 60);
+        gfx.rect(-36, -36, 72, 72);
         gfx.fill();
         // 塔主体色
         gfx.fillColor = def.color;
-        gfx.circle(0, 0, 16);
+        gfx.circle(0, 0, 20);
         gfx.fill();
 
         // 价格标签
@@ -1952,10 +2021,10 @@ export class SceneInitializer extends Component {
         labelNode.layer = Layers.Enum.UI_2D;
         labelNode.addComponent(UITransform);
         labelNode.setParent(node);
-        labelNode.setPosition(0, -32, 0);
+        labelNode.setPosition(0, -40, 0);
         const label = labelNode.addComponent(Label);
         label.string = `${def.cost}`;
-        label.fontSize = 12;
+        label.fontSize = 14;
 
         return node;
     }
@@ -2038,17 +2107,17 @@ export class SceneInitializer extends Component {
         node.setPosition(pos);
 
         const transform = node.addComponent(UITransform);
-        transform.setContentSize(48, 48);
+        transform.setContentSize(64, 64);
 
         const gfx = node.addComponent(Graphics);
         gfx.fillColor = new Color(60, 60, 70, 255);
-        gfx.rect(-20, -20, 40, 40);
+        gfx.rect(-28, -28, 56, 56);
         gfx.fill();
         gfx.fillColor = def.color;
-        gfx.circle(0, 0, 14);
+        gfx.circle(0, 0, 20);
         gfx.fill();
         gfx.fillColor = new Color(255, 255, 255, 255);
-        gfx.circle(0, 0, 4);
+        gfx.circle(0, 0, 6);
         gfx.fill();
         gfx.strokeColor = def.rangeColor;
         gfx.lineWidth = 2;
@@ -2064,20 +2133,20 @@ export class SceneInitializer extends Component {
         node.setPosition(pos);
 
         const transform = node.addComponent(UITransform);
-        transform.setContentSize(56, 56);
+        transform.setContentSize(72, 72);
 
         const gfx = node.addComponent(Graphics);
         gfx.lineWidth = 3;
         gfx.strokeColor = new Color(100, 200, 100, 200);
         gfx.fillColor = new Color(100, 200, 100, 60);
-        gfx.rect(-28, -28, 56, 56);
+        gfx.rect(-36, -36, 72, 72);
         gfx.fill();
         gfx.stroke();
 
         gfx.strokeColor = new Color(100, 200, 100, 255);
         gfx.lineWidth = 3;
-        gfx.moveTo(-10, 0); gfx.lineTo(10, 0);
-        gfx.moveTo(0, -10); gfx.lineTo(0, 10);
+        gfx.moveTo(-14, 0); gfx.lineTo(14, 0);
+        gfx.moveTo(0, -14); gfx.lineTo(0, 14);
         gfx.stroke();
 
         return node;

@@ -23,37 +23,38 @@ export class HUD extends Component {
     public waveLabel: Label | null = null;
 
     private readonly BG_HEIGHT = 48;     // 背景条高度
-    private readonly BG_Y = 296;          // 背景条中心 y（贴近设计分辨率顶部 320）
-    private readonly LABEL_Y = 280;       // 文字基线 y（沿用原散装 HUD 位置）
 
     /** 创建背景条 + 4 个 Label，必须在父节点已挂载后调用 */
-    public init(): void {
+    public init(visibleWidth: number = 960, visibleHeight: number = 640): void {
         const parent = this.node;
+        const bgY = visibleHeight / 2 - this.BG_HEIGHT / 2 - 8;
+        const labelY = bgY - 16;
 
-        // === 顶部半透明背景条（提升文字可读性）===
+        // === 顶部半透明背景条（铺满可见宽度）===
         const bg = new Node('HUDBg');
         bg.layer = Layers.Enum.UI_2D;
         bg.setParent(parent);
         const bgTransform = bg.addComponent(UITransform);
-        bgTransform.setContentSize(960, this.BG_HEIGHT);
+        bgTransform.setContentSize(visibleWidth, this.BG_HEIGHT);
         bgTransform.setAnchorPoint(0.5, 0.5);
-        bg.setPosition(0, this.BG_Y, 0);
+        bg.setPosition(0, bgY, 0);
         const gfx = bg.addComponent(Graphics);
         gfx.fillColor = new Color(0, 0, 0, 130);
-        gfx.rect(-480, -this.BG_HEIGHT / 2, 960, this.BG_HEIGHT);
+        gfx.rect(-visibleWidth / 2, -this.BG_HEIGHT / 2, visibleWidth, this.BG_HEIGHT);
         gfx.fill();
         // 底部细分隔线
         gfx.strokeColor = new Color(255, 255, 255, 60);
         gfx.lineWidth = 1;
-        gfx.moveTo(-480, -this.BG_HEIGHT / 2);
-        gfx.lineTo(480, -this.BG_HEIGHT / 2);
+        gfx.moveTo(-visibleWidth / 2, -this.BG_HEIGHT / 2);
+        gfx.lineTo(visibleWidth / 2, -this.BG_HEIGHT / 2);
         gfx.stroke();
 
         // === 4 个状态 Label ===
-        this.goldLabel = this.createLabel('Gold', new Vec3(-420, this.LABEL_Y, 0), 24);
-        this.livesLabel = this.createLabel('Lives', new Vec3(-200, this.LABEL_Y, 0), 24);
-        this.statusLabel = this.createLabel('Status', new Vec3(0, this.LABEL_Y, 0), 20);
-        this.waveLabel = this.createLabel('Wave', new Vec3(420, this.LABEL_Y, 0), 24);
+        const halfW = visibleWidth / 2;
+        this.goldLabel = this.createLabel('Gold', new Vec3(-halfW + 60, labelY, 0), 24);
+        this.livesLabel = this.createLabel('Lives', new Vec3(-halfW + 280, labelY, 0), 24);
+        this.statusLabel = this.createLabel('Status', new Vec3(0, labelY, 0), 20);
+        this.waveLabel = this.createLabel('Wave', new Vec3(halfW - 60, labelY, 0), 24);
     }
 
     /** 创建单个 Label 子节点并返回组件引用 */

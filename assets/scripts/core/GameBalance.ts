@@ -9,10 +9,10 @@ import { _decorator, Vec3, Color } from 'cc';
 
 // ===== 路径 =====
 export const PATH_WAYPOINTS: Vec3[] = [
-    new Vec3(-400, -200, 0),  // 起点（左下）
-    new Vec3(-400, 0, 0),    // 拐点1（左中）
-    new Vec3(400, 0, 0),     // 拐点2（右中，水平段经过塔位）
-    new Vec3(400, 200, 0),    // 终点（右上）
+    new Vec3(-300, -150, 0),  // 起点（左下）
+    new Vec3(-300, 0, 0),    // 拐点1（左中）
+    new Vec3(300, 0, 0),     // 拐点2（右中，水平段经过塔位）
+    new Vec3(300, 150, 0),    // 终点（右上）
 ];
 
 // ===== 基础数值 =====
@@ -33,12 +33,12 @@ export const LEVEL_START_COUNTDOWN = 5;
 
 // ===== 建造点 =====
 export const SLOT_POSITIONS: Vec3[] = [
-    new Vec3(-150, -64, 0),
-    new Vec3(0, -64, 0),
-    new Vec3(150, -64, 0),
-    new Vec3(-150, 64, 0),
-    new Vec3(0, 64, 0),
-    new Vec3(150, 64, 0),
+    new Vec3(-130, -80, 0),
+    new Vec3(0, -80, 0),
+    new Vec3(130, -80, 0),
+    new Vec3(-130, 80, 0),
+    new Vec3(0, 80, 0),
+    new Vec3(130, 80, 0),
 ];
 
 // ===== 治疗兵参数 =====
@@ -86,9 +86,9 @@ export interface WaveConfig {
 }
 
 // ===== 塔按钮位置 =====
-export const ATTACK_BUTTON_POS = new Vec3(-400, -200, 0);
-export const SLOW_BUTTON_POS = new Vec3(-400, -100, 0);
-export const POISON_BUTTON_POS = new Vec3(-400, 0, 0);
+export const ATTACK_BUTTON_POS = new Vec3(-430, -180, 0);
+export const SLOW_BUTTON_POS = new Vec3(-430, -60, 0);
+export const POISON_BUTTON_POS = new Vec3(-430, 60, 0);
 
 // ===== 波次配置 =====
 export const WAVES: WaveConfig[] = [
