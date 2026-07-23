@@ -17,7 +17,7 @@ class TowerStats {
     speedBonus = 0;         // 攻速加成（0.05 = +5%，累加）
     rangeBonus = 0;         // 范围加成（0.1 = +10%，累加）
     healSuppression = 0;    // 治疗抑制（0.1 = 抑制10%，累加）
-    splitCount = 0;         // 分裂攻击额外目标数
+    splashLevel = 0;        // 溅射等级（0=未解锁，>0=主弹命中后爆炸 AOE）
     slowLevel = 0;          // 减速等级（>0 时所有子弹附带减速）
 
     // 最终倍率 = 1 + 累计加成（加法叠加）
@@ -26,12 +26,16 @@ class TowerStats {
     get rangeMultiplier() { return 1 + this.rangeBonus; }
     get healMultiplier() { return Math.max(0, 1 - this.healSuppression); }
 
+    // 溅射 AOE 参数（随等级提升）
+    get splashRadius() { return 40 + this.splashLevel * 10; }       // 基础 40px，每级 +10
+    get splashDamage() { return 0.5 + this.splashLevel * 0.15; }    // 主弹伤害的 50%+15%/级
+
     reset(): void {
         this.damageBonus = 0;
         this.speedBonus = 0;
         this.rangeBonus = 0;
         this.healSuppression = 0;
-        this.splitCount = 0;
+        this.splashLevel = 0;
         this.slowLevel = 0;
     }
 }
@@ -63,14 +67,33 @@ const ROGUELIKE_BUFFS: BuffOption[] = [
         apply: s => { s.healSuppression += 0.1; },
     },
     {
-        id: 'split', name: '分裂攻击', desc: '子弹命中后分裂2颗小弹',
-        apply: s => { s.splitCount += 1; },
+        id: 'splash',
+        name: '溅射爆炸',
+        desc: '',  // 动态生成，见 getBuffDisplayDesc
+        apply: s => { s.splashLevel += 1; },
     },
     {
         id: 'slow', name: '减速', desc: '攻击附带减速效果',
         apply: s => { s.slowLevel += 1; },
     },
 ];
+
+/** 获取 buff 在卡片上显示的名称和描述（splash 需根据等级动态生成） */
+function getBuffDisplay(buff: BuffOption, stats: TowerStats): { name: string; desc: string } {
+    if (buff.id === 'splash') {
+        if (stats.splashLevel === 0) {
+            return {
+                name: '溅射爆炸',
+                desc: '子弹命中后爆炸，造成范围伤害',
+            };
+        }
+        return {
+            name: `溅射强化 Lv${stats.splashLevel + 1}`,
+            desc: `爆炸范围+10 / 伤害+15%（当前 ${stats.splashRadius}px / ${Math.round(stats.splashDamage * 100)}%）`,
+        };
+    }
+    return { name: buff.name, desc: buff.desc };
+}
 
 /** 塔攻击行为类型 */
 type TowerAttackKind = 'bullet'   // 发射子弹（命中扣血）
@@ -391,7 +414,7 @@ export class SceneInitializer extends Component {
     private enemies: EnemyRuntime[] = [];
     private towers: { node: Node; def: TowerDef }[] = [];
     private towerTimers: number[] = [];
-    private bullets: { node: Node; vx: number; vy: number; target: Node; def: TowerDef; isSplit: boolean; life: number }[] = [];
+    private bullets: { node: Node; vx: number; vy: number; target: Node; def: TowerDef }[] = [];
     private statusLabel: Label | null = null;
     private goldLabel: Label | null = null;
     private waveLabel: Label | null = null;
@@ -792,16 +815,17 @@ export class SceneInitializer extends Component {
             const idx = Math.floor(Math.random() * pool.length);
             this.currentBuffChoices.push(pool.splice(idx, 1)[0]);
         }
-        // 显示卡片并填充文字
+        // 显示卡片并填充文字（splash buff 根据当前等级动态显示）
         for (let i = 0; i < 3; i++) {
             const card = this.buffCards[i];
             const buff = this.currentBuffChoices[i];
+            const display = getBuffDisplay(buff, this.towerStats);
             card.active = true;
             if (this.buffCardLabels[i].name) {
-                this.buffCardLabels[i].name.string = buff.name;
+                this.buffCardLabels[i].name.string = display.name;
             }
             if (this.buffCardLabels[i].desc) {
-                this.buffCardLabels[i].desc.string = buff.desc;
+                this.buffCardLabels[i].desc.string = display.desc;
             }
         }
         this.buffSelected = false;
@@ -813,6 +837,7 @@ export class SceneInitializer extends Component {
     private selectBuff(index: number): void {
         const buff = this.currentBuffChoices[index];
         if (!buff) return;
+        const display = getBuffDisplay(buff, this.towerStats);
         buff.apply(this.towerStats);
         this.buffSelected = true;
         this.hideBuffCards();
@@ -820,9 +845,9 @@ export class SceneInitializer extends Component {
         this.updateNextWaveButton();
         // 更新 status 显示当前加成
         if (this.statusLabel) {
-            this.statusLabel.string = `已选: ${buff.name}  塔: ${this.towers.length}`;
+            this.statusLabel.string = `已选: ${display.name}  塔: ${this.towers.length}`;
         }
-        console.log(`Roguelike 选择: ${buff.name}`);
+        console.log(`Roguelike 选择: ${display.name}`);
     }
 
     /** 隐藏所有 buff 卡片 */
@@ -1202,37 +1227,61 @@ export class SceneInitializer extends Component {
         console.log(`塔自爆！位置 (${explodePos.x}, ${explodePos.y})，AOE ${this.EXPLOSION_RADIUS}px / ${this.EXPLOSION_DAMAGE} 伤害`);
     }
 
+    /** 溅射 AOE：在命中点爆炸，伤害周围敌人（伤害 = 主弹伤害 × splashDamage 倍率） */
+    private triggerSplash(pos: Vec3, def: TowerDef): void {
+        const ts = this.towerStats;
+        const radius = ts.splashRadius;
+        const splashDmg = def.damage * ts.damageMultiplier * ts.splashDamage;
+        for (let j = this.enemies.length - 1; j >= 0; j--) {
+            const e = this.enemies[j];
+            if (!e.node.isValid) continue;
+            const d = Vec3.distance(pos, e.node.position);
+            if (d <= radius) {
+                e.hp -= splashDmg;
+                def.onBulletHit?.(e);  // 触发塔的命中效果（如毒 buff）
+                if (e.hp <= 0) {
+                    e.node.destroy();
+                    this.enemies.splice(j, 1);
+                    this.gold += this.KILL_REWARD;
+                    this.updateGoldLabel();
+                }
+            }
+        }
+        // 爆炸光波动画（用溅射半径，区分于自爆的固定 60px）
+        this.createExplosionWave(pos, radius);
+    }
+
     /** 创建爆炸光波动画（扩散+淡出，约 0.4 秒） */
-    private createExplosionWave(pos: Vec3): void {
+    private createExplosionWave(pos: Vec3, radius: number = this.EXPLOSION_RADIUS): void {
         if (!this.gameLayer) return;
         const wave = new Node('ExplosionWave');
         wave.layer = Layers.Enum.UI_2D;
         wave.setParent(this.gameLayer);
         wave.setPosition(pos);
         const transform = wave.addComponent(UITransform);
-        transform.setContentSize(this.EXPLOSION_RADIUS * 2, this.EXPLOSION_RADIUS * 2);
+        transform.setContentSize(radius * 2, radius * 2);
         transform.setAnchorPoint(0.5, 0.5);
         const gfx = wave.addComponent(Graphics);
 
         // 初始光波
-        const drawWave = (radius: number, alpha: number) => {
+        const drawWave = (r: number, alpha: number) => {
             gfx.clear();
             // 外圈光波（橙色，扩散）
             gfx.strokeColor = new Color(255, 180, 80, alpha);
             gfx.lineWidth = 6;
-            gfx.circle(0, 0, radius);
+            gfx.circle(0, 0, r);
             gfx.stroke();
             // 内圈填充（红橙，淡出）
             gfx.fillColor = new Color(255, 100, 50, alpha * 0.4);
-            gfx.circle(0, 0, radius * 0.7);
+            gfx.circle(0, 0, r * 0.7);
             gfx.fill();
         };
 
-        // 动画分 5 帧，半径从 10 扩散到 60，alpha 从 255 淡出到 0
+        // 动画分 5 帧，半径从 10 扩散到目标半径，alpha 从 255 淡出到 0
         let frame = 0;
         const totalFrames = 5;
         const startRadius = 10;
-        const endRadius = this.EXPLOSION_RADIUS;
+        const endRadius = radius;
         drawWave(startRadius, 255);
 
         this.schedule(() => {
@@ -1433,50 +1482,7 @@ export class SceneInitializer extends Component {
             }
 
             const pos = b.node.position;
-            const moveDist = Math.sqrt(b.vx * b.vx + b.vy * b.vy) * dt;
             b.node.setPosition(pos.x + b.vx * dt, pos.y + b.vy * dt, 0);
-
-            if (b.isSplit) {
-                // === 分裂弹：检查命中附近任何敌人（不追踪固定目标）===
-                let hit = false;
-                for (let j = this.enemies.length - 1; j >= 0; j--) {
-                    const e = this.enemies[j];
-                    if (!e.node.isValid) continue;
-                    const d = Vec3.distance(b.node.position, e.node.position);
-                    if (d < 16) {
-                        // 分裂弹伤害（主弹的一半）
-                        e.hp -= b.def.damage * this.towerStats.damageMultiplier * 0.5;
-                        b.def.onBulletHit?.(e);
-                        if (this.towerStats.slowLevel > 0) {
-                            const slowMult = Math.max(0.3, 0.85 - this.towerStats.slowLevel * 0.05);
-                            if (e.slowMultiplier > slowMult) {
-                                e.slowMultiplier = slowMult;
-                                e.slowTimer = 1.5;
-                            }
-                        }
-                        b.node.destroy();
-                        this.bullets.splice(i, 1);
-                        hit = true;
-                        if (e.hp <= 0) {
-                            e.node.destroy();
-                            this.enemies.splice(j, 1);
-                            this.gold += this.KILL_REWARD;
-                            this.updateGoldLabel();
-                            console.log(`分裂击杀！+${this.KILL_REWARD} 金币`);
-                        }
-                        break;
-                    }
-                }
-                if (hit) continue;
-
-                // 分裂弹飞完 life 距离就销毁
-                b.life -= moveDist;
-                if (b.life <= 0) {
-                    b.node.destroy();
-                    this.bullets.splice(i, 1);
-                }
-                continue;
-            }
 
             // === 主弹：命中固定目标 ===
             let hit = false;
@@ -1504,21 +1510,9 @@ export class SceneInitializer extends Component {
                         }
                     }
 
-                    // Roguelike 分裂 buff：主弹命中后分裂出 2 颗小弹
-                    if (this.towerStats.splitCount > 0) {
-                        const splitCount = 2 * this.towerStats.splitCount;
-                        const hitPos = b.node.position.clone();
-                        for (let s = 0; s < splitCount; s++) {
-                            // 随机方向，目标点 = 命中点 + 随机方向 10px
-                            const angle = Math.random() * Math.PI * 2;
-                            const targetPos = new Vec3(
-                                hitPos.x + Math.cos(angle) * 10,
-                                hitPos.y + Math.sin(angle) * 10,
-                                0
-                            );
-                            // 分裂弹无固定目标（target 传自身，靠 isSplit 逻辑命中附近敌人）
-                            this.fireBullet(hitPos, targetPos, e.node, b.def, true);
-                        }
+                    // Roguelike 溅射 buff：主弹命中后在命中点爆炸 AOE
+                    if (this.towerStats.splashLevel > 0) {
+                        this.triggerSplash(b.node.position, b.def);
                     }
 
                     b.node.destroy();
@@ -1590,23 +1584,21 @@ export class SceneInitializer extends Component {
         });
     }
 
-    /** 发射子弹。isSplit=true 时为分裂弹（无目标追踪，靠 life 距离销毁） */
-    private fireBullet(from: Vec3, to: Vec3, target: Node, def: TowerDef, isSplit = false): void {
+    /** 发射子弹 */
+    private fireBullet(from: Vec3, to: Vec3, target: Node, def: TowerDef): void {
         if (!this.gameLayer) return;
 
-        const bullet = new Node(isSplit ? 'SplitBullet' : 'Bullet');
+        const bullet = new Node('Bullet');
         bullet.layer = Layers.Enum.UI_2D;
         bullet.setParent(this.gameLayer);
         bullet.setPosition(from);
 
         const transform = bullet.addComponent(UITransform);
-        transform.setContentSize(isSplit ? 8 : 12, isSplit ? 8 : 12);
+        transform.setContentSize(12, 12);
 
         const gfx = bullet.addComponent(Graphics);
-        // 用塔定义的颜色画子弹（分裂弹半透明）
-        const alpha = isSplit ? 180 : 255;
-        gfx.fillColor = new Color(def.color.r, def.color.g, def.color.b, alpha);
-        gfx.circle(0, 0, isSplit ? 4 : 6);
+        gfx.fillColor = new Color(def.color.r, def.color.g, def.color.b, 255);
+        gfx.circle(0, 0, 6);
         gfx.fill();
 
         const dx = to.x - from.x;
@@ -1619,8 +1611,6 @@ export class SceneInitializer extends Component {
             vy: (dy / dist) * this.BULLET_SPEED,
             target,
             def,
-            isSplit,
-            life: isSplit ? 10 : Infinity,  // 分裂弹最远飞 10px
         });
     }
 
