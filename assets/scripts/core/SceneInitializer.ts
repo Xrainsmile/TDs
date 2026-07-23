@@ -5,18 +5,16 @@ const { ccclass } = _decorator;
 /** 敌人类型 */
 type EnemyType = 'normal' | 'healer';
 
-/** 单段敌人生成配置 */
-interface WaveSegment {
-    count: number;
-    hp: number;
-    interval: number;
-    type?: EnemyType;
-    delay?: number;  // 距波次开始的延迟（秒）
+/** 单只敌人生成配置（时间线格式） */
+interface SpawnEntry {
+    time: number;       // 从波次开始第几秒生成这只（秒，可写小数）
+    type: EnemyType;    // 'normal' 普通兵 / 'healer' 治疗兵
+    hp: number;         // 这只敌人的血量
 }
 
 /** 波次配置 */
 interface WaveConfig {
-    segments: WaveSegment[];
+    entries: SpawnEntry[];
 }
 
 /**
@@ -66,15 +64,83 @@ export class SceneInitializer extends Component {
     private readonly HEAL_INTERVAL = 3.0;       // 每 3 秒治疗一次
     private readonly HEAL_AMOUNT = 5;           // 回复 5 点 HP
 
-    // 波次配置
+    // ===== 波次配置（时间线格式：一行一只敌人）=====
+    // time:  从波次开始第几秒生成（秒，可写小数）
+    // type:  'normal' 普通兵 / 'healer' 治疗兵（治疗兵速度慢10%、血量建议是普通的 0.8 倍）
+    // hp:    这只敌人多少血
     private readonly WAVES: WaveConfig[] = [
-        { segments: [{ count: 5, hp: 20, interval: 1.0 }] },
-        { segments: [{ count: 8, hp: 30, interval: 0.8 }] },
-        { segments: [
-            { count: 5, hp: 50, interval: 0.6 },
-            { count: 3, hp: 50, interval: 1.5, type: 'healer', delay: 5 },
+        // Wave 1：30 只普通兵，HP=20，每隔 1.0s 一只
+        { entries: [
+            { time: 0.0,  type: 'normal', hp: 20 },  { time: 1.0,  type: 'normal', hp: 20 },
+            { time: 2.0,  type: 'normal', hp: 20 },  { time: 3.0,  type: 'normal', hp: 20 },
+            { time: 4.0,  type: 'normal', hp: 20 },  { time: 5.0,  type: 'normal', hp: 20 },
+            { time: 6.0,  type: 'normal', hp: 20 },  { time: 7.0,  type: 'normal', hp: 20 },
+            { time: 8.0,  type: 'normal', hp: 20 },  { time: 9.0,  type: 'normal', hp: 20 },
+            { time: 10.0, type: 'normal', hp: 20 },  { time: 11.0, type: 'normal', hp: 20 },
+            { time: 12.0, type: 'normal', hp: 20 },  { time: 13.0, type: 'normal', hp: 20 },
+            { time: 14.0, type: 'normal', hp: 20 },  { time: 15.0, type: 'normal', hp: 20 },
+            { time: 16.0, type: 'normal', hp: 20 },  { time: 17.0, type: 'normal', hp: 20 },
+            { time: 18.0, type: 'normal', hp: 20 },  { time: 19.0, type: 'normal', hp: 20 },
+            { time: 20.0, type: 'normal', hp: 20 },  { time: 21.0, type: 'normal', hp: 20 },
+            { time: 22.0, type: 'normal', hp: 20 },  { time: 23.0, type: 'normal', hp: 20 },
+            { time: 24.0, type: 'normal', hp: 20 },  { time: 25.0, type: 'normal', hp: 20 },
+            { time: 26.0, type: 'normal', hp: 20 },  { time: 27.0, type: 'normal', hp: 20 },
+            { time: 28.0, type: 'normal', hp: 20 },  { time: 29.0, type: 'normal', hp: 20 },
         ]},
-        { segments: [{ count: 5, hp: 100, interval: 1.5 }] },
+        // Wave 2：30 只普通兵，HP=30，每隔 0.8s 一只
+        { entries: [
+            { time: 0.0,  type: 'normal', hp: 30 },  { time: 0.8,  type: 'normal', hp: 30 },
+            { time: 1.6,  type: 'normal', hp: 30 },  { time: 2.4,  type: 'normal', hp: 30 },
+            { time: 3.2,  type: 'normal', hp: 30 },  { time: 4.0,  type: 'normal', hp: 30 },
+            { time: 4.8,  type: 'normal', hp: 30 },  { time: 5.6,  type: 'normal', hp: 30 },
+            { time: 6.4,  type: 'normal', hp: 30 },  { time: 7.2,  type: 'normal', hp: 30 },
+            { time: 8.0,  type: 'normal', hp: 30 },  { time: 8.8,  type: 'normal', hp: 30 },
+            { time: 9.6,  type: 'normal', hp: 30 },  { time: 10.4, type: 'normal', hp: 30 },
+            { time: 11.2, type: 'normal', hp: 30 },  { time: 12.0, type: 'normal', hp: 30 },
+            { time: 12.8, type: 'normal', hp: 30 },  { time: 13.6, type: 'normal', hp: 30 },
+            { time: 14.4, type: 'normal', hp: 30 },  { time: 15.2, type: 'normal', hp: 30 },
+            { time: 16.0, type: 'normal', hp: 30 },  { time: 16.8, type: 'normal', hp: 30 },
+            { time: 17.6, type: 'normal', hp: 30 },  { time: 18.4, type: 'normal', hp: 30 },
+            { time: 19.2, type: 'normal', hp: 30 },  { time: 20.0, type: 'normal', hp: 30 },
+            { time: 20.8, type: 'normal', hp: 30 },  { time: 21.6, type: 'normal', hp: 30 },
+            { time: 22.4, type: 'normal', hp: 30 },  { time: 23.2, type: 'normal', hp: 30 },
+        ]},
+        // Wave 3：30 只，3 普通 + 1 治疗循环穿插（23 普通 HP=50 + 7 治疗 HP=40），每隔 0.6s 一只
+        { entries: [
+            { time: 0.0,  type: 'normal', hp: 50 },  { time: 0.6,  type: 'normal', hp: 50 },
+            { time: 1.2,  type: 'normal', hp: 50 },  { time: 1.8,  type: 'healer', hp: 40 },
+            { time: 2.4,  type: 'normal', hp: 50 },  { time: 3.0,  type: 'normal', hp: 50 },
+            { time: 3.6,  type: 'normal', hp: 50 },  { time: 4.2,  type: 'healer', hp: 40 },
+            { time: 4.8,  type: 'normal', hp: 50 },  { time: 5.4,  type: 'normal', hp: 50 },
+            { time: 6.0,  type: 'normal', hp: 50 },  { time: 6.6,  type: 'healer', hp: 40 },
+            { time: 7.2,  type: 'normal', hp: 50 },  { time: 7.8,  type: 'normal', hp: 50 },
+            { time: 8.4,  type: 'normal', hp: 50 },  { time: 9.0,  type: 'healer', hp: 40 },
+            { time: 9.6,  type: 'normal', hp: 50 },  { time: 10.2, type: 'normal', hp: 50 },
+            { time: 10.8, type: 'normal', hp: 50 },  { time: 11.4, type: 'healer', hp: 40 },
+            { time: 12.0, type: 'normal', hp: 50 },  { time: 12.6, type: 'normal', hp: 50 },
+            { time: 13.2, type: 'normal', hp: 50 },  { time: 13.8, type: 'healer', hp: 40 },
+            { time: 14.4, type: 'normal', hp: 50 },  { time: 15.0, type: 'normal', hp: 50 },
+            { time: 15.6, type: 'normal', hp: 50 },  { time: 16.2, type: 'healer', hp: 40 },
+            { time: 16.8, type: 'normal', hp: 50 },  { time: 17.4, type: 'normal', hp: 50 },
+        ]},
+        // Wave 4：30 只普通兵，HP=100，每隔 1.5s 一只
+        { entries: [
+            { time: 0.0,  type: 'normal', hp: 100 },  { time: 1.5,  type: 'normal', hp: 100 },
+            { time: 3.0,  type: 'normal', hp: 100 },  { time: 4.5,  type: 'normal', hp: 100 },
+            { time: 6.0,  type: 'normal', hp: 100 },  { time: 7.5,  type: 'normal', hp: 100 },
+            { time: 9.0,  type: 'normal', hp: 100 },  { time: 10.5, type: 'normal', hp: 100 },
+            { time: 12.0, type: 'normal', hp: 100 },  { time: 13.5, type: 'normal', hp: 100 },
+            { time: 15.0, type: 'normal', hp: 100 },  { time: 16.5, type: 'normal', hp: 100 },
+            { time: 18.0, type: 'normal', hp: 100 },  { time: 19.5, type: 'normal', hp: 100 },
+            { time: 21.0, type: 'normal', hp: 100 },  { time: 22.5, type: 'normal', hp: 100 },
+            { time: 24.0, type: 'normal', hp: 100 },  { time: 25.5, type: 'normal', hp: 100 },
+            { time: 27.0, type: 'normal', hp: 100 },  { time: 28.5, type: 'normal', hp: 100 },
+            { time: 30.0, type: 'normal', hp: 100 },  { time: 31.5, type: 'normal', hp: 100 },
+            { time: 33.0, type: 'normal', hp: 100 },  { time: 34.5, type: 'normal', hp: 100 },
+            { time: 36.0, type: 'normal', hp: 100 },  { time: 37.5, type: 'normal', hp: 100 },
+            { time: 39.0, type: 'normal', hp: 100 },  { time: 40.5, type: 'normal', hp: 100 },
+            { time: 42.0, type: 'normal', hp: 100 },  { time: 43.5, type: 'normal', hp: 100 },
+        ]},
     ];
 
     // 建造点
@@ -120,11 +186,28 @@ export class SceneInitializer extends Component {
     private spawnedInWave = 0;
     private waveTotalCount = 0;  // 当前波次总敌人数
     private waveActive = false;
-    private waveDelay = 0;  // 波次间延迟
+    private waveDelay = 0;  // 波次间延迟（保留兼容，未使用）
+    // 暂停状态：
+    // - isWavePaused: 波次结束后的"自动暂停"→ 可以建塔/移塔，点"开始下一波"继续
+    // - isUserPaused: 用户在波次进行中主动暂停 → 完全冻结，不能拖拽
+    private isWavePaused = false;
+    private isUserPaused = false;
+    // 游戏暂停按钮（右上角）
+    private pauseButton: Node | null = null;
+    private pauseButtonLabel: Label | null = null;
+    // 开始下一波按钮（中上，波次间自动暂停时显示）
+    private nextWaveButton: Node | null = null;
+    private nextWaveButtonLabel: Label | null = null;
 
     // 塔按钮位置
     private readonly TOWER_BUTTON_POS = new Vec3(-400, -200, 0);
     private readonly SLOW_BUTTON_POS = new Vec3(-400, -100, 0);
+    // 游戏暂停按钮：右上角（避开 Wave 标签 y=280）
+    private readonly PAUSE_BUTTON_POS = new Vec3(420, 220, 0);
+    private readonly PAUSE_BUTTON_RADIUS = 36;  // 触摸判定半径
+    // 开始下一波按钮：中上（独立一行，避开顶部 HUD）
+    private readonly NEXT_WAVE_BUTTON_POS = new Vec3(0, 220, 0);
+    private readonly NEXT_WAVE_BUTTON_RADIUS = 80;  // 触摸判定半径（按钮加宽）
 
     // 拖拽中的塔类型
     private dragTowerType: 'attack' | 'slow' = 'attack';
@@ -175,12 +258,40 @@ export class SceneInitializer extends Component {
         const slowButton = this.createTowerButton('slow');
         slowButton.setParent(canvas);
 
+        // === 游戏暂停按钮（右上角）===
+        this.pauseButton = this.createPauseButton();
+        this.pauseButton.setParent(canvas);
+        this.pauseButtonLabel = this.pauseButton.getChildByName('Text')?.getComponent(Label) ?? null;
+        this.updatePauseButton();
+
+        // === 开始下一波按钮（中上，波次间自动暂停时才显示）===
+        this.nextWaveButton = this.createNextWaveButton();
+        this.nextWaveButton.setParent(canvas);
+        this.nextWaveButtonLabel = this.nextWaveButton.getChildByName('Text')?.getComponent(Label) ?? null;
+        this.nextWaveButton.active = false;  // 初始隐藏
+
         // === 所有触摸事件绑定到 Canvas ===
         canvas.on(Node.EventType.TOUCH_START, (event: EventTouch) => {
             const buttonLocal = this.eventToCanvasLocal(event);
             const gameLocal = this.eventToGameLocal(event);
 
-            // 1. 判断是否点中了塔按钮（新建）
+            // 0. 优先判定：是否点中了中上"开始下一波"按钮（仅波次间自动暂停时可见）
+            if (this.isWavePaused && this.nextWaveButton && this.nextWaveButton.active
+                && Vec3.distance(buttonLocal, this.NEXT_WAVE_BUTTON_POS) <= this.NEXT_WAVE_BUTTON_RADIUS) {
+                this.startNextWaveFromButton();
+                return;
+            }
+
+            // 1. 判定：是否点中了右上角游戏暂停按钮
+            if (Vec3.distance(buttonLocal, this.PAUSE_BUTTON_POS) <= this.PAUSE_BUTTON_RADIUS) {
+                this.toggleGamePause();
+                return;
+            }
+
+            // 2. 游戏暂停时完全冻结，不允许拖拽
+            if (this.isUserPaused) return;
+
+            // 3. 判断是否点中了塔按钮（新建）
             if (Vec3.distance(buttonLocal, this.TOWER_BUTTON_POS) <= 40) {
                 this.dragTowerType = 'attack';
                 this.dragMode = 'place';
@@ -198,7 +309,7 @@ export class SceneInitializer extends Component {
                 }
                 if (hitTower < 0) return;
 
-                // 波次进行中不能移动塔
+                // 波次进行中不能移动塔（波次间暂停 isWavePaused 时可以移）
                 if (this.waveActive) {
                     console.log('波次进行中，不能移动塔');
                     return;
@@ -334,8 +445,48 @@ export class SceneInitializer extends Component {
         console.log('SceneInitializer: 极简版启动');
         console.log(`波次配置: ${this.WAVES.length} 波`);
         this.WAVES.forEach((w, i) => {
-            console.log(`  Wave ${i + 1}: ${w.count}只 HP=${w.hp} 间隔=${w.interval}s`);
+            console.log(`  Wave ${i + 1}: ${w.entries.length} 只`);
         });
+    }
+
+    /** 游戏暂停按钮：切换用户暂停（只在波次进行中有效，波次间暂停时此按钮无效） */
+    private toggleGamePause(): void {
+        if (this.isGameOver || this.isWavePaused) return;
+        this.isUserPaused = !this.isUserPaused;
+        console.log(this.isUserPaused ? '游戏暂停' : '游戏继续');
+        this.updatePauseButton();
+    }
+
+    /** 开始下一波按钮：波次间自动暂停时点击启动下一波 */
+    private startNextWaveFromButton(): void {
+        if (!this.isWavePaused) return;
+        this.isWavePaused = false;
+        this.updateNextWaveButton();
+        this.startNextWave();
+        console.log('用户点击开始下一波 → 启动 Wave', this.currentWave + 1);
+    }
+
+    /** 同步游戏暂停按钮文字 */
+    private updatePauseButton(): void {
+        if (!this.pauseButtonLabel || !this.pauseButton) return;
+        if (this.isUserPaused) {
+            this.pauseButtonLabel.string = '▶ 继续';
+        } else {
+            this.pauseButtonLabel.string = '⏸ 暂停';
+        }
+    }
+
+    /** 同步"开始下一波"按钮的可见性和文字 */
+    private updateNextWaveButton(): void {
+        if (!this.nextWaveButton || !this.nextWaveButtonLabel) return;
+        // 只在波次间自动暂停且非游戏结束时显示
+        this.nextWaveButton.active = this.isWavePaused && !this.isGameOver;
+        if (this.nextWaveButton.active) {
+            const nextWave = this.currentWave + 1;
+            this.nextWaveButtonLabel.string = nextWave <= this.WAVES.length
+                ? `▶ 开始 Wave ${nextWave}`
+                : '▶ 继续';
+        }
     }
 
     /** 启动下一波 */
@@ -350,21 +501,16 @@ export class SceneInitializer extends Component {
         this.spawnedInWave = 0;
         this.waveActive = true;
 
-        // 计算总敌人数
-        this.waveTotalCount = wave.segments.reduce((sum, s) => sum + s.count, 0);
+        // 当前波次总敌人数 = 时间线条目数
+        this.waveTotalCount = wave.entries.length;
 
-        // 按段调度生成
-        for (const seg of wave.segments) {
-            const delay = seg.delay ?? 0;
-            const type = seg.type ?? 'normal';
-            for (let i = 0; i < seg.count; i++) {
-                const spawnDelay = delay + i * seg.interval;
-                this.scheduleOnce(() => {
-                    if (this.isGameOver) return;
-                    this.spawnEnemy(seg.hp, type);
-                    this.spawnedInWave++;
-                }, spawnDelay);
-            }
+        // 逐只按时间线调度生成
+        for (const entry of wave.entries) {
+            this.scheduleOnce(() => {
+                if (this.isGameOver) return;
+                this.spawnEnemy(entry.hp, entry.type);
+                this.spawnedInWave++;
+            }, entry.time);
         }
 
         console.log(`Wave ${this.currentWave} 开始: ${this.waveTotalCount} 只`);
@@ -376,6 +522,10 @@ export class SceneInitializer extends Component {
     private victory(): void {
         this.waveActive = false;
         this.isGameOver = true;  // 复用 isGameOver 停止 update 逻辑
+        this.isWavePaused = false;
+        this.isUserPaused = false;
+        this.updatePauseButton();
+        this.updateNextWaveButton();
 
         const canvas = this.node;
         const panel = new Node('VictoryPanel');
@@ -497,20 +647,21 @@ export class SceneInitializer extends Component {
     protected update(dt: number): void {
         if (this.isGameOver) return;
 
+        // 用户暂停：完全冻结游戏逻辑（敌人/塔/子弹都不动），拖拽也在 TOUCH_START 中被阻止
+        if (this.isUserPaused) return;
+
         // === 波次完成检测 ===
         if (this.waveActive) {
-            // 全部生成且全部死亡 → 下一波
+            // 全部生成且全部死亡 → 自动暂停，等用户点"开始下一波"
             if (this.spawnedInWave >= this.waveTotalCount && this.enemies.length === 0) {
                 this.waveActive = false;
-                this.waveDelay = 6;  // 波次间等待 6 秒
-                console.log(`Wave ${this.currentWave} 完成（${this.waveTotalCount} 只全部消灭），等待 6 秒后启动 Wave ${this.currentWave + 1}`);
-            }
-        } else if (this.waveDelay > 0) {
-            this.waveDelay -= dt;
-            if (this.waveDelay <= 0) {
-                this.startNextWave();
+                this.isWavePaused = true;
+                this.updatePauseButton();
+                this.updateNextWaveButton();
+                console.log(`Wave ${this.currentWave} 完成（${this.waveTotalCount} 只全部消灭），已自动暂停`);
             }
         }
+        // 注意：原 waveDelay 自动倒计时逻辑已删除——下一波由用户点暂停按钮触发
 
         // === 敌人移动 ===
         for (let i = this.enemies.length - 1; i >= 0; i--) {
@@ -545,12 +696,15 @@ export class SceneInitializer extends Component {
 
         // === HP 显示 ===
         if (this.statusLabel) {
-            if (this.waveActive) {
+            if (this.isWavePaused) {
+                // 波次间暂停：提示用户可以建塔，点中上按钮开始下一波
+                this.statusLabel.string = `布防阶段 - 可建塔/移塔  塔: ${this.towers.length}`;
+            } else if (this.isUserPaused) {
+                this.statusLabel.string = `游戏已暂停  塔: ${this.towers.length}`;
+            } else if (this.waveActive) {
                 const wave = this.WAVES[this.currentWave - 1];
                 const remaining = this.waveTotalCount - this.spawnedInWave + this.enemies.length;
                 this.statusLabel.string = `剩余敌人: ${remaining}  塔: ${this.towers.length}`;
-            } else if (this.waveDelay > 0) {
-                this.statusLabel.string = `下一波倒计时: ${Math.ceil(this.waveDelay)}s  塔: ${this.towers.length}`;
             } else {
                 this.statusLabel.string = `塔: ${this.towers.length}`;
             }
@@ -782,6 +936,10 @@ export class SceneInitializer extends Component {
         this.isGameOver = true;
         this.waveActive = false;
         this.waveDelay = 0;
+        this.isWavePaused = false;
+        this.isUserPaused = false;
+        this.updatePauseButton();
+        this.updateNextWaveButton();
 
         // 清除所有敌人和子弹
         for (const en of this.enemies) en.node.destroy();
@@ -878,6 +1036,10 @@ export class SceneInitializer extends Component {
         this.spawnTimer = 0;
         this.waveActive = false;
         this.waveDelay = 0;
+        this.isWavePaused = false;
+        this.isUserPaused = false;
+        this.updatePauseButton();
+        this.updateNextWaveButton();
 
         // 更新 HUD
         this.updateGoldLabel();
@@ -919,6 +1081,78 @@ export class SceneInitializer extends Component {
         const label = labelNode.addComponent(Label);
         label.string = `${isSlow ? this.SLOW_TOWER_COST : this.TOWER_COST}`;
         label.fontSize = 12;
+
+        return node;
+    }
+
+    /** 创建右上角游戏暂停按钮 */
+    private createPauseButton(): Node {
+        const node = new Node('PauseButton');
+        node.layer = Layers.Enum.UI_2D;
+        const transform = node.addComponent(UITransform);
+        transform.setContentSize(72, 36);
+        node.setPosition(this.PAUSE_BUTTON_POS);
+
+        const gfx = node.addComponent(Graphics);
+        // 圆角按钮背景（灰色）
+        gfx.fillColor = new Color(80, 80, 90, 255);
+        gfx.roundRect(-36, -18, 72, 36, 8);
+        gfx.fill();
+        gfx.strokeColor = new Color(255, 255, 255, 150);
+        gfx.lineWidth = 1;
+        gfx.roundRect(-36, -18, 72, 36, 8);
+        gfx.stroke();
+
+        // 按钮文字
+        const textNode = new Node('Text');
+        textNode.layer = Layers.Enum.UI_2D;
+        textNode.addComponent(UITransform);
+        textNode.setParent(node);
+        textNode.setPosition(0, 0, 0);
+        const label = textNode.addComponent(Label);
+        label.string = '⏸ 暂停';
+        label.fontSize = 16;
+        label.color = new Color(255, 255, 255, 255);
+        label.horizontalAlign = Label.HorizontalAlign.CENTER;
+        label.verticalAlign = Label.VerticalAlign.CENTER;
+        const textTransform = textNode.getComponent(UITransform)!;
+        textTransform.setContentSize(72, 36);
+
+        return node;
+    }
+
+    /** 创建中上"开始下一波"按钮 */
+    private createNextWaveButton(): Node {
+        const node = new Node('NextWaveButton');
+        node.layer = Layers.Enum.UI_2D;
+        const transform = node.addComponent(UITransform);
+        transform.setContentSize(160, 40);
+        node.setPosition(this.NEXT_WAVE_BUTTON_POS);
+
+        const gfx = node.addComponent(Graphics);
+        // 圆角按钮背景（绿色，醒目）
+        gfx.fillColor = new Color(60, 160, 80, 255);
+        gfx.roundRect(-76, -18, 152, 36, 8);
+        gfx.fill();
+        gfx.strokeColor = new Color(255, 255, 255, 200);
+        gfx.lineWidth = 2;
+        gfx.roundRect(-76, -18, 152, 36, 8);
+        gfx.stroke();
+
+        // 按钮文字
+        const textNode = new Node('Text');
+        textNode.layer = Layers.Enum.UI_2D;
+        textNode.addComponent(UITransform);
+        textNode.setParent(node);
+        textNode.setPosition(0, 0, 0);
+        const label = textNode.addComponent(Label);
+        label.string = '▶ 开始 Wave 1';
+        label.fontSize = 18;
+        label.color = new Color(255, 255, 255, 255);
+        label.horizontalAlign = Label.HorizontalAlign.CENTER;
+        label.verticalAlign = Label.VerticalAlign.CENTER;
+        const textTransform = textNode.getComponent(UITransform)!;
+        textTransform.setContentSize(152, 36);
 
         return node;
     }
