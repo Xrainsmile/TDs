@@ -10,6 +10,67 @@ const { ccclass } = _decorator;
 //  详见 doc/extension-guide.md
 // ============================================================
 
+/** 全局塔属性（roguelike 加成累计，加法叠加不复利） */
+class TowerStats {
+    damageBonus = 0;       // 伤害加成（0.1 = +10%，累加）
+    speedBonus = 0;         // 攻速加成（0.05 = +5%，累加）
+    rangeBonus = 0;         // 范围加成（0.1 = +10%，累加）
+    healSuppression = 0;    // 治疗抑制（0.1 = 抑制10%，累加）
+    splitCount = 0;         // 分裂攻击额外目标数
+    slowLevel = 0;          // 减速等级（>0 时所有子弹附带减速）
+
+    // 最终倍率 = 1 + 累计加成（加法叠加）
+    get damageMultiplier() { return 1 + this.damageBonus; }
+    get speedMultiplier() { return 1 + this.speedBonus; }
+    get rangeMultiplier() { return 1 + this.rangeBonus; }
+    get healMultiplier() { return Math.max(0, 1 - this.healSuppression); }
+
+    reset(): void {
+        this.damageBonus = 0;
+        this.speedBonus = 0;
+        this.rangeBonus = 0;
+        this.healSuppression = 0;
+        this.splitCount = 0;
+        this.slowLevel = 0;
+    }
+}
+
+/** Roguelike buff 选项定义 */
+interface BuffOption {
+    id: string;
+    name: string;          // 显示名
+    desc: string;           // 描述
+    apply: (stats: TowerStats) => void;
+}
+
+/** 6 种 buff（每次随机选 3 种，玩家三选一） */
+const ROGUELIKE_BUFFS: BuffOption[] = [
+    {
+        id: 'damage', name: '攻击伤害 +10%', desc: '所有塔伤害提升',
+        apply: s => { s.damageBonus += 0.1; },
+    },
+    {
+        id: 'speed', name: '攻速 +5%', desc: '所有塔攻击速度提升',
+        apply: s => { s.speedBonus += 0.05; },
+    },
+    {
+        id: 'range', name: '范围 +10%', desc: '所有塔攻击范围提升',
+        apply: s => { s.rangeBonus += 0.1; },
+    },
+    {
+        id: 'healSuppress', name: '治疗抑制', desc: '抑制10%的敌人回复量',
+        apply: s => { s.healSuppression += 0.1; },
+    },
+    {
+        id: 'split', name: '分裂攻击', desc: '攻击额外1个目标',
+        apply: s => { s.splitCount += 1; },
+    },
+    {
+        id: 'slow', name: '减速', desc: '攻击附带减速效果',
+        apply: s => { s.slowLevel += 1; },
+    },
+];
+
 /** 塔攻击行为类型 */
 type TowerAttackKind = 'bullet'   // 发射子弹（命中扣血）
                       | 'instant'; // 瞬间效果（如减速，直接改敌人状态）
@@ -183,11 +244,13 @@ export class SceneInitializer extends Component {
                 enemy.healTimer += dt;
                 if (enemy.healTimer >= this.HEAL_INTERVAL) {
                     enemy.healTimer = 0;
+                    // 治疗量受 roguelike 治疗抑制影响
+                    const healAmount = this.HEAL_AMOUNT * this.towerStats.healMultiplier;
                     for (const target of allEnemies) {
                         if (target === enemy) continue;
                         const dist = Vec3.distance(enemy.node.position, target.node.position);
                         if (dist <= this.HEAL_RADIUS && target.hp < target.maxHp) {
-                            target.hp = Math.min(target.maxHp, target.hp + this.HEAL_AMOUNT);
+                            target.hp = Math.min(target.maxHp, target.hp + healAmount);
                         }
                     }
                 }
@@ -345,6 +408,13 @@ export class SceneInitializer extends Component {
     private nextWaveButton: Node | null = null;
     private nextWaveButtonLabel: Label | null = null;
 
+    // ===== Roguelike 系统 =====
+    private towerStats = new TowerStats();
+    private buffCards: Node[] = [];          // 3 张 buff 卡片
+    private buffCardLabels: { name: Label; desc: Label }[] = [];
+    private currentBuffChoices: BuffOption[] = [];
+    private buffSelected = false;             // 本轮是否已选 buff
+
     // 塔按钮位置已移入 TOWER_REGISTRY.buttonPos
     // 游戏暂停按钮：右上角（避开 Wave 标签 y=280）
     private readonly PAUSE_BUTTON_POS = new Vec3(420, 220, 0);
@@ -414,12 +484,37 @@ export class SceneInitializer extends Component {
         this.nextWaveButtonLabel = this.nextWaveButton.getChildByName('Text')?.getComponent(Label) ?? null;
         this.nextWaveButton.active = false;  // 初始隐藏
 
+        // === Roguelike buff 卡片（3 张，波次间暂停时显示）===
+        const cardPositions = [new Vec3(-220, 40, 0), new Vec3(0, 40, 0), new Vec3(220, 40, 0)];
+        for (let i = 0; i < 3; i++) {
+            const card = this.createBuffCard(cardPositions[i], i);
+            card.setParent(canvas);
+            card.active = false;
+            this.buffCards.push(card);
+            const nameLabel = card.getChildByName('BuffName')?.getComponent(Label) ?? null;
+            const descLabel = card.getChildByName('BuffDesc')?.getComponent(Label) ?? null;
+            this.buffCardLabels.push({ name: nameLabel!, desc: descLabel! });
+        }
+
         // === 所有触摸事件绑定到 Canvas ===
         canvas.on(Node.EventType.TOUCH_START, (event: EventTouch) => {
             const buttonLocal = this.eventToCanvasLocal(event);
             const gameLocal = this.eventToGameLocal(event);
 
-            // 0. 优先判定：是否点中了中上"开始下一波"按钮（仅波次间自动暂停时可见）
+            // 0a. 判定：是否点中了 buff 卡片（仅波次间暂停且未选时可见）
+            if (this.isWavePaused && !this.buffSelected) {
+                for (let i = 0; i < this.buffCards.length; i++) {
+                    const card = this.buffCards[i];
+                    if (!card.active) continue;
+                    const cardPos = new Vec3(-220 + i * 220, 40, 0);
+                    if (Math.abs(buttonLocal.x - cardPos.x) <= 100 && Math.abs(buttonLocal.y - cardPos.y) <= 70) {
+                        this.selectBuff(i);
+                        return;
+                    }
+                }
+            }
+
+            // 0b. 判定：是否点中了中上"开始下一波"按钮（选完 buff 后才可见）
             if (this.isWavePaused && this.nextWaveButton && this.nextWaveButton.active
                 && Vec3.distance(buttonLocal, this.NEXT_WAVE_BUTTON_POS) <= this.NEXT_WAVE_BUTTON_RADIUS) {
                 this.startNextWaveFromButton();
@@ -608,9 +703,112 @@ export class SceneInitializer extends Component {
     private startNextWaveFromButton(): void {
         if (!this.isWavePaused) return;
         this.isWavePaused = false;
+        this.buffSelected = false;
+        this.hideBuffCards();
         this.updateNextWaveButton();
         this.startNextWave();
         console.log('用户点击开始下一波 → 启动 Wave', this.currentWave + 1);
+    }
+
+    /** 波次间暂停时：随机选 3 种 buff 并显示卡片 */
+    private showBuffSelection(): void {
+        // 从 6 种 buff 中随机选 3 种
+        const pool = [...ROGUELIKE_BUFFS];
+        this.currentBuffChoices = [];
+        for (let i = 0; i < 3; i++) {
+            const idx = Math.floor(Math.random() * pool.length);
+            this.currentBuffChoices.push(pool.splice(idx, 1)[0]);
+        }
+        // 显示卡片并填充文字
+        for (let i = 0; i < 3; i++) {
+            const card = this.buffCards[i];
+            const buff = this.currentBuffChoices[i];
+            card.active = true;
+            if (this.buffCardLabels[i].name) {
+                this.buffCardLabels[i].name.string = buff.name;
+            }
+            if (this.buffCardLabels[i].desc) {
+                this.buffCardLabels[i].desc.string = buff.desc;
+            }
+        }
+        this.buffSelected = false;
+        // 选 buff 期间隐藏"开始下一波"
+        if (this.nextWaveButton) this.nextWaveButton.active = false;
+    }
+
+    /** 玩家选中一个 buff */
+    private selectBuff(index: number): void {
+        const buff = this.currentBuffChoices[index];
+        if (!buff) return;
+        buff.apply(this.towerStats);
+        this.buffSelected = true;
+        this.hideBuffCards();
+        // 选完后显示"开始下一波"
+        this.updateNextWaveButton();
+        // 更新 status 显示当前加成
+        if (this.statusLabel) {
+            this.statusLabel.string = `已选: ${buff.name}  塔: ${this.towers.length}`;
+        }
+        console.log(`Roguelike 选择: ${buff.name}`);
+    }
+
+    /** 隐藏所有 buff 卡片 */
+    private hideBuffCards(): void {
+        for (const card of this.buffCards) {
+            card.active = false;
+        }
+    }
+
+    /** 创建一张 buff 卡片 */
+    private createBuffCard(pos: Vec3, index: number): Node {
+        const node = new Node(`BuffCard_${index}`);
+        node.layer = Layers.Enum.UI_2D;
+        const transform = node.addComponent(UITransform);
+        transform.setContentSize(200, 140);
+        node.setPosition(pos);
+
+        const gfx = node.addComponent(Graphics);
+        // 深紫色圆角背景
+        gfx.fillColor = new Color(40, 30, 70, 230);
+        gfx.roundRect(-100, -70, 200, 140, 12);
+        gfx.fill();
+        // 金色边框
+        gfx.strokeColor = new Color(255, 200, 80, 255);
+        gfx.lineWidth = 3;
+        gfx.roundRect(-100, -70, 200, 140, 12);
+        gfx.stroke();
+
+        // buff 名称
+        const nameNode = new Node('BuffName');
+        nameNode.layer = Layers.Enum.UI_2D;
+        nameNode.addComponent(UITransform);
+        nameNode.setParent(node);
+        nameNode.setPosition(0, 20, 0);
+        const nameLabel = nameNode.addComponent(Label);
+        nameLabel.string = '';
+        nameLabel.fontSize = 18;
+        nameLabel.color = new Color(255, 220, 100, 255);
+        nameLabel.horizontalAlign = Label.HorizontalAlign.CENTER;
+        nameLabel.verticalAlign = Label.VerticalAlign.CENTER;
+        const nameTransform = nameNode.getComponent(UITransform)!;
+        nameTransform.setContentSize(190, 30);
+
+        // buff 描述
+        const descNode = new Node('BuffDesc');
+        descNode.layer = Layers.Enum.UI_2D;
+        descNode.addComponent(UITransform);
+        descNode.setParent(node);
+        descNode.setPosition(0, -15, 0);
+        const descLabel = descNode.addComponent(Label);
+        descLabel.string = '';
+        descLabel.fontSize = 14;
+        descLabel.color = new Color(200, 200, 220, 255);
+        descLabel.horizontalAlign = Label.HorizontalAlign.CENTER;
+        descLabel.verticalAlign = Label.VerticalAlign.CENTER;
+        const descTransform = descNode.getComponent(UITransform)!;
+        descTransform.setContentSize(190, 60);
+
+        return node;
     }
 
     /** 同步游戏暂停按钮文字 */
@@ -626,9 +824,11 @@ export class SceneInitializer extends Component {
     /** 同步"开始下一波"按钮的可见性和文字 */
     private updateNextWaveButton(): void {
         if (!this.nextWaveButton || !this.nextWaveButtonLabel) return;
-        // 只在波次间自动暂停且非游戏结束时显示
-        this.nextWaveButton.active = this.isWavePaused && !this.isGameOver;
-        if (this.nextWaveButton.active) {
+        // 只在波次间暂停 + 已选buff（或无下一波）+ 非游戏结束时显示
+        const hasMoreWaves = this.currentWave < this.WAVES.length;
+        const canStart = this.isWavePaused && !this.isGameOver && (this.buffSelected || !hasMoreWaves);
+        this.nextWaveButton.active = canStart;
+        if (canStart) {
             const nextWave = this.currentWave + 1;
             this.nextWaveButtonLabel.string = nextWave <= this.WAVES.length
                 ? `▶ 开始 Wave ${nextWave}`
@@ -671,6 +871,8 @@ export class SceneInitializer extends Component {
         this.isGameOver = true;  // 复用 isGameOver 停止 update 逻辑
         this.isWavePaused = false;
         this.isUserPaused = false;
+        this.buffSelected = false;
+        this.hideBuffCards();
         this.updatePauseButton();
         this.updateNextWaveButton();
 
@@ -799,12 +1001,17 @@ export class SceneInitializer extends Component {
 
         // === 波次完成检测 ===
         if (this.waveActive) {
-            // 全部生成且全部死亡 → 自动暂停，等用户点"开始下一波"
+            // 全部生成且全部死亡 → 自动暂停，等用户选 buff + 点"开始下一波"
             if (this.spawnedInWave >= this.waveTotalCount && this.enemies.length === 0) {
                 this.waveActive = false;
                 this.isWavePaused = true;
                 this.updatePauseButton();
-                this.updateNextWaveButton();
+                // 还有下一波才显示 buff 选择，否则直接显示"开始下一波"（会触发胜利）
+                if (this.currentWave < this.WAVES.length) {
+                    this.showBuffSelection();
+                } else {
+                    this.updateNextWaveButton();
+                }
                 console.log(`Wave ${this.currentWave} 完成（${this.waveTotalCount} 只全部消灭），已自动暂停`);
             }
         }
@@ -844,8 +1051,9 @@ export class SceneInitializer extends Component {
 
         // === HP 显示 ===
         if (this.statusLabel) {
-            if (this.isWavePaused) {
-                // 波次间暂停：提示用户可以建塔，点中上按钮开始下一波
+            if (this.isWavePaused && !this.buffSelected && this.currentWave < this.WAVES.length) {
+                this.statusLabel.string = `选择强化 - 三选一  塔: ${this.towers.length}`;
+            } else if (this.isWavePaused) {
                 this.statusLabel.string = `布防阶段 - 可建塔/移塔  塔: ${this.towers.length}`;
             } else if (this.isUserPaused) {
                 this.statusLabel.string = `游戏已暂停  塔: ${this.towers.length}`;
@@ -859,12 +1067,15 @@ export class SceneInitializer extends Component {
         }
 
         // === 塔攻击 ===
+        const ts = this.towerStats;
+        const effectiveRange = (def: TowerDef) => def.range * ts.rangeMultiplier;
+        const effectiveInterval = (def: TowerDef) => def.interval / ts.speedMultiplier;
         for (let i = 0; i < this.towers.length; i++) {
             if (this.enemies.length === 0) continue;
             const tower = this.towers[i];
             const def = tower.def;
 
-            // 找最近的敌人
+            // 找最近的敌人（用 roguelike 范围加成）
             let nearestEnemy = -1;
             let nearestDist = Infinity;
             for (let j = 0; j < this.enemies.length; j++) {
@@ -876,19 +1087,43 @@ export class SceneInitializer extends Component {
                 }
             }
 
-            if (nearestEnemy < 0 || nearestDist > def.range) continue;
+            if (nearestEnemy < 0 || nearestDist > effectiveRange(def)) continue;
 
             this.towerTimers[i] += dt;
-            if (this.towerTimers[i] >= def.interval) {
+            if (this.towerTimers[i] >= effectiveInterval(def)) {
                 this.towerTimers[i] = 0;
-                if (def.attackKind === 'bullet') {
-                    // 发射子弹型
-                    this.fireBullet(tower.node.position, this.enemies[nearestEnemy].node.position, this.enemies[nearestEnemy].node, def);
-                } else {
-                    // 瞬间效果型：调用注册的 applyInstant
-                    def.applyInstant?.(this.enemies[nearestEnemy]);
-                    // 发射视觉子弹（用塔颜色区分）
-                    this.fireBullet(tower.node.position, this.enemies[nearestEnemy].node.position, this.enemies[nearestEnemy].node, def);
+
+                // 收集要攻击的目标列表（主目标 + 分裂目标）
+                const targetIndices: number[] = [nearestEnemy];
+                if (ts.splitCount > 0) {
+                    // 找范围内的其他敌人，按距离排序
+                    const others: { idx: number; dist: number }[] = [];
+                    for (let j = 0; j < this.enemies.length; j++) {
+                        if (j === nearestEnemy || !this.enemies[j].node.isValid) continue;
+                        const dist = Vec3.distance(tower.node.position, this.enemies[j].node.position);
+                        if (dist <= effectiveRange(def)) {
+                            others.push({ idx: j, dist });
+                        }
+                    }
+                    others.sort((a, b) => a.dist - b.dist);
+                    for (let s = 0; s < ts.splitCount && s < others.length; s++) {
+                        targetIndices.push(others[s].idx);
+                    }
+                }
+
+                // 对每个目标执行攻击
+                for (const targetIdx of targetIndices) {
+                    const target = this.enemies[targetIdx];
+                    if (!target || !target.node.isValid) continue;
+
+                    if (def.attackKind === 'bullet') {
+                        // 发射子弹型
+                        this.fireBullet(tower.node.position, target.node.position, target.node, def);
+                    } else {
+                        // 瞬间效果型：调用注册的 applyInstant
+                        def.applyInstant?.(target);
+                        this.fireBullet(tower.node.position, target.node.position, target.node, def);
+                    }
                 }
             }
         }
@@ -952,9 +1187,22 @@ export class SceneInitializer extends Component {
 
                 const d = Vec3.distance(b.node.position, e.node.position);
                 if (d < 16) {
-                    e.hp -= b.def.damage;
+                    // 用 roguelike 伤害加成（加法叠加：base × (1 + 累计加成)）
+                    e.hp -= b.def.damage * this.towerStats.damageMultiplier;
                     // 子弹命中额外效果（如施加毒 buff）
                     b.def.onBulletHit?.(e);
+                    // Roguelike 减速 buff：所有子弹命中附带减速
+                    if (this.towerStats.slowLevel > 0) {
+                        const slowMult = Math.max(0.3, 0.85 - this.towerStats.slowLevel * 0.05);
+                        const slowTime = 1.5 + this.towerStats.slowLevel * 0.5;
+                        // 只取更强的减速
+                        if (e.slowMultiplier > slowMult) {
+                            e.slowMultiplier = slowMult;
+                            e.slowTimer = slowTime;
+                        } else if (e.slowTimer < slowTime) {
+                            e.slowTimer = slowTime;
+                        }
+                    }
                     b.node.destroy();
                     this.bullets.splice(i, 1);
                     hit = true;
@@ -1089,6 +1337,8 @@ export class SceneInitializer extends Component {
         this.waveDelay = 0;
         this.isWavePaused = false;
         this.isUserPaused = false;
+        this.buffSelected = false;
+        this.hideBuffCards();
         this.updatePauseButton();
         this.updateNextWaveButton();
 
@@ -1189,6 +1439,9 @@ export class SceneInitializer extends Component {
         this.waveDelay = 0;
         this.isWavePaused = false;
         this.isUserPaused = false;
+        this.buffSelected = false;
+        this.towerStats.reset();
+        this.hideBuffCards();
         this.updatePauseButton();
         this.updateNextWaveButton();
 
