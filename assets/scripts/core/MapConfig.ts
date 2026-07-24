@@ -69,11 +69,17 @@ export const ENTRANCE: Vec3 = gridToLocal(ENTRANCE_CELL);
 export const BASE: Vec3 = gridToLocal(BASE_CELL);
 
 // ===== 塔位（仅 GridCell，禁止 Vec3/x/y）=====
-// 左右两外侧列（col0 / col5）各 8 行，共 16 个，均不与道路格重叠。
-export const BUILD_CELLS: GridCell[] = [
-    ...Array.from({ length: GRID_ROWS }, (_, r) => ({ col: 0, row: r } as GridCell)),
-    ...Array.from({ length: GRID_ROWS }, (_, r) => ({ col: GRID_COLS - 1, row: r } as GridCell)),
-];
+// 除道路格外，所有格子都可放塔（共 6×8 - 16 = 32 个）。
+export const BUILD_CELLS: GridCell[] = (() => {
+    const pathSet = new Set(PATH_CELLS.map(c => `${c.col},${c.row}`));
+    const cells: GridCell[] = [];
+    for (let r = 0; r < GRID_ROWS; r++) {
+        for (let c = 0; c < GRID_COLS; c++) {
+            if (!pathSet.has(`${c},${r}`)) cells.push({ col: c, row: r });
+        }
+    }
+    return cells;
+})();
 
 // ===== 渲染参数 =====
 export const ROAD_WIDTH_RATIO = 0.65;   // 道路宽度 = CELL_SIZE 的 65%

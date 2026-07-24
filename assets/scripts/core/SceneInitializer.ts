@@ -435,6 +435,13 @@ export class SceneInitializer extends Component {
     private NEXT_WAVE_BUTTON_POS = new Vec3(0, 220, 0);
     private readonly NEXT_WAVE_BUTTON_RADIUS = 80;  // 触摸判定半径（按钮加宽）
 
+    // 底部「10金币」随机建塔按钮（替代拖动建塔）
+    private SPEND_BUTTON_POS = new Vec3(0, 0, 0);    // setupScene 中赋值
+    private readonly SPEND_BUTTON_RADIUS = 90;       // 触摸判定半径（按钮加宽）
+    private readonly SPEND_COST = 10;                // 每次随机建塔花费
+    private spendButton: Node | null = null;
+    private spendButtonLabel: Label | null = null;
+
     // 响应式布局动态计算结果（setupScene 中赋值，仅 UI 用）
     private _visibleSize: { width: number; height: number } = { width: 640, height: 960 };
 
@@ -534,20 +541,12 @@ export class SceneInitializer extends Component {
         this.drawGhost(false);
         this.ghostNode.active = false;
 
-        // === 塔按钮（底部按钮坞横排，拖动塔的原始位置）===
+        // === 底部「10金币」建塔按钮（替代拖动建塔）===
         const btnY = -halfH + bottomDockHeight / 2;
-        const btnPositions = [
-            new Vec3(-200, btnY, 0),
-            new Vec3(0, btnY, 0),
-            new Vec3(200, btnY, 0),
-        ];
-        for (let i = 0; i < this.TOWER_REGISTRY.length; i++) {
-            this.TOWER_REGISTRY[i].buttonPos = btnPositions[i] ?? btnPositions[0];
-        }
-        for (const def of this.TOWER_REGISTRY) {
-            const btn = this.createTowerButton(def);
-            btn.setParent(canvas);
-        }
+        this.SPEND_BUTTON_POS = new Vec3(0, btnY, 0);
+        this.spendButton = this.createSpendButton(this.SPEND_BUTTON_POS);
+        this.spendButton.setParent(canvas);
+        this.spendButtonLabel = this.spendButton.getChildByName('Text')?.getComponent(Label) ?? null;
 
         // === 游戏暂停按钮（顶部右侧，HUD 下方）===
         this.PAUSE_BUTTON_POS = new Vec3(halfW - 44, battleTop - 34, 0);
@@ -647,51 +646,38 @@ export class SceneInitializer extends Component {
                 return;
             }
 
+            // 1.5 判断是否点中了底部「10金币」随机建塔按钮
+            if (Vec3.distance(buttonLocal, this.SPEND_BUTTON_POS) <= this.SPEND_BUTTON_RADIUS) {
+                this.spendRandomTower();
+                return;
+            }
+
             // 2. 游戏暂停时完全冻结，不允许拖拽
             if (this.isUserPaused) return;
 
-            // 3. 判断是否点中了塔按钮（新建）——遍历注册表
-            let hitButton = false;
-            for (const def of this.TOWER_REGISTRY) {
-                if (Vec3.distance(buttonLocal, def.buttonPos) <= 40) {
-                    this.dragTowerDef = def;
-                    this.dragMode = 'place';
-                    hitButton = true;
+            // 3. 判断是否点中了已建好的塔（弹出操作菜单：移动/合并/自爆）
+            let hitTower = -1;
+            for (let i = 0; i < this.towers.length; i++) {
+                if (Vec3.distance(gameLocal, this.towers[i].node.position) < 30) {
+                    hitTower = i;
                     break;
                 }
             }
-            if (!hitButton) {
-                // 2. 判断是否点中了已建好的塔
-                let hitTower = -1;
-                for (let i = 0; i < this.towers.length; i++) {
-                    if (Vec3.distance(gameLocal, this.towers[i].node.position) < 30) {
-                        hitTower = i;
-                        break;
-                    }
-                }
-                if (hitTower < 0) {
-                    // 点空白处：合并模式下取消
-                    if (this.mergeMode) this.cancelMerge();
-                    return;
-                }
-                // 合并模式：点击高亮候选塔直接合并（目标已确定）
-                if (this.mergeMode) {
-                    if (this.mergeCandidates.includes(hitTower) && hitTower !== this.mergeTargetIdx) {
-                        this.doMerge(this.mergeTargetIdx, hitTower);
-                    }
-                    return;
-                }
-                // 普通：弹出操作菜单（移动/合并/自爆）
-                this.showTowerMenu(hitTower);
-                return;  // 不进入拖拽，等用户选菜单按钮
+            if (hitTower < 0) {
+                // 点空白处：合并模式下取消
+                if (this.mergeMode) this.cancelMerge();
+                return;
             }
-
-            // place 模式：立即进入拖拽
-            this.isDragging = true;
-            this.ghostNode!.active = true;
-            this.drawGhost(false);
-            this.ghostNode!.setPosition(gameLocal);
-            this.updateGhostState(gameLocal);
+            // 合并模式：点击高亮候选塔直接合并（目标已确定）
+            if (this.mergeMode) {
+                if (this.mergeCandidates.includes(hitTower) && hitTower !== this.mergeTargetIdx) {
+                    this.doMerge(this.mergeTargetIdx, hitTower);
+                }
+                return;
+            }
+            // 普通：弹出操作菜单（移动/合并/自爆）
+            this.showTowerMenu(hitTower);
+            return;  // 不进入拖拽，等用户选菜单按钮
         });
 
         canvas.on(Node.EventType.TOUCH_MOVE, (event: EventTouch) => {
@@ -1935,11 +1921,11 @@ export class SceneInitializer extends Component {
         });
     }
 
-    private placeTower(slotIndex: number, def: TowerDef): void {
+    private placeTower(slotIndex: number, def: TowerDef, cost: number = def.cost): void {
         if (this.slotOccupied[slotIndex] || !this.battleRoot) return;
-        if (this.gold < def.cost) return;
+        if (this.gold < cost) return;
 
-        this.gold -= def.cost;
+        this.gold -= cost;
         this.updateGoldLabel();
 
         const node = this.createTower(this.slotPositions[slotIndex], def);
@@ -1953,6 +1939,35 @@ export class SceneInitializer extends Component {
         this.slotNodes[slotIndex].active = false;
 
         console.log(`${def.name}放置到位置 ${slotIndex + 1}，花费 ${def.cost}，当前 ${this.towers.length} 塔`);
+    }
+
+    /**
+     * 点击底部「10金币」按钮：花费固定金币，随机选一种已有塔，
+     * 按网格顺序（BUILD_CELLS 行优先，已排除道路）从第一个空位开始放置。
+     */
+    private spendRandomTower(): void {
+        if (this.slotOccupied.every(o => o)) {
+            if (this.statusLabel) this.statusLabel.string = '塔位已满，无法建造';
+            return;
+        }
+        if (this.gold < this.SPEND_COST) {
+            if (this.statusLabel) this.statusLabel.string = `金币不足，需要 ${this.SPEND_COST}`;
+            return;
+        }
+
+        // 按网格顺序找下一个空位（1.1 → 1.2 → ...，道路格已排除）
+        let slot = -1;
+        for (let i = 0; i < this.slotPositions.length; i++) {
+            if (!this.slotOccupied[i]) { slot = i; break; }
+        }
+        if (slot < 0) return;
+
+        // 随机选一种已有塔
+        const def = this.TOWER_REGISTRY[Math.floor(Math.random() * this.TOWER_REGISTRY.length)];
+        this.placeTower(slot, def, this.SPEND_COST);
+        if (this.statusLabel) {
+            this.statusLabel.string = `随机建塔：${def.name} @ 格${slot + 1}（-${this.SPEND_COST}金）`;
+        }
     }
 
     private updateGoldLabel(): void {
@@ -2092,38 +2107,41 @@ export class SceneInitializer extends Component {
         this.updateGoldLabel();
         if (this.livesLabel) this.livesLabel.string = `Base: ${this.allyHp}/${this.ALLY_MAX_HP}`;
         if (this.waveLabel) this.waveLabel.string = `Wave: 0/${this.WAVES.length}`;
-        if (this.statusLabel) this.statusLabel.string = '拖拽底部塔按钮到绿色格子';
+        if (this.statusLabel) this.statusLabel.string = '点击底部「10金币」按钮随机建塔';
 
         // 关卡开始倒计时
         this.startLevelCountdown();
         console.log('游戏重新开始');
     }
 
-    private createTowerButton(def: TowerDef): Node {
-        const node = new Node(def.id + '_Button');
+    /** 创建底部「10金币」随机建塔按钮 */
+    private createSpendButton(pos: Vec3): Node {
+        const node = new Node('SpendButton');
         node.layer = Layers.Enum.UI_2D;
         const transform = node.addComponent(UITransform);
-        transform.setContentSize(96, 96);
-        node.setPosition(def.buttonPos);
+        transform.setContentSize(180, 64);
+        node.setPosition(pos);
 
         const gfx = node.addComponent(Graphics);
-        gfx.fillColor = new Color(60, 60, 70, 255);
-        gfx.rect(-36, -36, 72, 72);
+        gfx.fillColor = new Color(60, 120, 70, 255);
+        gfx.roundRect(-90, -32, 180, 64, 12);
         gfx.fill();
-        // 塔主体色
-        gfx.fillColor = def.color;
-        gfx.circle(0, 0, 20);
-        gfx.fill();
+        gfx.strokeColor = new Color(255, 220, 100, 255);
+        gfx.lineWidth = 3;
+        gfx.roundRect(-90, -32, 180, 64, 12);
+        gfx.stroke();
 
-        // 价格标签
-        const labelNode = new Node('Cost');
+        const labelNode = new Node('Text');
         labelNode.layer = Layers.Enum.UI_2D;
         labelNode.addComponent(UITransform);
         labelNode.setParent(node);
-        labelNode.setPosition(0, -40, 0);
+        labelNode.setPosition(0, 0, 0);
         const label = labelNode.addComponent(Label);
-        label.string = `${def.cost}`;
-        label.fontSize = 14;
+        label.string = `${this.SPEND_COST}金币`;
+        label.fontSize = 24;
+        label.color = new Color(255, 255, 255, 255);
+        label.horizontalAlign = Label.HorizontalAlign.CENTER;
+        label.verticalAlign = Label.VerticalAlign.CENTER;
 
         return node;
     }
