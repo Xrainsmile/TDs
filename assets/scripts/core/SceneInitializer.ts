@@ -425,7 +425,7 @@ export class SceneInitializer extends Component {
     private readonly NEXT_WAVE_BUTTON_RADIUS = 80;  // 触摸判定半径（按钮加宽）
 
     // 响应式布局动态计算结果（setupScene 中赋值，仅 UI 用）
-    private _visibleSize: { width: number; height: number } = { width: 960, height: 640 };
+    private _visibleSize: { width: number; height: number } = { width: 640, height: 960 };
 
     // 拖拽中的塔定义
     private dragTowerDef: TowerDef | null = null;
@@ -444,36 +444,36 @@ export class SceneInitializer extends Component {
     private mergeHighlights: Node[] = [];
 
     protected start(): void {
-        view.setDesignResolutionSize(960, 640, 3);
+        view.setDesignResolutionSize(640, 960, 3);
         this.setupScene();
     }
 
     private setupScene(): void {
         const canvas = this.node;
 
-        // === 响应式 UI 布局：获取真实可见尺寸，计算 UI 区域 ===
+        // === 响应式 UI 布局（竖屏：顶部 HUD + 底部塔按钮坞，中间为战场）===
         const visible = view.getVisibleSize();
         const halfW = visible.width / 2;
         const halfH = visible.height / 2;
-        const margin = 24;
-        const leftPanelWidth = 120;
-        const rightPanelWidth = 150;
-        const battleLeft = -halfW + leftPanelWidth + margin;
-        const battleRight = halfW - rightPanelWidth - margin;
-        const battleWidth = battleRight - battleLeft;
+        const sideMargin = 12;
+        const hudReservedHeight = 56;
+        const bottomDockHeight = 150;
 
-        // 计算战场可用高度（顶部避开 HUD，底部安全边距）
-        const hudReservedHeight = 72;
-        const bottomSafeMargin = 24;
-        const battleAvailableHeight = visible.height - hudReservedHeight - bottomSafeMargin;
+        // 战场区域：顶部避开 HUD，底部避开塔按钮坞
+        const battleTop = halfH - hudReservedHeight;
+        const battleBottom = -halfH + bottomDockHeight;
+        const battleLeft = -halfW + sideMargin;
+        const battleRight = halfW - sideMargin;
+        const battleWidth = battleRight - battleLeft;
+        const battleHeight = battleTop - battleBottom;
         const battleCenterX = (battleLeft + battleRight) / 2;
-        const battleCenterY = (hudReservedHeight - bottomSafeMargin) / 2;
+        const battleCenterY = (battleTop + battleBottom) / 2;
 
         // 计算地图等比缩放（x/y 统一比例）
         const mapScale = Math.min(
             1.1,
             battleWidth / MAP_DESIGN_WIDTH,
-            battleAvailableHeight / MAP_DESIGN_HEIGHT
+            battleHeight / MAP_DESIGN_HEIGHT
         );
 
         this._visibleSize = visible;
@@ -511,12 +511,12 @@ export class SceneInitializer extends Component {
         this.drawGhost(false);
         this.ghostNode.active = false;
 
-        // === 塔按钮（左侧面板竖排，响应式）===
-        const btnX = -halfW + margin + 48;
+        // === 塔按钮（底部按钮坞横排，拖动塔的原始位置）===
+        const btnY = -halfH + bottomDockHeight / 2;
         const btnPositions = [
-            new Vec3(btnX, -180, 0),
-            new Vec3(btnX, -60, 0),
-            new Vec3(btnX, 60, 0),
+            new Vec3(-200, btnY, 0),
+            new Vec3(0, btnY, 0),
+            new Vec3(200, btnY, 0),
         ];
         for (let i = 0; i < this.TOWER_REGISTRY.length; i++) {
             this.TOWER_REGISTRY[i].buttonPos = btnPositions[i] ?? btnPositions[0];
@@ -526,16 +526,15 @@ export class SceneInitializer extends Component {
             btn.setParent(canvas);
         }
 
-        // === 游戏暂停按钮（右侧，响应式）===
-        const pauseBtnX = halfW - rightPanelWidth / 2;
-        this.PAUSE_BUTTON_POS = new Vec3(pauseBtnX, halfH - 60, 0);
+        // === 游戏暂停按钮（顶部右侧，HUD 下方）===
+        this.PAUSE_BUTTON_POS = new Vec3(halfW - 44, battleTop - 34, 0);
         this.pauseButton = this.createPauseButton();
         this.pauseButton.setParent(canvas);
         this.pauseButtonLabel = this.pauseButton.getChildByName('Text')?.getComponent(Label) ?? null;
         this.updatePauseButton();
 
-        // === 开始下一波按钮（中上，响应式）===
-        this.NEXT_WAVE_BUTTON_POS = new Vec3(0, halfH - 100, 0);
+        // === 开始下一波按钮（顶部中央，HUD 下方）===
+        this.NEXT_WAVE_BUTTON_POS = new Vec3(0, battleTop - 34, 0);
         this.nextWaveButton = this.createNextWaveButton();
         this.nextWaveButton.setParent(canvas);
         this.nextWaveButtonLabel = this.nextWaveButton.getChildByName('Text')?.getComponent(Label) ?? null;
@@ -771,7 +770,7 @@ export class SceneInitializer extends Component {
         this.hud.setGold(this.gold);
         this.hud.setWave(0, this.WAVES.length);
         this.hud.setLives(this.allyHp, this.ALLY_MAX_HP);
-        this.hud.setStatus('拖拽左侧塔按钮到绿色格子');
+        this.hud.setStatus('拖拽底部塔按钮到绿色格子');
 
         // === 终点友军建筑（城堡）===
         this.drawAlly(this.gameLayer);
@@ -1190,10 +1189,20 @@ export class SceneInitializer extends Component {
         if (inRange.length === 0) return -1;
 
         if (def.id === 'attack') {
-            // 最靠近基地的敌人（x 坐标最大）
+            // 最靠近基地的敌人（沿路径进度最大；同段则离下个 waypoint 更近）
             let best = inRange[0];
             for (const c of inRange) {
-                if (c.enemy.node.position.x > best.enemy.node.position.x) best = c;
+                const cur = c.enemy;
+                const bestE = best.enemy;
+                if (cur.pathIdx > bestE.pathIdx) {
+                    best = c;
+                } else if (cur.pathIdx === bestE.pathIdx) {
+                    const curTarget = PATH_WAYPOINTS[Math.min(cur.pathIdx, PATH_WAYPOINTS.length - 1)];
+                    const bestTarget = PATH_WAYPOINTS[Math.min(bestE.pathIdx, PATH_WAYPOINTS.length - 1)];
+                    const dCur = Vec3.distance(cur.node.position, curTarget);
+                    const dBest = Vec3.distance(bestE.node.position, bestTarget);
+                    if (dCur < dBest) best = c;
+                }
             }
             return best.idx;
         }
@@ -1264,7 +1273,8 @@ export class SceneInitializer extends Component {
         const menu = new Node('TowerMenu');
         menu.layer = Layers.Enum.UI_2D;
         menu.setParent(this.node);
-        menu.setPosition(canvasPos.x, canvasPos.y + 70, 0);
+        const menuY = Math.min(canvasPos.y + 70, this._visibleSize.height / 2 - 130);
+        menu.setPosition(canvasPos.x, menuY, 0);
         const transform = menu.addComponent(UITransform);
         transform.setContentSize(170, 140);
 

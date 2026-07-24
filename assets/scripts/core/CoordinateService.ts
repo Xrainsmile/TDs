@@ -8,13 +8,13 @@ const { ccclass, property } = _decorator;
  * 统一处理屏幕↔世界↔格子坐标转换
  * 所有交互（放塔/点击/技能）都通过此服务
  *
- * 设计分辨率 960x640，中心为原点
+ * 设计分辨率 640x960（竖屏），中心为原点
  */
 @ccclass('CoordinateService')
 export class CoordinateService extends Component {
-    /** 设计分辨率 */
-    public static readonly DESIGN_WIDTH = 960;
-    public static readonly DESIGN_HEIGHT = 640;
+    /** 设计分辨率（竖屏） */
+    public static readonly DESIGN_WIDTH = 640;
+    public static readonly DESIGN_HEIGHT = 960;
 
     /** 格子大小 */
     @property
@@ -37,8 +37,8 @@ export class CoordinateService extends Component {
 
     /**
      * 触摸事件 → 世界坐标
-     * getUILocation() 返回屏幕像素坐标（左下角原点，0~960）
-     * 转为世界坐标（中心原点，-480~480）
+     * getUILocation() 返回屏幕像素坐标（左下角原点，0~640）
+     * 转为世界坐标（中心原点，-320~320）
      *
      * 注意：此方法假设父节点无缩放/偏移，适用于 Canvas 直接子节点
      * 如需转换到特定节点，请用 touchToLocal()

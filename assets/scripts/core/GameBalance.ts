@@ -7,20 +7,22 @@ import { _decorator, Vec3, Color } from 'cc';
  * SceneInitializer 通过 import 引用这些常量和注册表。
  */
 
-// ===== 地图设计尺寸（逻辑坐标，与屏幕无关）=====
-export const MAP_DESIGN_WIDTH = 720;
-export const MAP_DESIGN_HEIGHT = 520;
+// ===== 地图设计尺寸（竖屏：宽 520 × 高 720，与横屏 720×520 同尺寸旋转）=====
+export const MAP_DESIGN_WIDTH = 520;
+export const MAP_DESIGN_HEIGHT = 720;
 
-// ===== 路径：S形双回折（8个waypoint，4个有效转角）=====
+// ===== 路径：竖屏蛇形（10个waypoint，入口顶部中央→基地底部中央）=====
 export const PATH_WAYPOINTS: Vec3[] = [
-    new Vec3(-340, -150, 0), // 入口
-    new Vec3(-250, -150, 0), // 前段下转角
-    new Vec3(-250, 130, 0),  // 前段上转角
-    new Vec3(0, 130, 0),     // 中央上转角
-    new Vec3(0, -130, 0),    // 中央下转角
-    new Vec3(250, -130, 0),  // 末段下转角
-    new Vec3(250, 150, 0),   // 末段上转角
-    new Vec3(340, 150, 0),   // 基地
+    new Vec3(0, 330, 0),     // 入口（顶部中央）
+    new Vec3(105, 330, 0),
+    new Vec3(105, 165, 0),
+    new Vec3(-105, 165, 0),
+    new Vec3(-105, 0, 0),
+    new Vec3(105, 0, 0),
+    new Vec3(105, -165, 0),
+    new Vec3(-105, -165, 0),
+    new Vec3(-105, -330, 0),
+    new Vec3(0, -330, 0),    // 基地（底部中央）
 ];
 
 // ===== 基础数值 =====
@@ -39,35 +41,39 @@ export const EXPLOSION_DAMAGE = 80;
 // ===== 关卡倒计时 =====
 export const LEVEL_START_COUNTDOWN = 5;
 
-// ===== 建造点：20个地基（四行严格对齐网格 4 / 6 / 6 / 4）=====
+// ===== 建造点：20个地基（竖屏四列×五行严格对齐网格）=====
+// 列 x = -230 / -175 / 175 / 230（左右对称），行 y = 270 / 135 / 0 / -135 / -270（同行水平对齐、同列垂直对齐）
+// 全部位于中央蛇形路径（x∈[-125,125]）之外的左右两侧，不与路径重叠
 export const SLOT_POSITIONS: Vec3[] = [
-    // 顶部4个（y=190）
-    new Vec3(-170, 190, 0),
-    new Vec3(-80, 190, 0),
-    new Vec3(80, 190, 0),
-    new Vec3(170, 190, 0),
+    // 第1行（y=270）
+    new Vec3(-230, 270, 0),
+    new Vec3(-175, 270, 0),
+    new Vec3(175, 270, 0),
+    new Vec3(230, 270, 0),
 
-    // 中上6个（y=55）
-    new Vec3(-340, 55, 0),
-    new Vec3(-170, 55, 0),
-    new Vec3(-80, 55, 0),
-    new Vec3(80, 55, 0),
-    new Vec3(170, 55, 0),
-    new Vec3(340, 55, 0),
+    // 第2行（y=135）
+    new Vec3(-230, 135, 0),
+    new Vec3(-175, 135, 0),
+    new Vec3(175, 135, 0),
+    new Vec3(230, 135, 0),
 
-    // 中下6个（y=-55）
-    new Vec3(-340, -55, 0),
-    new Vec3(-170, -55, 0),
-    new Vec3(-80, -55, 0),
-    new Vec3(80, -55, 0),
-    new Vec3(170, -55, 0),
-    new Vec3(340, -55, 0),
+    // 第3行（y=0）
+    new Vec3(-230, 0, 0),
+    new Vec3(-175, 0, 0),
+    new Vec3(175, 0, 0),
+    new Vec3(230, 0, 0),
 
-    // 底部4个（y=-210）
-    new Vec3(-170, -210, 0),
-    new Vec3(-80, -210, 0),
-    new Vec3(80, -210, 0),
-    new Vec3(170, -210, 0),
+    // 第4行（y=-135）
+    new Vec3(-230, -135, 0),
+    new Vec3(-175, -135, 0),
+    new Vec3(175, -135, 0),
+    new Vec3(230, -135, 0),
+
+    // 第5行（y=-270）
+    new Vec3(-230, -270, 0),
+    new Vec3(-175, -270, 0),
+    new Vec3(175, -270, 0),
+    new Vec3(230, -270, 0),
 ];
 
 // ===== 治疗兵参数 =====
@@ -114,10 +120,10 @@ export interface WaveConfig {
     entries: SpawnEntry[];
 }
 
-// ===== 塔按钮位置 =====
-export const ATTACK_BUTTON_POS = new Vec3(-430, -180, 0);
-export const SLOW_BUTTON_POS = new Vec3(-430, -60, 0);
-export const POISON_BUTTON_POS = new Vec3(-430, 60, 0);
+// ===== 塔按钮位置（竖屏：底部按钮坞横排，拖动塔的原始位置）=====
+export const ATTACK_BUTTON_POS = new Vec3(-200, -405, 0);
+export const SLOW_BUTTON_POS = new Vec3(0, -405, 0);
+export const POISON_BUTTON_POS = new Vec3(200, -405, 0);
 
 // ===== 波次配置 =====
 export const WAVES: WaveConfig[] = [

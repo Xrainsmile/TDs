@@ -249,3 +249,8 @@ TD/
 | P3 | 多关卡 | 恢复 LevelManager + 关卡 JSON |
 | P4 | 经济平衡 | 递增敌人 HP/金币奖励/波次间隔 |
 | P5 | 微信小游戏构建 | 构建 wechatgame 目录并用 CLI 预览 |
+
+> **构建备注（方向）**：游戏已固定为**竖屏**，不会随手机重力感应旋转。
+> - 运行时：`SceneInitializer.start()` 调用 `view.setDesignResolutionSize(640, 960, 3)` 将画布设为竖屏。
+> - 微信端方向（Cocos 项目设置层面）：仓库根目录 `build-templates/wechatgame/game.json` 设置 `"deviceOrientation": "portrait"`。Cocos 构建结束时会把该文件拷贝并覆盖到 `build/wechatgame/game.json`，从而固定竖屏（`"auto"` 才会随设备旋转，已避免）。
+> - 若需重新构建，确保 `build-templates/wechatgame/game.json` 随仓库提交；修改方向只需改该文件，无需改代码。

@@ -51,10 +51,10 @@ export class HUD extends Component {
 
         // === 4 个状态 Label ===
         const halfW = visibleWidth / 2;
-        this.goldLabel = this.createLabel('Gold', new Vec3(-halfW + 60, labelY, 0), 24);
-        this.livesLabel = this.createLabel('Lives', new Vec3(-halfW + 280, labelY, 0), 24);
-        this.statusLabel = this.createLabel('Status', new Vec3(0, labelY, 0), 20);
-        this.waveLabel = this.createLabel('Wave', new Vec3(halfW - 60, labelY, 0), 24);
+        this.goldLabel = this.createLabel('Gold', new Vec3(-halfW + 55, labelY, 0), 22);
+        this.livesLabel = this.createLabel('Lives', new Vec3(-halfW * 0.42, labelY, 0), 22);
+        this.statusLabel = this.createLabel('Status', new Vec3(0, labelY, 0), 18);
+        this.waveLabel = this.createLabel('Wave', new Vec3(halfW - 55, labelY, 0), 22);
     }
 
     /** 创建单个 Label 子节点并返回组件引用 */
