@@ -46,16 +46,25 @@ export class EffectManager extends Component {
     public playHit(enemyNode: Node): void {
         if (!enemyNode || !enemyNode.isValid) return;
         const originalScale = enemyNode.scale.clone();
-        const originalColor = this.getEnemyColor(enemyNode);
-        // 闪白
-        this.setEnemyColor(enemyNode, new Color(255, 255, 255, 255));
+        // 叠加白色半透明圆作为子节点（不清除敌人原绘制）
+        const flash = new Node('HitFlash');
+        flash.layer = Layers.Enum.UI_2D;
+        flash.setParent(enemyNode);
+        flash.setPosition(0, 0, 0);
+        flash.addComponent(UITransform);
+        const gfx = flash.addComponent(Graphics);
+        gfx.fillColor = new Color(255, 255, 255, 200);
+        gfx.circle(0, 0, 14);
+        gfx.fill();
         // 放大
         tween(enemyNode)
             .to(0.04, { scale: new Vec3(originalScale.x * 1.3, originalScale.y * 1.3, 1) })
             .to(0.04, { scale: originalScale })
-            .call(() => {
-                if (enemyNode.isValid) this.setEnemyColor(enemyNode, originalColor);
-            })
+            .start();
+        // 闪白淡出后销毁
+        tween(gfx)
+            .to(0.08, { fillColor: new Color(255, 255, 255, 0) })
+            .call(() => flash.destroy())
             .start();
     }
 
@@ -99,17 +108,27 @@ export class EffectManager extends Component {
         }
     }
 
-    // ===== 4. 中毒状态：绿色外圈＋周期冒泡 =====
-    public playPoison(enemyNode: Node): void {
+    // ===== 4. 中毒状态：绿色外圈＋周期冒泡（挂在敌人节点上跟随移动）=====
+    // duration 与逻辑 buff timer 同步，外圈持续到 buff 结束才消失
+    public playPoison(enemyNode: Node, duration: number = 6): void {
         if (!enemyNode || !enemyNode.isValid) return;
-        // 绿色外圈（持续1秒后淡出）
-        const pos = enemyNode.position;
-        const { node, gfx } = this.createGfxNode('PoisonRing', pos, 40);
+        // 清除已有毒圈，避免重复命中时叠加多个
+        const existing = enemyNode.getChildByName('PoisonRing');
+        if (existing) existing.destroy();
+        // 绿色外圈作为敌人子节点，自动跟随移动
+        const node = new Node('PoisonRing');
+        node.layer = Layers.Enum.UI_2D;
+        node.setParent(enemyNode);
+        node.setPosition(0, 0, 0);
+        const t = node.addComponent(UITransform);
+        t.setContentSize(40, 40);
+        t.setAnchorPoint(0.5, 0.5);
+        const gfx = node.addComponent(Graphics);
         gfx.strokeColor = new Color(100, 200, 50, 180);
         gfx.lineWidth = 3;
         gfx.circle(0, 0, 14);
         gfx.stroke();
-        // 冒泡（3个小绿点上升）
+        // 冒泡（3个小绿点上升，命中瞬间反馈）
         for (let i = 0; i < 3; i++) {
             const bubble = new Node('PoisonBubble');
             bubble.layer = Layers.Enum.UI_2D;
@@ -125,18 +144,25 @@ export class EffectManager extends Component {
                 .by(0.6, { position: new Vec3(0, 15, 0) })
                 .start();
         }
+        // 外圈持续到 buff 结束（留 0.2s 缩小淡出）
         tween(node)
-            .delay(0.8)
+            .delay(Math.max(0, duration - 0.2))
             .to(0.2, { scale: new Vec3(0.5, 0.5, 1) })
             .call(() => node.destroy())
             .start();
     }
 
-    // ===== 5. 减速状态：蓝紫色圆环 =====
+    // ===== 5. 减速状态：蓝紫色圆环（挂在敌人节点上跟随移动）=====
     public playSlow(enemyNode: Node): void {
         if (!enemyNode || !enemyNode.isValid) return;
-        const pos = enemyNode.position;
-        const { node, gfx } = this.createGfxNode('SlowRing', pos, 40);
+        const node = new Node('SlowRing');
+        node.layer = Layers.Enum.UI_2D;
+        node.setParent(enemyNode);
+        node.setPosition(0, 0, 0);
+        const t = node.addComponent(UITransform);
+        t.setContentSize(40, 40);
+        t.setAnchorPoint(0.5, 0.5);
+        const gfx = node.addComponent(Graphics);
         gfx.strokeColor = new Color(180, 80, 220, 200);
         gfx.lineWidth = 4;
         gfx.circle(0, 0, 16);
@@ -243,22 +269,5 @@ export class EffectManager extends Component {
             .to(0.3, { fillColor: new Color(255, 215, 0, 0) })
             .call(() => flashNode.destroy())
             .start();
-    }
-
-    // ===== 辅助方法 =====
-    private getEnemyColor(enemyNode: Node): Color {
-        // 尝试从 Graphics 组件获取颜色（简化版，返回白色作为默认）
-        const gfx = enemyNode.getComponent(Graphics);
-        return gfx ? gfx.fillColor : new Color(255, 255, 255, 255);
-    }
-
-    private setEnemyColor(enemyNode: Node, color: Color): void {
-        const gfx = enemyNode.getComponent(Graphics);
-        if (gfx) {
-            gfx.clear();
-            gfx.fillColor = color;
-            gfx.circle(0, 0, 12);
-            gfx.fill();
-        }
     }
 }

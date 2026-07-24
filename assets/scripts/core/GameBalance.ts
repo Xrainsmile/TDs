@@ -7,12 +7,20 @@ import { _decorator, Vec3, Color } from 'cc';
  * SceneInitializer 通过 import 引用这些常量和注册表。
  */
 
-// ===== 路径 =====
+// ===== 地图设计尺寸（逻辑坐标，与屏幕无关）=====
+export const MAP_DESIGN_WIDTH = 720;
+export const MAP_DESIGN_HEIGHT = 520;
+
+// ===== 路径：S形双回折（8个waypoint，4个有效转角）=====
 export const PATH_WAYPOINTS: Vec3[] = [
-    new Vec3(-300, -150, 0),  // 起点（左下）
-    new Vec3(-300, 0, 0),    // 拐点1（左中）
-    new Vec3(300, 0, 0),     // 拐点2（右中，水平段经过塔位）
-    new Vec3(300, 150, 0),    // 终点（右上）
+    new Vec3(-340, -150, 0), // 入口
+    new Vec3(-250, -150, 0), // 前段下转角
+    new Vec3(-250, 130, 0),  // 前段上转角
+    new Vec3(0, 130, 0),     // 中央上转角
+    new Vec3(0, -130, 0),    // 中央下转角
+    new Vec3(250, -130, 0),  // 末段下转角
+    new Vec3(250, 150, 0),   // 末段上转角
+    new Vec3(340, 150, 0),   // 基地
 ];
 
 // ===== 基础数值 =====
@@ -21,7 +29,7 @@ export const BULLET_SPEED = 500;
 
 // ===== 金币 =====
 export const INITIAL_GOLD = 260;
-export const KILL_REWARD = 6;
+export const KILL_REWARD = 15;
 export const WAVE_BONUSES = [50, 60, 70, 80];
 
 // ===== 自爆 =====
@@ -31,14 +39,35 @@ export const EXPLOSION_DAMAGE = 80;
 // ===== 关卡倒计时 =====
 export const LEVEL_START_COUNTDOWN = 5;
 
-// ===== 建造点 =====
+// ===== 建造点：20个地基（四行严格对齐网格 4 / 6 / 6 / 4）=====
 export const SLOT_POSITIONS: Vec3[] = [
-    new Vec3(-130, -80, 0),
-    new Vec3(0, -80, 0),
-    new Vec3(130, -80, 0),
-    new Vec3(-130, 80, 0),
-    new Vec3(0, 80, 0),
-    new Vec3(130, 80, 0),
+    // 顶部4个（y=190）
+    new Vec3(-170, 190, 0),
+    new Vec3(-80, 190, 0),
+    new Vec3(80, 190, 0),
+    new Vec3(170, 190, 0),
+
+    // 中上6个（y=55）
+    new Vec3(-340, 55, 0),
+    new Vec3(-170, 55, 0),
+    new Vec3(-80, 55, 0),
+    new Vec3(80, 55, 0),
+    new Vec3(170, 55, 0),
+    new Vec3(340, 55, 0),
+
+    // 中下6个（y=-55）
+    new Vec3(-340, -55, 0),
+    new Vec3(-170, -55, 0),
+    new Vec3(-80, -55, 0),
+    new Vec3(80, -55, 0),
+    new Vec3(170, -55, 0),
+    new Vec3(340, -55, 0),
+
+    // 底部4个（y=-210）
+    new Vec3(-170, -210, 0),
+    new Vec3(-80, -210, 0),
+    new Vec3(80, -210, 0),
+    new Vec3(170, -210, 0),
 ];
 
 // ===== 治疗兵参数 =====
