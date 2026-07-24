@@ -6,7 +6,7 @@ import { TowerStats, BuffOption, ROGUELIKE_BUFFS, getBuffDisplay } from './Rogue
 import {
     ENEMY_SPEED, BULLET_SPEED,
     INITIAL_GOLD, KILL_REWARD, WAVE_BONUSES,
-    EXPLOSION_RADIUS, EXPLOSION_DAMAGE, LEVEL_START_COUNTDOWN, WAVE_COUNTDOWN,
+    LEVEL_START_COUNTDOWN, WAVE_COUNTDOWN,
     HEAL_RADIUS, HEAL_INTERVAL, HEAL_AMOUNT,
     ATTACK_BUTTON_POS, SLOW_BUTTON_POS, POISON_BUTTON_POS,
     WAVES,
@@ -132,8 +132,6 @@ export class SceneInitializer extends Component {
     private get INITIAL_GOLD() { return INITIAL_GOLD; }
     private get KILL_REWARD() { return KILL_REWARD; }
     private get WAVE_BONUSES() { return WAVE_BONUSES; }
-    private get EXPLOSION_RADIUS() { return EXPLOSION_RADIUS; }
-    private get EXPLOSION_DAMAGE() { return EXPLOSION_DAMAGE; }
     private get LEVEL_START_COUNTDOWN() { return LEVEL_START_COUNTDOWN; }
     private get WAVE_COUNTDOWN() { return WAVE_COUNTDOWN; }
     private get HEAL_RADIUS() { return HEAL_RADIUS; }
@@ -326,7 +324,7 @@ export class SceneInitializer extends Component {
     private dragMode: 'place' | 'move' = 'place';
     // 移动塔时记录原槽位
     private moveFromSlot = -1;
-    // 点击塔弹出的操作菜单（移动/出售/自爆）
+    // 点击塔弹出的操作菜单（移动/出售）
     private towerMenu: Node | null = null;
     private towerMenuIndex = -1;  // 菜单对应的塔索引
 
@@ -1328,70 +1326,6 @@ export class SceneInitializer extends Component {
         gfx.stroke();
     }
 
-    /** 执行自爆：删除塔 + AOE 爆炸（免费，仅战斗中可用）+ 按塔类型不同效果 */
-    private executeExplode(towerIndex: number): void {
-        if (towerIndex < 0 || towerIndex >= this.towers.length) return;
-        if (!this.waveActive) return;  // 波次间禁用自爆
-        const tower = this.towers[towerIndex];
-        const explodePos = tower.node.position.clone();
-        const def = tower.def;
-        // 释放槽位
-        for (let s = 0; s < this.slotPositions.length; s++) {
-            if (Vec3.distance(explodePos, this.slotPositions[s]) < 5) {
-                this.slotOccupied[s] = false;
-                this.slotNodes[s].active = true;
-                break;
-            }
-        }
-        // 删除塔
-        tower.node.removeFromParent();
-        tower.node.destroy();
-        this.towers.splice(towerIndex, 1);
-        this.towerTimers.splice(towerIndex, 1);
-
-        // 按塔类型计算自爆效果
-        const radius = this.EXPLOSION_RADIUS;
-        const p = this.getTowerParams(tower);
-        // 基础伤害 = 塔价格 × 1.5
-        const baseDamage = def.cost * 1.5;
-        // 附加：敌人当前血量的 20%
-        for (let j = this.enemies.length - 1; j >= 0; j--) {
-            const e = this.enemies[j];
-            if (!e.node.isValid) continue;
-            const d = Vec3.distance(explodePos, e.node.position);
-            if (d <= radius) {
-                // 伤害 = 塔价格×1.5 + 敌人最大血量的20%
-                const dmg = baseDamage + e.maxHp * 0.2;
-                this.damageEnemy(e, dmg);
-                // 按塔类型的特殊效果
-                if (def.id === 'poison') {
-                    // 毒塔自爆：范围施毒（受二星/词缀，dps×1.5）
-                    this.applyPoisonFromTower(tower, e, p, 1.5);
-                } else if (def.id === 'slow') {
-                    // 减速塔自爆：范围冻结（受二星/词缀）
-                    e.slowMultiplier = Math.min(e.slowMultiplier, p.slowMultiplier);
-                    e.slowTimer = Math.max(e.slowTimer, p.slowDuration);
-                    if (p.vulnerable > 1) e.vulnerable = Math.max(e.vulnerable, p.vulnerable);
-                    EffectManager.instance?.playSlow(e.node);
-                } else {
-                    // 攻击塔自爆：纯高伤害（额外50%伤害）
-                    this.damageEnemy(e, dmg * 0.5);
-                }
-                if (e.hp <= 0) {
-                    e.node.removeFromParent();
-                    e.node.destroy();
-                    this.enemies.splice(j, 1);
-                    this.gold += this.KILL_REWARD;
-                    this.updateGoldLabel();
-                    console.log(`爆炸击杀！+${this.KILL_REWARD} 金币`);
-                }
-            }
-        }
-        // 爆炸光波动画
-        EffectManager.instance?.playExplosion(explodePos, this.EXPLOSION_RADIUS);
-        const effectName = def.id === 'poison' ? '范围施毒' : def.id === 'slow' ? '范围冻结' : '纯高伤害';
-        console.log(`塔自爆！${effectName}，AOE ${radius}px / 基础伤害 ${baseDamage}`);
-    }
 
     /** 通用：销毁指定塔并释放其所在地基（无 AOE，供长按升级合并复用） */
     private removeTowerNode(towerIndex: number): void {
@@ -1442,51 +1376,6 @@ export class SceneInitializer extends Component {
         EffectManager.instance?.playExplosion(pos, radius);
     }
 
-    /** 创建爆炸光波动画（扩散+淡出，约 0.4 秒） */
-    private createExplosionWave(pos: Vec3, radius: number = this.EXPLOSION_RADIUS): void {
-        if (!this.battleRoot) return;
-        const wave = new Node('ExplosionWave');
-        wave.layer = Layers.Enum.UI_2D;
-        wave.setParent(this.battleRoot);
-        wave.setPosition(pos);
-        const transform = wave.addComponent(UITransform);
-        transform.setContentSize(radius * 2, radius * 2);
-        transform.setAnchorPoint(0.5, 0.5);
-        const gfx = wave.addComponent(Graphics);
-
-        // 初始光波
-        const drawWave = (r: number, alpha: number) => {
-            gfx.clear();
-            // 外圈光波（橙色，扩散）
-            gfx.strokeColor = new Color(255, 180, 80, alpha);
-            gfx.lineWidth = 6;
-            gfx.circle(0, 0, r);
-            gfx.stroke();
-            // 内圈填充（红橙，淡出）
-            gfx.fillColor = new Color(255, 100, 50, alpha * 0.4);
-            gfx.circle(0, 0, r * 0.7);
-            gfx.fill();
-        };
-
-        // 动画分 5 帧，半径从 10 扩散到目标半径，alpha 从 255 淡出到 0
-        let frame = 0;
-        const totalFrames = 5;
-        const startRadius = 10;
-        const endRadius = radius;
-        drawWave(startRadius, 255);
-
-        this.schedule(() => {
-            frame++;
-            const t = frame / totalFrames;  // 0→1
-            const radius = startRadius + (endRadius - startRadius) * t;
-            const alpha = Math.round(255 * (1 - t));
-            if (frame >= totalFrames) {
-                wave.destroy();
-            } else {
-                drawWave(radius, alpha);
-            }
-        }, 0.08, totalFrames - 1, 0);
-    }
 
     protected update(dt: number): void {
         if (this.isGameOver) return;
@@ -2393,7 +2282,7 @@ export class SceneInitializer extends Component {
         EffectManager.instance?.playSlow(enemy.node);
     }
 
-    /** 毒塔施毒（受二星 + 词缀影响）；dpsScale 用于自爆（1.5x） */
+    /** 毒塔施毒（受二星 + 词缀影响） */
     private applyPoisonFromTower(tower: TowerRuntime, enemy: EnemyRuntime, p: TowerParams, dpsScale = 1): void {
         const dps = p.poisonDps * dpsScale;
         const dur = p.poisonDuration;

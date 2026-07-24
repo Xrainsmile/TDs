@@ -21,10 +21,6 @@ export const INITIAL_GOLD = 30;
 export const KILL_REWARD = 0;
 export const WAVE_BONUSES = [30, 30, 30, 30];
 
-// ===== 自爆 =====
-export const EXPLOSION_RADIUS = 60;
-export const EXPLOSION_DAMAGE = 80;
-
 // ===== 倒计时 =====
 // 关卡开头倒计时（秒）：给玩家时间建塔布防
 export const LEVEL_START_COUNTDOWN = 30;
