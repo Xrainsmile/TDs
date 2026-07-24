@@ -5,13 +5,20 @@ import {
     PATH_WAYPOINTS, ENEMY_SPEED, BULLET_SPEED,
     INITIAL_GOLD, KILL_REWARD, WAVE_BONUSES,
     EXPLOSION_RADIUS, EXPLOSION_DAMAGE, LEVEL_START_COUNTDOWN,
-    SLOT_POSITIONS, HEAL_RADIUS, HEAL_INTERVAL, HEAL_AMOUNT,
+    HEAL_RADIUS, HEAL_INTERVAL, HEAL_AMOUNT,
     ATTACK_BUTTON_POS, SLOW_BUTTON_POS, POISON_BUTTON_POS,
     WAVES, MAP_DESIGN_WIDTH, MAP_DESIGN_HEIGHT,
     type TowerDef, type EnemyDef, type SpawnEntry, type WaveConfig, type TowerAttackKind,
 } from './GameBalance';
+import {
+    generateSlotPositions, validateLayout,
+    type LayoutGeometry,
+} from './PortraitLayoutSystem';
 
 const { ccclass } = _decorator;
+
+// 开发模式开关：开启后校验竖屏布局（同列 x 一致 / 镜像对称 / 不越界不重叠路径 / 8px 网格）
+const DEBUG = true;
 
 // ============================================================
 //  系统扩展约定：塔/敌人配置表
@@ -360,7 +367,8 @@ export class SceneInitializer extends Component {
 
     // 建造点（直接从 GameBalance 引用，固定逻辑坐标）
     private slotNodes: Node[] = [];
-    private slotOccupied: boolean[] = new Array(SLOT_POSITIONS.length).fill(false);
+    private slotPositions: Vec3[] = [];
+    private slotOccupied: boolean[] = [];
 
     // 拖拽
     private ghostNode: Node | null = null;
@@ -370,7 +378,7 @@ export class SceneInitializer extends Component {
     private targetSlot = -1;  // 当前拖拽目标槽位（TOUCH_MOVE 时确定，TOUCH_END 直接用）
 
     // 运行时状态
-    private mapRoot: Node | null = null;
+    private battleRoot: Node | null = null;
     private gameTransform: UITransform | null = null;
     private enemies: EnemyRuntime[] = [];
     private towers: TowerRuntime[] = [];
@@ -480,34 +488,41 @@ export class SceneInitializer extends Component {
 
         this._visibleSize = visible;
 
-        // === MapRoot（固定逻辑尺寸 + 等比缩放）===
-        this.mapRoot = new Node('MapRoot');
-        this.mapRoot.layer = Layers.Enum.UI_2D;
-        this.mapRoot.setParent(canvas);
-        this.gameTransform = this.mapRoot.addComponent(UITransform);
+        // === BattleRoot（固定逻辑尺寸 + 等比缩放）===
+        this.battleRoot = new Node('BattleRoot');
+        this.battleRoot.layer = Layers.Enum.UI_2D;
+        this.battleRoot.setParent(canvas);
+        this.gameTransform = this.battleRoot.addComponent(UITransform);
         this.gameTransform.setContentSize(MAP_DESIGN_WIDTH, MAP_DESIGN_HEIGHT);
         this.gameTransform.setAnchorPoint(0.5, 0.5);
-        this.mapRoot.setPosition(battleCenterX, battleCenterY, 0);
-        this.mapRoot.setScale(mapScale, mapScale, 1);
+        this.battleRoot.setPosition(battleCenterX, battleCenterY, 0);
+        this.battleRoot.setScale(mapScale, mapScale, 1);
         // 挂载特效管理器
-        this.mapRoot.addComponent(EffectManager);
-        // 地图调试框（黄色边框，随 MapRoot 整体缩放；验收：调试框与地图同步缩放）
-        this.drawMapDebugFrame(this.mapRoot);
+        this.battleRoot.addComponent(EffectManager);
+        // 地图调试框（黄色边框，随 BattleRoot 整体缩放；验收：调试框与地图同步缩放）
+        this.drawMapDebugFrame(this.battleRoot);
 
         // === 路径 ===
-        this.drawPath(this.mapRoot);
+        this.drawPath(this.battleRoot);
+
+        // === 塔位（统一网格：4 列按战场宽度百分比 + 固定行，由 PortraitLayoutSystem 计算）===
+        const layoutGeo: LayoutGeometry = { battleWidth, battleLeft, battleCenterX, mapScale };
+        // 开发模式布局校验：同列 x 一致 / 镜像对称 / 不越界不重叠路径 / 8px 网格
+        if (DEBUG) validateLayout(layoutGeo);
+        this.slotPositions = generateSlotPositions(layoutGeo);
+        this.slotOccupied = new Array(this.slotPositions.length).fill(false);
 
         // === 建造点 ===
-        for (let i = 0; i < SLOT_POSITIONS.length; i++) {
-            const slot = this.createTowerSlot(SLOT_POSITIONS[i], i);
-            slot.setParent(this.mapRoot);
+        for (let i = 0; i < this.slotPositions.length; i++) {
+            const slot = this.createTowerSlot(this.slotPositions[i], i);
+            slot.setParent(this.battleRoot);
             this.slotNodes.push(slot);
         }
 
         // === 拖拽幽灵塔 ===
         this.ghostNode = new Node('DragGhost');
         this.ghostNode.layer = Layers.Enum.UI_2D;
-        this.ghostNode.setParent(this.mapRoot);
+        this.ghostNode.setParent(this.battleRoot);
         const ghostTransform = this.ghostNode.addComponent(UITransform);
         ghostTransform.setContentSize(64, 64);
         ghostTransform.setAnchorPoint(0.5, 0.5);
@@ -694,7 +709,7 @@ export class SceneInitializer extends Component {
                 } else if (this.dragMode === 'move' && this.moveFromSlot >= 0 && this.moveFromSlot !== slot) {
                     // 通过原槽位找到正在移动的塔
                     const movingTowerIdx = this.towers.findIndex(t =>
-                        Vec3.distance(t.node.position, SLOT_POSITIONS[this.moveFromSlot]) < 5
+                        Vec3.distance(t.node.position, this.slotPositions[this.moveFromSlot]) < 5
                     );
 
                     if (movingTowerIdx >= 0) {
@@ -702,18 +717,18 @@ export class SceneInitializer extends Component {
                         if (this.slotOccupied[slot]) {
                             // 目标已占用 → 互换
                             const swapTowerIdx = this.towers.findIndex(t =>
-                                Vec3.distance(t.node.position, SLOT_POSITIONS[slot]) < 5
+                                Vec3.distance(t.node.position, this.slotPositions[slot]) < 5
                             );
                             if (swapTowerIdx >= 0) {
-                                this.towers[swapTowerIdx].node.setPosition(SLOT_POSITIONS[this.moveFromSlot]);
+                                this.towers[swapTowerIdx].node.setPosition(this.slotPositions[this.moveFromSlot]);
                                 this.restoreTowerAppearance(this.towers[swapTowerIdx].node, this.towers[swapTowerIdx].def);
-                                movingTower.node.setPosition(SLOT_POSITIONS[slot]);
+                                movingTower.node.setPosition(this.slotPositions[slot]);
                                 this.restoreTowerAppearance(movingTower.node, movingTower.def);
                                 console.log(`塔互换: 位置 ${this.moveFromSlot + 1} ↔ ${slot + 1}`);
                             }
                         } else {
                             // 目标空 → 直接移动
-                            movingTower.node.setPosition(SLOT_POSITIONS[slot]);
+                            movingTower.node.setPosition(this.slotPositions[slot]);
                             this.restoreTowerAppearance(movingTower.node, movingTower.def);
                             this.slotOccupied[this.moveFromSlot] = false;
                             this.slotNodes[this.moveFromSlot].active = true;
@@ -728,7 +743,7 @@ export class SceneInitializer extends Component {
             // 移动模式下未成功放置 → 恢复原塔外观
             if (this.dragMode === 'move' && this.moveFromSlot >= 0 && this.dragTowerDef) {
                 const movingTowerIdx = this.towers.findIndex(t =>
-                    Vec3.distance(t.node.position, SLOT_POSITIONS[this.moveFromSlot]) < 5
+                    Vec3.distance(t.node.position, this.slotPositions[this.moveFromSlot]) < 5
                 );
                 if (movingTowerIdx >= 0) {
                     this.restoreTowerAppearance(this.towers[movingTowerIdx].node, this.towers[movingTowerIdx].def);
@@ -744,7 +759,7 @@ export class SceneInitializer extends Component {
             // 移动取消时恢复原塔外观
             if (this.dragMode === 'move' && this.moveFromSlot >= 0 && this.dragTowerDef) {
                 const movingTowerIdx = this.towers.findIndex(t =>
-                    Vec3.distance(t.node.position, SLOT_POSITIONS[this.moveFromSlot]) < 5
+                    Vec3.distance(t.node.position, this.slotPositions[this.moveFromSlot]) < 5
                 );
                 if (movingTowerIdx >= 0) {
                     this.restoreTowerAppearance(this.towers[movingTowerIdx].node, this.towers[movingTowerIdx].def);
@@ -777,7 +792,7 @@ export class SceneInitializer extends Component {
         this.hud.setStatus('拖拽底部塔按钮到绿色格子');
 
         // === 终点友军建筑（城堡）===
-        this.drawAlly(this.mapRoot);
+        this.drawAlly(this.battleRoot);
 
         // === 关卡开始倒计时 ===
         this.startLevelCountdown();
@@ -1123,12 +1138,12 @@ export class SceneInitializer extends Component {
     private updateGhostState(local: Vec3): void {
         let nearestSlot = -1;
         let nearestDist = Infinity;
-        for (let i = 0; i < SLOT_POSITIONS.length; i++) {
+        for (let i = 0; i < this.slotPositions.length; i++) {
             // 移动模式下：跳过自己原来的槽位，但允许其他已占用的槽位（互换）
             if (this.dragMode === 'move' && i === this.moveFromSlot) continue;
             if (this.dragMode === 'place' && this.slotOccupied[i]) continue;
 
-            const dist = Vec3.distance(local, SLOT_POSITIONS[i]);
+            const dist = Vec3.distance(local, this.slotPositions[i]);
             if (dist < nearestDist) {
                 nearestDist = dist;
                 nearestSlot = i;
@@ -1141,7 +1156,7 @@ export class SceneInitializer extends Component {
         this.targetSlot = this.canPlace ? nearestSlot : -1;
 
         if (this.canPlace && nearestSlot >= 0) {
-            this.ghostNode!.setPosition(SLOT_POSITIONS[nearestSlot]);
+            this.ghostNode!.setPosition(this.slotPositions[nearestSlot]);
         }
 
         this.drawGhost(this.canPlace);
@@ -1336,8 +1351,8 @@ export class SceneInitializer extends Component {
         const tower = this.towers[towerIndex];
         const towerPos = tower.node.position.clone();
         // 记录原槽位
-        for (let s = 0; s < SLOT_POSITIONS.length; s++) {
-            if (Vec3.distance(towerPos, SLOT_POSITIONS[s]) < 5) {
+        for (let s = 0; s < this.slotPositions.length; s++) {
+            if (Vec3.distance(towerPos, this.slotPositions[s]) < 5) {
                 this.moveFromSlot = s;
                 break;
             }
@@ -1398,8 +1413,8 @@ export class SceneInitializer extends Component {
         const explodePos = tower.node.position.clone();
         const def = tower.def;
         // 释放槽位
-        for (let s = 0; s < SLOT_POSITIONS.length; s++) {
-            if (Vec3.distance(explodePos, SLOT_POSITIONS[s]) < 5) {
+        for (let s = 0; s < this.slotPositions.length; s++) {
+            if (Vec3.distance(explodePos, this.slotPositions[s]) < 5) {
                 this.slotOccupied[s] = false;
                 this.slotNodes[s].active = true;
                 break;
@@ -1488,10 +1503,10 @@ export class SceneInitializer extends Component {
 
     /** 创建爆炸光波动画（扩散+淡出，约 0.4 秒） */
     private createExplosionWave(pos: Vec3, radius: number = this.EXPLOSION_RADIUS): void {
-        if (!this.mapRoot) return;
+        if (!this.battleRoot) return;
         const wave = new Node('ExplosionWave');
         wave.layer = Layers.Enum.UI_2D;
-        wave.setParent(this.mapRoot);
+        wave.setParent(this.battleRoot);
         wave.setPosition(pos);
         const transform = wave.addComponent(UITransform);
         transform.setContentSize(radius * 2, radius * 2);
@@ -1843,7 +1858,7 @@ export class SceneInitializer extends Component {
 
     /** 生成敌人（从注册表取属性和外观） */
     private spawnEnemy(hp: number, type: string = 'normal'): void {
-        if (!this.mapRoot) return;
+        if (!this.battleRoot) return;
 
         const def = this.getEnemyDef(type);
         if (!def) {
@@ -1856,7 +1871,7 @@ export class SceneInitializer extends Component {
 
         const enemy = new Node(def.name);
         enemy.layer = Layers.Enum.UI_2D;
-        enemy.setParent(this.mapRoot);
+        enemy.setParent(this.battleRoot);
         enemy.setPosition(this.PATH_START);
 
         const transform = enemy.addComponent(UITransform);
@@ -1884,11 +1899,11 @@ export class SceneInitializer extends Component {
 
     /** 发射子弹 */
     private fireBullet(from: Vec3, to: Vec3, target: Node, def: TowerDef, tower: TowerRuntime): void {
-        if (!this.mapRoot) return;
+        if (!this.battleRoot) return;
 
         const bullet = new Node('Bullet');
         bullet.layer = Layers.Enum.UI_2D;
-        bullet.setParent(this.mapRoot);
+        bullet.setParent(this.battleRoot);
         bullet.setPosition(from);
 
         const transform = bullet.addComponent(UITransform);
@@ -1914,14 +1929,14 @@ export class SceneInitializer extends Component {
     }
 
     private placeTower(slotIndex: number, def: TowerDef): void {
-        if (this.slotOccupied[slotIndex] || !this.mapRoot) return;
+        if (this.slotOccupied[slotIndex] || !this.battleRoot) return;
         if (this.gold < def.cost) return;
 
         this.gold -= def.cost;
         this.updateGoldLabel();
 
-        const node = this.createTower(SLOT_POSITIONS[slotIndex], def);
-        node.setParent(this.mapRoot);
+        const node = this.createTower(this.slotPositions[slotIndex], def);
+        node.setParent(this.battleRoot);
         const tower: TowerRuntime = { node, def, star: 1, affix: null, foughtInWave: false, attackCount: 0 };
         this.setTowerBadge(tower);
 
@@ -2070,7 +2085,7 @@ export class SceneInitializer extends Component {
         this.updateGoldLabel();
         if (this.livesLabel) this.livesLabel.string = `Base: ${this.allyHp}/${this.ALLY_MAX_HP}`;
         if (this.waveLabel) this.waveLabel.string = `Wave: 0/${this.WAVES.length}`;
-        if (this.statusLabel) this.statusLabel.string = '拖拽左侧塔按钮到绿色格子';
+        if (this.statusLabel) this.statusLabel.string = '拖拽底部塔按钮到绿色格子';
 
         // 关卡开始倒计时
         this.startLevelCountdown();
@@ -2320,7 +2335,7 @@ export class SceneInitializer extends Component {
         gfx.fill();
     }
 
-    /** 地图调试框：黄色边框，标示 MapRoot 边界，作为 MapRoot 子节点随地图整体等比缩放 */
+    /** 地图调试框：黄色边框，标示 BattleRoot 边界，作为 BattleRoot 子节点随地图整体等比缩放 */
     private drawMapDebugFrame(parent: Node): void {
         const node = new Node('MapDebugFrame');
         node.layer = Layers.Enum.UI_2D;
@@ -2516,8 +2531,8 @@ export class SceneInitializer extends Component {
 
         // 释放材料塔的地基
         const matPos = material.node.position.clone();
-        for (let s = 0; s < SLOT_POSITIONS.length; s++) {
-            if (Vec3.distance(matPos, SLOT_POSITIONS[s]) < 5) {
+        for (let s = 0; s < this.slotPositions.length; s++) {
+            if (Vec3.distance(matPos, this.slotPositions[s]) < 5) {
                 this.slotOccupied[s] = false;
                 this.slotNodes[s].active = true;
                 break;

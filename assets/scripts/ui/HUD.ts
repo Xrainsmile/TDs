@@ -22,13 +22,19 @@ export class HUD extends Component {
     public statusLabel: Label | null = null;
     public waveLabel: Label | null = null;
 
-    private readonly BG_HEIGHT = 48;     // 背景条高度
+    private readonly BG_HEIGHT = 60;     // 背景条高度
 
-    /** 创建背景条 + 4 个 Label，必须在父节点已挂载后调用 */
-    public init(visibleWidth: number = 960, visibleHeight: number = 640): void {
+    /**
+     * 创建背景条 + 状态 Label（两行布局）：
+     * 第一行：Gold 左对齐 / Base 居中 / Wave 右对齐
+     * 第二行：倒计时（或状态提示）居中
+     */
+    public init(visibleWidth: number = 640, visibleHeight: number = 960): void {
         const parent = this.node;
-        const bgY = visibleHeight / 2 - this.BG_HEIGHT / 2 - 8;
-        const labelY = bgY - 16;
+        const bgY = visibleHeight / 2 - this.BG_HEIGHT / 2 - 6;
+        const halfW = visibleWidth / 2;
+        const row1Y = visibleHeight / 2 - 18;
+        const row2Y = visibleHeight / 2 - 44;
 
         // === 顶部半透明背景条（铺满可见宽度）===
         const bg = new Node('HUDBg');
@@ -49,12 +55,13 @@ export class HUD extends Component {
         gfx.lineTo(visibleWidth / 2, -this.BG_HEIGHT / 2);
         gfx.stroke();
 
-        // === 4 个状态 Label ===
-        const halfW = visibleWidth / 2;
-        this.goldLabel = this.createLabel('Gold', new Vec3(-halfW + 55, labelY, 0), 22);
-        this.livesLabel = this.createLabel('Lives', new Vec3(-halfW * 0.42, labelY, 0), 22);
-        this.statusLabel = this.createLabel('Status', new Vec3(0, labelY, 0), 18);
-        this.waveLabel = this.createLabel('Wave', new Vec3(halfW - 55, labelY, 0), 22);
+        // === 第一行：Gold 左 / Base 中 / Wave 右 ===
+        this.goldLabel = this.createLabel('Gold', new Vec3(-halfW + 55, row1Y, 0), 22);
+        this.livesLabel = this.createLabel('Base', new Vec3(0, row1Y, 0), 22);
+        this.waveLabel = this.createLabel('Wave', new Vec3(halfW - 55, row1Y, 0), 22);
+
+        // === 第二行：倒计时 / 状态提示 居中 ===
+        this.statusLabel = this.createLabel('Status', new Vec3(0, row2Y, 0), 18);
     }
 
     /** 创建单个 Label 子节点并返回组件引用 */

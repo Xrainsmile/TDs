@@ -42,38 +42,9 @@ export const EXPLOSION_DAMAGE = 80;
 // ===== 关卡倒计时 =====
 export const LEVEL_START_COUNTDOWN = 5;
 
-// ===== 建造点：20个地基（竖屏：两侧各一列 + 道路转角内外侧）=====
-// 两侧塔位各保留一列（x=±225，6 行）；其余放在道路转角的内/外侧（x=±60 内侧 / x=±185 外侧，4 个转角 y 层级）
-// 全部位于 MapRoot 局部坐标，整体等比缩放；与路径走廊留有清晰间距，且距屏幕边缘 ≥16px
-export const SLOT_POSITIONS: Vec3[] = [
-    // 左侧列（x=-225）
-    new Vec3(-225, 290, 0),
-    new Vec3(-225, 175, 0),
-    new Vec3(-225, -10, 0),
-    new Vec3(-225, -80, 0),
-    new Vec3(-225, -190, 0),
-    new Vec3(-225, -310, 0),
-
-    // 右侧列（x=225）
-    new Vec3(225, 290, 0),
-    new Vec3(225, 175, 0),
-    new Vec3(225, -10, 0),
-    new Vec3(225, -80, 0),
-    new Vec3(225, -190, 0),
-    new Vec3(225, -310, 0),
-
-    // 转角内侧（x=±60）
-    new Vec3(60, 240, 0),
-    new Vec3(60, -120, 0),
-    new Vec3(-60, 60, 0),
-    new Vec3(-60, -270, 0),
-
-    // 转角外侧（x=±185）
-    new Vec3(185, 60, 0),
-    new Vec3(185, -270, 0),
-    new Vec3(-185, 240, 0),
-    new Vec3(-185, -120, 0),
-];
+// ===== 建造点网格已迁移至 PortraitLayoutSystem =====
+// 固定列/行/塔位清单集中在 PortraitLayoutSystem.ts 的 LayoutConfig 中，
+// 由 PortraitLayoutSystem 根据战场几何计算最终位置（禁止在本文件手写塔位坐标）。
 
 // ===== 治疗兵参数 =====
 export const HEAL_RADIUS = 120;
