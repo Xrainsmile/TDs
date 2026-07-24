@@ -1532,16 +1532,16 @@ export class SceneInitializer extends Component {
             // 全部生成且全部死亡 → 自动暂停，等用户选 buff + 点"开始下一波"
             if (this.spawnedInWave >= this.waveTotalCount && this.enemies.length === 0) {
                 this.waveActive = false;
+                // 每个波次结束都给金币（含最后一波）
+                const waveBonus = this.WAVE_BONUSES[this.currentWave - 1] || 0;
+                if (waveBonus > 0) {
+                    this.gold += waveBonus;
+                    this.updateGoldLabel();
+                    console.log(`波次奖励 +${waveBonus} 金币，当前 ${this.gold}`);
+                }
                 // 还有下一波才显示 buff 选择 + 暂停状态，否则直接胜利
                 if (this.currentWave < this.WAVES.length) {
                     this.isWavePaused = true;
-                    // 波次完成奖励
-                    const waveBonus = this.WAVE_BONUSES[this.currentWave - 1] || 0;
-                    if (waveBonus > 0) {
-                        this.gold += waveBonus;
-                        this.updateGoldLabel();
-                        console.log(`波次奖励 +${waveBonus} 金币，当前 ${this.gold}`);
-                    }
                     this.updatePauseButton();
                     this.showBuffSelection();
                     console.log(`Wave ${this.currentWave} 完成（${this.waveTotalCount} 只全部消灭），已自动暂停`);

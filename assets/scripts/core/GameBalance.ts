@@ -18,8 +18,8 @@ export const BULLET_SPEED = 500;
 
 // ===== 金币 =====
 export const INITIAL_GOLD = 30;
-export const KILL_REWARD = 15;
-export const WAVE_BONUSES = [50, 60, 70, 80];
+export const KILL_REWARD = 0;
+export const WAVE_BONUSES = [30, 30, 30, 30];
 
 // ===== 自爆 =====
 export const EXPLOSION_RADIUS = 60;
