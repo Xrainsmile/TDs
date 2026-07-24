@@ -35,37 +35,31 @@ export const BASE: Vec3 = PATH_WAYPOINTS[PATH_WAYPOINTS.length - 1];
 
 // ===== 塔位：固定设计坐标（禁止 row/column 抽象 / 自动镜像 / 自动吸附）=====
 // 仅保存固定坐标，可单独按道路转角设计。id 用于布局校验输出具体塔位。
-// 设计：内列 x=±180（距道路走廊边 12px），外列 x=±225（距地图边 7px）；
-//       转角行用内列，直线段行用外列，共 18 个塔位。
+// 设计：外侧两列 x=±210（严格对齐，共享同一组 y）；内部战略塔位位于蛇形回折区，共 16 个。
 export interface BuildSlotDef {
     id: string;
     pos: Vec3;
 }
 
-const INNER_X = 180;
-const OUTER_X = 225;
+// 外侧塔位统一使用的 y（左右两列共享同一组 y，严格对齐）
+const OUTER_ROWS = [300, 180, 60, -60, -180, -300];
 
 export const BUILD_SLOTS: BuildSlotDef[] = [
-    // 转角行（y=330/150/-30/-210/-330）→ 内列
-    { id: 'L0', pos: new Vec3(-INNER_X, 330, 0) },
-    { id: 'R0', pos: new Vec3(INNER_X, 330, 0) },
-    { id: 'L2', pos: new Vec3(-INNER_X, 150, 0) },
-    { id: 'R2', pos: new Vec3(INNER_X, 150, 0) },
-    { id: 'L4', pos: new Vec3(-INNER_X, -30, 0) },
-    { id: 'R4', pos: new Vec3(INNER_X, -30, 0) },
-    { id: 'L6', pos: new Vec3(-INNER_X, -210, 0) },
-    { id: 'R6', pos: new Vec3(INNER_X, -210, 0) },
-    { id: 'L8', pos: new Vec3(-INNER_X, -330, 0) },
-    { id: 'R8', pos: new Vec3(INNER_X, -330, 0) },
-    // 直线段行（y=240/60/-120/-300）→ 外列
-    { id: 'L1', pos: new Vec3(-OUTER_X, 240, 0) },
-    { id: 'R1', pos: new Vec3(OUTER_X, 240, 0) },
-    { id: 'L3', pos: new Vec3(-OUTER_X, 60, 0) },
-    { id: 'R3', pos: new Vec3(OUTER_X, 60, 0) },
-    { id: 'L5', pos: new Vec3(-OUTER_X, -120, 0) },
-    { id: 'R5', pos: new Vec3(OUTER_X, -120, 0) },
-    { id: 'L7', pos: new Vec3(-OUTER_X, -300, 0) },
-    { id: 'R7', pos: new Vec3(OUTER_X, -300, 0) },
+    // 左右外侧塔位：两列严格对齐
+    ...OUTER_ROWS.map((y, i) => ({
+        id: `L${i}`,
+        pos: new Vec3(-210, y, 0),
+    })),
+    ...OUTER_ROWS.map((y, i) => ({
+        id: `R${i}`,
+        pos: new Vec3(210, y, 0),
+    })),
+
+    // 蛇形道路内部的战略塔位：每个回折区域一个
+    { id: 'C0', pos: new Vec3(60, 240, 0) },
+    { id: 'C1', pos: new Vec3(-60, 60, 0) },
+    { id: 'C2', pos: new Vec3(60, -120, 0) },
+    { id: 'C3', pos: new Vec3(-60, -270, 0) },
 ];
 
 // ===== 布局校验阈值（仅提示，不修改）=====
