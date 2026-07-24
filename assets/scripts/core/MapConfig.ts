@@ -12,10 +12,10 @@ import { Vec3 } from 'cc';
 // ===== 网格定义 =====
 export const GRID_COLS = 6;
 export const GRID_ROWS = 8;
-export const CELL_SIZE = 80;
+export const CELL_SIZE = 60;   // 目标棋盘 360×480
 
-export const MAP_DESIGN_WIDTH = GRID_COLS * CELL_SIZE;   // 480
-export const MAP_DESIGN_HEIGHT = GRID_ROWS * CELL_SIZE;  // 640
+export const MAP_DESIGN_WIDTH = GRID_COLS * CELL_SIZE;   // 360
+export const MAP_DESIGN_HEIGHT = GRID_ROWS * CELL_SIZE;  // 480
 
 export interface GridCell {
     col: number; // 0~5，左到右

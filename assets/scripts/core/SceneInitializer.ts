@@ -1,10 +1,12 @@
 import { _decorator, Component, Node, view, UITransform, Layers, Vec3, Graphics, Color, Label, EventTouch, v3 } from 'cc';
 import { HUD } from '../ui/HUD';
 import { EffectManager } from './EffectManager';
+import { EnemyType } from './Constants';
+import { TowerStats, BuffOption, ROGUELIKE_BUFFS, getBuffDisplay } from './RoguelikeCards';
 import {
     ENEMY_SPEED, BULLET_SPEED,
     INITIAL_GOLD, KILL_REWARD, WAVE_BONUSES,
-    EXPLOSION_RADIUS, EXPLOSION_DAMAGE, LEVEL_START_COUNTDOWN,
+    EXPLOSION_RADIUS, EXPLOSION_DAMAGE, LEVEL_START_COUNTDOWN, WAVE_COUNTDOWN,
     HEAL_RADIUS, HEAL_INTERVAL, HEAL_AMOUNT,
     ATTACK_BUTTON_POS, SLOW_BUTTON_POS, POISON_BUTTON_POS,
     WAVES,
@@ -31,50 +33,11 @@ const SHOW_GRID = true;
 //  详见 doc/extension-guide.md
 // ============================================================
 
-/** 全局塔属性（roguelike 加成累计，加法叠加不复利） */
-class TowerStats {
-    damageBonus = 0;       // 伤害加成（0.1 = +10%，累加）
-    speedBonus = 0;         // 攻速加成（0.15 = +15%，累加）
-    rangeBonus = 0;         // 范围加成（0.1 = +10%，累加）
-    healSuppression = 0;    // 治疗抑制（0.1 = 抑制10%，累加）
-    splashLevel = 0;        // 溅射等级（0=未解锁，>0=主弹命中后爆炸 AOE）
-    bleedLevel = 0;         // 出血等级（0=未解锁，>0=概率施加出血+暴击）
-    slowLevel = 0;          // 减速等级（>0 时所有子弹附带减速）
 
-    // 最终倍率 = 1 + 累计加成（加法叠加）
-    get damageMultiplier() { return 1 + this.damageBonus; }
-    get speedMultiplier() { return 1 + this.speedBonus; }
-    get rangeMultiplier() { return 1 + this.rangeBonus; }
-    get healMultiplier() { return Math.max(0, 1 - this.healSuppression); }
+                               
 
-    // 溅射 AOE 参数（随等级提升）
-    get splashRadius() { return 40 + this.splashLevel * 10; }       // 基础 40px，每级 +10
-    get splashDamage() { return 0.5 + this.splashLevel * 0.15; }    // 主弹伤害的 50%+15%/级
 
-    // 出血参数（随等级提升）
-    get bleedChance() { return 0.05 + this.bleedLevel * 0.05; }     // 5%+5%/级
-    get bleedDuration() { return 2.0; }                               // 固定 2 秒
-    get critChance() { return 0.3 + this.bleedLevel * 0.1; }       // 暴击率 30%+10%/级
-    get critMultiplier() { return 2.0 + this.bleedLevel * 0.5; }    // 暴击倍率 2x+0.5/级
 
-    reset(): void {
-        this.damageBonus = 0;
-        this.speedBonus = 0;
-        this.rangeBonus = 0;
-        this.healSuppression = 0;
-        this.splashLevel = 0;
-        this.bleedLevel = 0;
-        this.slowLevel = 0;
-    }
-}
-
-/** Roguelike buff 选项定义 */
-interface BuffOption {
-    id: string;
-    name: string;          // 显示名
-    desc: string;           // 描述
-    apply: (stats: TowerStats) => void;
-}
 
 /** 单塔有效属性（解析全局 roguelike buff + 二星固定强化 + 随机词缀 后的结果） */
 interface TowerParams {
@@ -106,37 +69,7 @@ interface TowerRuntime {
     attackCount: number;     // 攻击计数（连发词缀用）
 }
 
-/** 6 种 buff（每次随机选 3 种，玩家三选一） */
-const ROGUELIKE_BUFFS: BuffOption[] = [
-    {
-        id: 'damage', name: '攻击伤害 +10%', desc: '所有塔伤害提升',
-        apply: s => { s.damageBonus += 0.1; },
-    },
-    {
-        id: 'speed', name: '攻速 +15%', desc: '所有塔攻击速度提升',
-        apply: s => { s.speedBonus += 0.15; },
-    },
-    {
-        id: 'range', name: '范围 +10%', desc: '所有塔攻击范围提升',
-        apply: s => { s.rangeBonus += 0.1; },
-    },
-    {
-        id: 'healSuppress', name: '治疗抑制', desc: '抑制10%的敌人回复量',
-        apply: s => { s.healSuppression += 0.1; },
-    },
-    {
-        id: 'splash',
-        name: '溅射爆炸',
-        desc: '',  // 动态生成，见 getBuffDisplay
-        apply: s => { s.splashLevel += 1; },
-    },
-    {
-        id: 'bleed',
-        name: '出血',
-        desc: '',  // 动态生成，见 getBuffDisplay
-        apply: s => { s.bleedLevel += 1; },
-    },
-];
+
 
 /** 每种塔的 3 个专属正向词缀（合并升二星时随机获得其一） */
 const TOWER_AFFIXES: Record<string, { id: AffixId; name: string; desc: string }[]> = {
@@ -157,75 +90,13 @@ const TOWER_AFFIXES: Record<string, { id: AffixId; name: string; desc: string }[
     ],
 };
 
-/** 获取 buff 在卡片上显示的名称和描述（展示选择前→选择后的数值变化） */
-function getBuffDisplay(buff: BuffOption, stats: TowerStats): { name: string; desc: string } {
-    // 模拟选择后的 stats（浅拷贝）
-    const after = new TowerStats();
-    after.damageBonus = stats.damageBonus;
-    after.speedBonus = stats.speedBonus;
-    after.rangeBonus = stats.rangeBonus;
-    after.healSuppression = stats.healSuppression;
-    after.splashLevel = stats.splashLevel;
-    after.bleedLevel = stats.bleedLevel;
-    after.slowLevel = stats.slowLevel;
-    buff.apply(after);
 
-    if (buff.id === 'damage') {
-        return {
-            name: '攻击伤害 +10%',
-            desc: `伤害倍率 ${stats.damageMultiplier.toFixed(1)}x → ${after.damageMultiplier.toFixed(1)}x`,
-        };
-    }
-    if (buff.id === 'speed') {
-        return {
-            name: '攻速 +15%',
-            desc: `攻速倍率 ${Math.round(stats.speedMultiplier * 100)}% → ${Math.round(after.speedMultiplier * 100)}%`,
-        };
-    }
-    if (buff.id === 'range') {
-        return {
-            name: '范围 +10%',
-            desc: `范围倍率 ${Math.round(stats.rangeMultiplier * 100)}% → ${Math.round(after.rangeMultiplier * 100)}%`,
-        };
-    }
-    if (buff.id === 'healSuppress') {
-        return {
-            name: '治疗抑制',
-            desc: `抑制 ${Math.round(stats.healSuppression * 100)}% → ${Math.round(after.healSuppression * 100)}%`,
-        };
-    }
-    if (buff.id === 'splash') {
-        if (stats.splashLevel === 0) {
-            return {
-                name: '溅射爆炸',
-                desc: `解锁：命中后爆炸 ${after.splashRadius}px / ${Math.round(after.splashDamage * 100)}% 伤害`,
-            };
-        }
-        return {
-            name: `溅射强化 Lv${after.splashLevel}`,
-            desc: `${stats.splashRadius}px / ${Math.round(stats.splashDamage * 100)}% → ${after.splashRadius}px / ${Math.round(after.splashDamage * 100)}%`,
-        };
-    }
-    if (buff.id === 'bleed') {
-        if (stats.bleedLevel === 0) {
-            return {
-                name: '出血',
-                desc: `解锁：${Math.round(after.bleedChance * 100)}%施加出血 / ${Math.round(after.critChance * 100)}%暴击 / ${after.critMultiplier}x暴伤`,
-            };
-        }
-        return {
-            name: `出血强化 Lv${after.bleedLevel}`,
-            desc: `${Math.round(stats.bleedChance * 100)}%/${Math.round(stats.critChance * 100)}%/${stats.critMultiplier}x → ${Math.round(after.bleedChance * 100)}%/${Math.round(after.critChance * 100)}%/${after.critMultiplier}x`,
-        };
-    }
-    return { name: buff.name, desc: buff.desc };
-}
 
 /** 敌人运行时数据（定义在配置表之外，因为含运行时状态） */
 interface EnemyRuntime {
     node: Node; hp: number; maxHp: number;
     slowTimer: number; slowMultiplier: number;
-    type: string;           // 对应 EnemyDef.id
+    type: EnemyType;        // 对应 EnemyDef.enemyType
     healTimer: number;      // 治疗者光环计时
     // 扩展字段：新敌人的特殊计时器都挂这里，避免改结构
     extraTimer: number;
@@ -237,8 +108,6 @@ interface EnemyRuntime {
     vulnerable: number;   // 易伤倍率（默认 1，易伤词缀目标承受额外伤害）
 }
 
-/** 敌人类型（向后兼容，实际用 string） */
-type EnemyType = string;
 
 /**
  * 极简版 SceneInitializer
@@ -314,6 +183,7 @@ export class SceneInitializer extends Component {
     private readonly ENEMY_REGISTRY: EnemyDef[] = [
         {
             id: 'normal',
+            enemyType: EnemyType.NORMAL,
             name: '普通兵',
             speedMultiplier: 1,
             hpMultiplier: 1,
@@ -322,6 +192,7 @@ export class SceneInitializer extends Component {
         },
         {
             id: 'healer',
+            enemyType: EnemyType.HEALER,
             name: '治疗兵',
             speedMultiplier: 0.9,
             hpMultiplier: 1.0,
@@ -360,9 +231,9 @@ export class SceneInitializer extends Component {
     private getTowerDef(id: string): TowerDef | undefined {
         return this.TOWER_REGISTRY.find(t => t.id === id);
     }
-    /** 按 id 查敌人定义 */
-    private getEnemyDef(id: string): EnemyDef | undefined {
-        return this.ENEMY_REGISTRY.find(e => e.id === id);
+    /** 按 enemyType 查敌人定义 */
+    private getEnemyDef(type: EnemyType): EnemyDef | undefined {
+        return this.ENEMY_REGISTRY.find(e => e.enemyType === type);
     }
 
     // 波次配置（从 GameBalance 引用）
@@ -407,7 +278,6 @@ export class SceneInitializer extends Component {
     private waveElapsed = 0;      // 当前波次已流逝时间（秒）
     private spawnCursor = 0;       // 下一个要生成的 entry 索引
     private waveDelay = 0;  // 波次间延迟（保留兼容，未使用）
-    private levelCountdown = 0;  // 关卡开始倒计时剩余秒数（>0 时正在倒计时）
     // 暂停状态：
     // - isWavePaused: 波次结束后的"自动暂停"→ 可以建塔/移塔，点"开始下一波"继续
     // - isUserPaused: 用户在波次进行中主动暂停 → 完全冻结，不能拖拽
@@ -416,9 +286,16 @@ export class SceneInitializer extends Component {
     // 游戏暂停按钮（右上角）
     private pauseButton: Node | null = null;
     private pauseButtonLabel: Label | null = null;
-    // 开始下一波按钮（中上，波次间自动暂停时显示）
-    private nextWaveButton: Node | null = null;
-    private nextWaveButtonLabel: Label | null = null;
+    // 倒计时圆环（关卡开头 + 波次之间共用）：有宽度的圆环，弧度表示剩余进度，中心展示 "GO"
+    private countdownNode: Node | null = null;
+    private countdownGfx: Graphics | null = null;
+    private countdownValue = 0;     // 剩余秒数
+    private countdownTotal = 0;     // 总秒数
+    private countdownActive = false;
+    private countdownCallback: (() => void) | null = null;
+    private countdownPos = new Vec3(0, 0, 0);
+    private readonly COUNTDOWN_RING_RADIUS = 28;
+    private readonly COUNTDOWN_RING_WIDTH = 6;
 
     // ===== Roguelike 系统 =====
     private towerStats = new TowerStats();
@@ -431,16 +308,13 @@ export class SceneInitializer extends Component {
     // 游戏暂停按钮：右侧（setupScene 中动态赋值）
     private PAUSE_BUTTON_POS = new Vec3(420, 220, 0);
     private readonly PAUSE_BUTTON_RADIUS = 36;  // 触摸判定半径
-    // 开始下一波按钮：中上（独立一行，避开顶部 HUD）
-    private NEXT_WAVE_BUTTON_POS = new Vec3(0, 220, 0);
-    private readonly NEXT_WAVE_BUTTON_RADIUS = 80;  // 触摸判定半径（按钮加宽）
-
     // 底部「10金币」随机建塔按钮（替代拖动建塔）
     private SPEND_BUTTON_POS = new Vec3(0, 0, 0);    // setupScene 中赋值
     private readonly SPEND_BUTTON_RADIUS = 90;       // 触摸判定半径（按钮加宽）
     private readonly SPEND_COST = 10;                // 每次随机建塔花费
     private spendButton: Node | null = null;
     private spendButtonLabel: Label | null = null;
+    private goldAboveButtonLabel: Label | null = null;  // 金币按钮上方的常驻金币显示
 
     // 响应式布局动态计算结果（setupScene 中赋值，仅 UI 用）
     private _visibleSize: { width: number; height: number } = { width: 640, height: 960 };
@@ -454,6 +328,11 @@ export class SceneInitializer extends Component {
     // 点击塔弹出的操作菜单（移动/出售/自爆）
     private towerMenu: Node | null = null;
     private towerMenuIndex = -1;  // 菜单对应的塔索引
+
+    // 长按移动（取消所有点击交互，仅长按拖动）
+    private pendingTower = -1;       // 长按待定的塔索引，长按超时即开始拖动
+    private static readonly LONG_PRESS_TIME = 0.4;
+    private static readonly MAX_STAR = 3;
 
     // 合并系统状态
     private mergeMode = false;
@@ -488,10 +367,14 @@ export class SceneInitializer extends Component {
         const battleHeight = battleTop - battleBottom;
         const battleCenterX = (battleLeft + battleRight) / 2;
         const battleCenterY = (battleTop + battleBottom) / 2;
+        // 倒计时圆环位置：底部「10金币」按钮正上方（半径+宽度已缩小 50%）
+        this.countdownPos = new Vec3(0, -halfH + bottomDockHeight / 2 + 100, 0);
 
-        // 屏幕适配：只缩放并居中 MapRoot；内部元素相对位置固定，绝不按手机尺寸重排。
-        // scale = min(战场宽/地图宽, 战场高/地图高)
+        // 屏幕适配：地图以逻辑像素尺寸（MAP_DESIGN = 360×480）显示，居中于战场；
+        // 仅当超出战场区域时才缩小，不再拉伸填满战场，保证棋盘视觉尺寸 = MAP_DESIGN。
+        // scale = min(1, 战场宽/地图宽, 战场高/地图高)
         const mapScale = Math.min(
+            1,
             battleWidth / MAP_DESIGN_WIDTH,
             battleHeight / MAP_DESIGN_HEIGHT
         );
@@ -548,6 +431,21 @@ export class SceneInitializer extends Component {
         this.spendButton.setParent(canvas);
         this.spendButtonLabel = this.spendButton.getChildByName('Text')?.getComponent(Label) ?? null;
 
+        // === 金币按钮上方常驻金币显示（"gold N"）===
+        const goldLabelNode = new Node('GoldAboveButton');
+        goldLabelNode.layer = Layers.Enum.UI_2D;
+        const goldLabelT = goldLabelNode.addComponent(UITransform);
+        goldLabelT.setContentSize(160, 24);
+        goldLabelNode.setParent(canvas);
+        goldLabelNode.setPosition(0, btnY + 48, 0);
+        const goldLabelComp = goldLabelNode.addComponent(Label);
+        goldLabelComp.string = `gold ${this.gold}`;
+        goldLabelComp.fontSize = 18;
+        goldLabelComp.color = new Color(255, 220, 100, 255);
+        goldLabelComp.horizontalAlign = Label.HorizontalAlign.CENTER;
+        goldLabelComp.verticalAlign = Label.VerticalAlign.CENTER;
+        this.goldAboveButtonLabel = goldLabelComp;
+
         // === 游戏暂停按钮（顶部右侧，HUD 下方）===
         this.PAUSE_BUTTON_POS = new Vec3(halfW - 44, battleTop - 34, 0);
         this.pauseButton = this.createPauseButton();
@@ -555,12 +453,8 @@ export class SceneInitializer extends Component {
         this.pauseButtonLabel = this.pauseButton.getChildByName('Text')?.getComponent(Label) ?? null;
         this.updatePauseButton();
 
-        // === 开始下一波按钮（顶部中央，HUD 下方）===
-        this.NEXT_WAVE_BUTTON_POS = new Vec3(0, battleTop - 34, 0);
-        this.nextWaveButton = this.createNextWaveButton();
-        this.nextWaveButton.setParent(canvas);
-        this.nextWaveButtonLabel = this.nextWaveButton.getChildByName('Text')?.getComponent(Label) ?? null;
-        this.nextWaveButton.active = false;  // 初始隐藏
+        // === 倒计时圆环（关卡开头 / 波次之间共用）===
+        this.createCountdownRing();
 
         // === Roguelike buff 卡片（3 张，波次间暂停时显示，竖向堆叠居中）===
         const cardPositions = [new Vec3(0, 110, 0), new Vec3(0, 0, 0), new Vec3(0, -110, 0)];
@@ -579,43 +473,7 @@ export class SceneInitializer extends Component {
             const buttonLocal = this.eventToCanvasLocal(event);
             const gameLocal = this.eventToGameLocal(event);
 
-            // 0. 判定：是否点中了塔操作菜单的按钮（点击塔后弹出）
-            if (this.towerMenu && this.towerMenu.active) {
-                const menuPos = this.towerMenu.getPosition();
-                // 三个按钮从上到下：移动(y=+42) / 合并(y=0) / 自爆(y=-42)
-                const moveBtn = new Vec3(menuPos.x, menuPos.y + 42, 0);
-                const mergeBtn = new Vec3(menuPos.x, menuPos.y, 0);
-                const explodeBtn = new Vec3(menuPos.x, menuPos.y - 42, 0);
-                // 移动按钮（仅波次之间可用）
-                if (Math.abs(buttonLocal.x - moveBtn.x) <= 70 && Math.abs(buttonLocal.y - moveBtn.y) <= 18) {
-                    if (this.waveActive) {
-                        if (this.statusLabel) this.statusLabel.string = '战斗中不能移动塔！';
-                    } else {
-                        this.startMoveTower(this.towerMenuIndex);
-                    }
-                    this.hideTowerMenu();
-                    return;
-                }
-                // 合并按钮（进入合并模式）
-                if (Math.abs(buttonLocal.x - mergeBtn.x) <= 70 && Math.abs(buttonLocal.y - mergeBtn.y) <= 18) {
-                    this.startMerge(this.towerMenuIndex);
-                    this.hideTowerMenu();
-                    return;
-                }
-                // 自爆按钮（仅战斗中可用，免费）
-                if (Math.abs(buttonLocal.x - explodeBtn.x) <= 70 && Math.abs(buttonLocal.y - explodeBtn.y) <= 18) {
-                    if (!this.waveActive) {
-                        if (this.statusLabel) this.statusLabel.string = '波次间不能自爆！';
-                    } else {
-                        this.executeExplode(this.towerMenuIndex);
-                    }
-                    this.hideTowerMenu();
-                    return;
-                }
-                // 点了菜单外部 → 关闭菜单
-                this.hideTowerMenu();
-                return;
-            }
+            // 0. （已移除）塔点击菜单交互：现改为长按移动，无点击菜单
 
             // 0a. 判定：是否点中了 buff 卡片（仅波次间暂停且未选时可见）
             if (this.isWavePaused && !this.buffSelected) {
@@ -633,10 +491,10 @@ export class SceneInitializer extends Component {
                 }
             }
 
-            // 0b. 判定：是否点中了中上"开始下一波"按钮（选完 buff 后才可见）
-            if (this.isWavePaused && this.nextWaveButton && this.nextWaveButton.active
-                && Vec3.distance(buttonLocal, this.NEXT_WAVE_BUTTON_POS) <= this.NEXT_WAVE_BUTTON_RADIUS) {
-                this.startNextWaveFromButton();
+            // 0b. 倒计时圆环：点击圆环可跳过等待，立即开战
+            if (this.countdownActive
+                && Vec3.distance(buttonLocal, this.countdownPos) <= this.COUNTDOWN_RING_RADIUS + this.COUNTDOWN_RING_WIDTH) {
+                this.skipCountdown();
                 return;
             }
 
@@ -655,7 +513,7 @@ export class SceneInitializer extends Component {
             // 2. 游戏暂停时完全冻结，不允许拖拽
             if (this.isUserPaused) return;
 
-            // 3. 判断是否点中了已建好的塔（弹出操作菜单：移动/合并/自爆）
+            // 3. 判断是否点中了已建好的塔（长按开始移动；无点击菜单）
             let hitTower = -1;
             for (let i = 0; i < this.towers.length; i++) {
                 if (Vec3.distance(gameLocal, this.towers[i].node.position) < 30) {
@@ -675,9 +533,11 @@ export class SceneInitializer extends Component {
                 }
                 return;
             }
-            // 普通：弹出操作菜单（移动/合并/自爆）
-            this.showTowerMenu(hitTower);
-            return;  // 不进入拖拽，等用户选菜单按钮
+            // 普通：长按超时直接开始拖动（取消所有点击交互）
+            this.pendingTower = hitTower;
+            this.unschedule(this.onLongPressMove);
+            this.scheduleOnce(this.onLongPressMove, SceneInitializer.LONG_PRESS_TIME);
+            return;
         });
 
         canvas.on(Node.EventType.TOUCH_MOVE, (event: EventTouch) => {
@@ -688,6 +548,12 @@ export class SceneInitializer extends Component {
         });
 
         canvas.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
+            // 长按未触发（短按）→ 取消，不弹菜单（已取消所有点击交互）
+            if (!this.isDragging && this.pendingTower >= 0) {
+                this.pendingTower = -1;
+                this.unschedule(this.onLongPressMove);
+                return;
+            }
             if (!this.isDragging) return;
             this.isDragging = false;
             this.ghostNode!.active = false;
@@ -708,16 +574,36 @@ export class SceneInitializer extends Component {
                     if (movingTowerIdx >= 0) {
                         const movingTower = this.towers[movingTowerIdx];
                         if (this.slotOccupied[slot]) {
-                            // 目标已占用 → 互换
-                            const swapTowerIdx = this.towers.findIndex(t =>
+                            // 目标已占用 → 判断升级（同类型同等级）或互换
+                            const targetTowerIdx = this.towers.findIndex(t =>
                                 Vec3.distance(t.node.position, this.slotPositions[slot]) < 5
                             );
-                            if (swapTowerIdx >= 0) {
-                                this.towers[swapTowerIdx].node.setPosition(this.slotPositions[this.moveFromSlot]);
-                                this.restoreTowerAppearance(this.towers[swapTowerIdx].node, this.towers[swapTowerIdx].def);
-                                movingTower.node.setPosition(this.slotPositions[slot]);
-                                this.restoreTowerAppearance(movingTower.node, movingTower.def);
-                                console.log(`塔互换: 位置 ${this.moveFromSlot + 1} ↔ ${slot + 1}`);
+                            if (targetTowerIdx >= 0) {
+                                const targetTower = this.towers[targetTowerIdx];
+                                const canUpgrade = movingTower.def.id === targetTower.def.id
+                                    && movingTower.star === targetTower.star
+                                    && targetTower.star < SceneInitializer.MAX_STAR;
+                                if (canUpgrade) {
+                                    targetTower.star += 1;
+                                    if (targetTower.star === 2) {
+                                        const affixes = TOWER_AFFIXES[targetTower.def.id] ?? [];
+                                        targetTower.affix = affixes.length > 0
+                                            ? affixes[Math.floor(Math.random() * affixes.length)].id
+                                            : null;
+                                    }
+                                    this.setTowerBadge(targetTower);
+                                    this.removeTowerNode(movingTowerIdx);
+                                    EffectManager.instance?.playExplosion(targetTower.node.position.clone(), 50);
+                                    if (this.statusLabel) this.statusLabel.string = `${targetTower.def.name} 升级到 ${targetTower.star} 星！`;
+                                    console.log(`塔升级合并: ${targetTower.def.id} → ${targetTower.star}星`);
+                                } else {
+                                    // 不同类型/不同等级/满星 → 互换位置
+                                    this.towers[targetTowerIdx].node.setPosition(this.slotPositions[this.moveFromSlot]);
+                                    this.restoreTowerAppearance(this.towers[targetTowerIdx].node, this.towers[targetTowerIdx].def);
+                                    movingTower.node.setPosition(this.slotPositions[slot]);
+                                    this.restoreTowerAppearance(movingTower.node, movingTower.def);
+                                    console.log(`塔互换: 位置 ${this.moveFromSlot + 1} ↔ ${slot + 1}`);
+                                }
                             }
                         } else {
                             // 目标空 → 直接移动
@@ -745,6 +631,7 @@ export class SceneInitializer extends Component {
             this.canPlace = false;
             this.targetSlot = -1;
             this.moveFromSlot = -1;
+            this.pendingTower = -1;
             this.dragMode = 'place';
         });
 
@@ -760,6 +647,8 @@ export class SceneInitializer extends Component {
             }
             this.isDragging = false;
             this.ghostNode!.active = false;
+            this.unschedule(this.onLongPressMove);
+            this.pendingTower = -1;
             this.canPlace = false;
             this.targetSlot = -1;
             this.moveFromSlot = -1;
@@ -807,20 +696,117 @@ export class SceneInitializer extends Component {
 
     /** 关卡开始倒计时：给玩家时间建塔布防，结束后启动第一波 */
     private startLevelCountdown(): void {
-        this.levelCountdown = this.LEVEL_START_COUNTDOWN;
         if (this.statusLabel) {
-            this.statusLabel.string = `${Math.ceil(this.levelCountdown)} 秒后开始 - 可建塔布防`;
+            this.statusLabel.string = '布防准备中…';
         }
         console.log(`关卡开始倒计时 ${this.LEVEL_START_COUNTDOWN} 秒`);
+        this.startCountdown(this.LEVEL_START_COUNTDOWN, () => this.startNextWave());
+    }
+
+    /** 波次之间倒计时：选完 buff 后开始（选 buff 期间不显示圆环），结束自动开下一波（也可点圆环立即开始） */
+    private startWaveCountdown(): void {
+        if (this.statusLabel) {
+            this.statusLabel.string = '下一波即将开始…';
+        }
+        console.log(`波次间倒计时 ${this.WAVE_COUNTDOWN} 秒`);
+        this.startCountdown(this.WAVE_COUNTDOWN, () => this.startNextWaveFromButton());
+    }
+
+    /** 创建倒计时圆环（带宽度，中心展示 "GO"） */
+    private createCountdownRing(): void {
+        const node = new Node('CountdownRing');
+        node.layer = Layers.Enum.UI_2D;
+        node.setParent(this.node);
+        const t = node.addComponent(UITransform);
+        const size = this.COUNTDOWN_RING_RADIUS * 2 + this.COUNTDOWN_RING_WIDTH + 8;
+        t.setContentSize(size, size);
+        t.setAnchorPoint(0.5, 0.5);
+        node.setPosition(this.countdownPos);
+        node.active = false;
+
+        const gfx = node.addComponent(Graphics);
+
+        // 中心文字 "GO"
+        const labelNode = new Node('GO');
+        labelNode.layer = Layers.Enum.UI_2D;
+        labelNode.setParent(node);
+        labelNode.setPosition(0, 0, 0);
+        const lt = labelNode.addComponent(UITransform);
+        lt.setContentSize(60, 30);
+        const label = labelNode.addComponent(Label);
+        label.string = 'GO';
+        label.fontSize = 18;
+        label.color = new Color(255, 255, 255, 255);
+        label.horizontalAlign = Label.HorizontalAlign.CENTER;
+        label.verticalAlign = Label.VerticalAlign.CENTER;
+
+        this.countdownNode = node;
+        this.countdownGfx = gfx;
+    }
+
+    /** 绘制倒计时圆环：背景轨道 + 剩余进度弧（从顶部顺时针递减） */
+    private drawCountdownRing(): void {
+        if (!this.countdownGfx) return;
+        const gfx = this.countdownGfx;
+        gfx.clear();
+        const r = this.COUNTDOWN_RING_RADIUS;
+        const w = this.COUNTDOWN_RING_WIDTH;
+
+        // 背景轨道（半透明灰）
+        gfx.lineWidth = w;
+        gfx.strokeColor = new Color(255, 255, 255, 60);
+        gfx.circle(0, 0, r);
+        gfx.stroke();
+
+        // 进度弧：progress 从 1（满）递减到 0（空）
+        const progress = this.countdownTotal > 0
+            ? Math.max(0, Math.min(1, this.countdownValue / this.countdownTotal))
+            : 0;
+        const steps = 64;
+        const totalAngle = 2 * Math.PI * progress;
+        const startTop = Math.PI / 2;  // 顶部起笔
+        gfx.lineWidth = w;
+        gfx.strokeColor = new Color(80, 220, 120, 255);
+        gfx.moveTo(Math.cos(startTop) * r, Math.sin(startTop) * r);
+        for (let i = 1; i <= steps; i++) {
+            const a = startTop - (i / steps) * totalAngle;  // 顺时针递减
+            gfx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+        }
+        gfx.stroke();
+    }
+
+    /** 启动一个倒计时（秒），结束回调 onComplete */
+    private startCountdown(seconds: number, onComplete: () => void): void {
+        this.countdownTotal = seconds;
+        this.countdownValue = seconds;
+        this.countdownActive = true;
+        this.countdownCallback = onComplete;
+        if (this.countdownNode) this.countdownNode.active = true;
+        this.drawCountdownRing();
+    }
+
+    /** 停止倒计时并隐藏圆环 */
+    private stopCountdown(): void {
+        this.countdownActive = false;
+        this.countdownCallback = null;
+        if (this.countdownNode) this.countdownNode.active = false;
+    }
+
+    /** 跳过倒计时：立即执行结束回调 */
+    private skipCountdown(): void {
+        if (!this.countdownActive) return;
+        const cb = this.countdownCallback;
+        this.stopCountdown();
+        cb?.();
     }
 
     /** 开始下一波按钮：波次间自动暂停时点击启动下一波 */
     private startNextWaveFromButton(): void {
         if (!this.isWavePaused) return;
+        this.stopCountdown();  // 手动点击即跳过倒计时
         this.isWavePaused = false;
         this.buffSelected = false;
         this.hideBuffCards();
-        this.updateNextWaveButton();
         this.startNextWave();
         console.log('用户点击开始下一波 → 启动 Wave', this.currentWave + 1);
     }
@@ -845,7 +831,7 @@ export class SceneInitializer extends Component {
 
         // 检查下一波是否有治疗兵
         const nextWave = this.WAVES[this.currentWave];  // currentWave 已 +1，指向下一波
-        const nextWaveHasHealer = nextWave?.entries.some(e => e.type === 'healer') ?? false;
+        const nextWaveHasHealer = nextWave?.entries.some(e => e.type === EnemyType.HEALER) ?? false;
 
         const pool: { buff: BuffOption; weight: number }[] = [];
 
@@ -917,12 +903,17 @@ export class SceneInitializer extends Component {
             }
         }
         this.buffSelected = false;
-        // 选 buff 期间隐藏"开始下一波"
-        if (this.nextWaveButton) this.nextWaveButton.active = false;
     }
 
     /** 玩家选中一个 buff */
     private selectBuff(index: number): void {
+        const buff = this.currentBuffChoices[index];
+        if (!buff) return;
+        this.applyBuffChoice(index);
+    }
+
+    /** 应用某个 buff 选择（不含启动倒计时，倒计时在波次结束时已统一启动） */
+    private applyBuffChoice(index: number): void {
         const buff = this.currentBuffChoices[index];
         if (!buff) return;
         const display = getBuffDisplay(buff, this.towerStats);
@@ -934,12 +925,12 @@ export class SceneInitializer extends Component {
         this.buffSelected = true;
         // 延迟隐藏卡片，让特效播放完
         this.scheduleOnce(() => this.hideBuffCards(), 0.3);
-        // 选完后显示"开始下一波"
-        this.updateNextWaveButton();
         // 更新 status 显示当前加成
         if (this.statusLabel) {
             this.statusLabel.string = `已选: ${display.name}  塔: ${this.towers.length}`;
         }
+        // 选完 buff 后启动 30s 倒计时圆环（点圆环可跳过），选 buff 期间不显示
+        this.startWaveCountdown();
         console.log(`Roguelike 选择: ${display.name}`);
     }
 
@@ -1012,23 +1003,9 @@ export class SceneInitializer extends Component {
         }
     }
 
-    /** 同步"开始下一波"按钮的可见性和文字 */
-    private updateNextWaveButton(): void {
-        if (!this.nextWaveButton || !this.nextWaveButtonLabel) return;
-        // 只在波次间暂停 + 已选buff（或无下一波）+ 非游戏结束时显示
-        const hasMoreWaves = this.currentWave < this.WAVES.length;
-        const canStart = this.isWavePaused && !this.isGameOver && (this.buffSelected || !hasMoreWaves);
-        this.nextWaveButton.active = canStart;
-        if (canStart) {
-            const nextWave = this.currentWave + 1;
-            this.nextWaveButtonLabel.string = nextWave <= this.WAVES.length
-                ? `▶ 开始 Wave ${nextWave}`
-                : '▶ 继续';
-        }
-    }
-
     /** 启动下一波 */
     private startNextWave(): void {
+        this.stopCountdown();  // 确保倒计时圆环已隐藏
         if (this.currentWave >= this.WAVES.length) {
             this.victory();
             return;
@@ -1056,6 +1033,7 @@ export class SceneInitializer extends Component {
     private victory(): void {
         this.waveActive = false;
         this.isGameOver = true;  // 复用 isGameOver 停止 update 逻辑
+        this.stopCountdown();
         this.isWavePaused = false;
         this.isUserPaused = false;
         this.buffSelected = false;
@@ -1064,7 +1042,6 @@ export class SceneInitializer extends Component {
         this.hideTowerMenu();
         this.hideBuffCards();
         this.updatePauseButton();
-        this.updateNextWaveButton();
 
         const canvas = this.node;
         const panel = new Node('VictoryPanel');
@@ -1272,64 +1249,7 @@ export class SceneInitializer extends Component {
         return this.node.getComponent(UITransform)!.convertToNodeSpaceAR(v3(uiPos.x, uiPos.y, 0));
     }
 
-    /** 弹出塔操作菜单（移动/自爆） */
-    private showTowerMenu(towerIndex: number): void {
-        if (towerIndex < 0 || towerIndex >= this.towers.length) return;
-        this.hideTowerMenu();  // 先清理已有的
-        const tower = this.towers[towerIndex];
-        const worldPos = new Vec3();
-        tower.node.getWorldPosition(worldPos);
-        const canvasTransform = this.node.getComponent(UITransform)!;
-        const canvasPos = canvasTransform.convertToNodeSpaceAR(worldPos);
-
-        const menu = new Node('TowerMenu');
-        menu.layer = Layers.Enum.UI_2D;
-        menu.setParent(this.node);
-        const menuY = Math.min(canvasPos.y + 70, this._visibleSize.height / 2 - 130);
-        menu.setPosition(canvasPos.x, menuY, 0);
-        const transform = menu.addComponent(UITransform);
-        transform.setContentSize(170, 140);
-
-        const gfx = menu.addComponent(Graphics);
-        // 深色半透明背景
-        gfx.fillColor = new Color(30, 30, 40, 230);
-        gfx.roundRect(-85, -70, 170, 140, 10);
-        gfx.fill();
-        gfx.strokeColor = new Color(255, 150, 80, 255);
-        gfx.lineWidth = 2;
-        gfx.roundRect(-80, -50, 160, 100, 10);
-        gfx.stroke();
-
-        const makeButton = (y: number, label: string, bgColor: Color, textColor: Color) => {
-            gfx.fillColor = bgColor;
-            gfx.roundRect(-70, y - 18, 140, 36, 8);
-            gfx.fill();
-            const labelNode = new Node(label);
-            labelNode.layer = Layers.Enum.UI_2D;
-            labelNode.setParent(menu);
-            const t = labelNode.addComponent(UITransform);
-            t.setContentSize(140, 36);
-            labelNode.setPosition(0, y, 0);
-            const l = labelNode.addComponent(Label);
-            l.string = label;
-            l.fontSize = 16;
-            l.color = textColor;
-            l.horizontalAlign = Label.HorizontalAlign.CENTER;
-            l.verticalAlign = Label.VerticalAlign.CENTER;
-        };
-
-        // 三个按钮：移动(上) / 合并(中) / 自爆(下)
-        const moveLabel = this.waveActive ? '移动（战斗中禁用）' : '移动';
-        makeButton(42, moveLabel, new Color(60, 120, 200, 255), new Color(255, 255, 255, 255));
-        makeButton(0, '合并', new Color(220, 160, 40, 255), new Color(255, 255, 255, 255));
-        const explodeLabel = this.waveActive ? '自爆' : '自爆（波次间禁用）';
-        makeButton(-42, explodeLabel, new Color(200, 60, 40, 255), new Color(255, 255, 255, 255));
-
-        this.towerMenu = menu;
-        this.towerMenuIndex = towerIndex;
-    }
-
-    /** 隐藏塔操作菜单 */
+    /** 隐藏塔操作菜单（保留空实现以兼容 gameOver 清理，菜单交互已移除） */
     private hideTowerMenu(): void {
         if (this.towerMenu) {
             this.towerMenu.destroy();
@@ -1376,6 +1296,15 @@ export class SceneInitializer extends Component {
             gfx.circle(0, 0, tower.def.range);
             gfx.stroke();
         }
+    }
+
+    /** 长按计时器触发：直接开始移动塔（战斗中禁用则忽略） */
+    private onLongPressMove(): void {
+        const idx = this.pendingTower;
+        this.pendingTower = -1;
+        if (idx < 0) return;
+        if (this.waveActive) return;  // 战斗中禁止移动
+        this.startMoveTower(idx);
     }
 
     /** 恢复被移动塔的正常外观 */
@@ -1463,6 +1392,24 @@ export class SceneInitializer extends Component {
         console.log(`塔自爆！${effectName}，AOE ${radius}px / 基础伤害 ${baseDamage}`);
     }
 
+    /** 通用：销毁指定塔并释放其所在地基（无 AOE，供长按升级合并复用） */
+    private removeTowerNode(towerIndex: number): void {
+        if (towerIndex < 0 || towerIndex >= this.towers.length) return;
+        const tower = this.towers[towerIndex];
+        const tpos = tower.node.position.clone();
+        for (let s = 0; s < this.slotPositions.length; s++) {
+            if (Vec3.distance(tpos, this.slotPositions[s]) < 5) {
+                this.slotOccupied[s] = false;
+                if (this.slotNodes[s]) this.slotNodes[s].active = true;
+                break;
+            }
+        }
+        tower.node.removeFromParent();
+        tower.node.destroy();
+        this.towers.splice(towerIndex, 1);
+        this.towerTimers.splice(towerIndex, 1);
+    }
+
     /** 溅射 AOE：在命中点爆炸，伤害周围敌人（伤害 = 主弹有效伤害 × splashDamage 倍率） */
     private triggerSplash(pos: Vec3, def: TowerDef, tower: TowerRuntime): void {
         const ts = this.towerStats;
@@ -1546,16 +1493,17 @@ export class SceneInitializer extends Component {
         // 用户暂停：完全冻结游戏逻辑（敌人/塔/子弹都不动），拖拽也在 TOUCH_START 中被阻止
         if (this.isUserPaused) return;
 
-        // === 关卡开始倒计时 ===
-        if (this.levelCountdown > 0) {
-            this.levelCountdown -= dt;
-            if (this.levelCountdown <= 0) {
-                this.levelCountdown = 0;
-                this.startNextWave();
+        // === 倒计时（关卡开头 + 波次之间共用圆环）===
+        if (this.countdownActive) {
+            this.countdownValue -= dt;
+            if (this.countdownValue <= 0) {
+                this.countdownValue = 0;
+                this.drawCountdownRing();
+                const cb = this.countdownCallback;
+                this.stopCountdown();
+                cb?.();
             } else {
-                if (this.statusLabel) {
-                    this.statusLabel.string = `${Math.ceil(this.levelCountdown)} 秒后开始 - 可建塔布防`;
-                }
+                this.drawCountdownRing();
             }
             return;  // 倒计时期间不推进波次/敌人/塔逻辑
         }
@@ -1850,7 +1798,7 @@ export class SceneInitializer extends Component {
     }
 
     /** 生成敌人（从注册表取属性和外观） */
-    private spawnEnemy(hp: number, type: string = 'normal'): void {
+    private spawnEnemy(hp: number, type: EnemyType = EnemyType.NORMAL): void {
         if (!this.battleRoot) return;
 
         const def = this.getEnemyDef(type);
@@ -1974,6 +1922,9 @@ export class SceneInitializer extends Component {
         if (this.goldLabel) {
             this.goldLabel.string = `Gold: ${this.gold}`;
         }
+        if (this.goldAboveButtonLabel) {
+            this.goldAboveButtonLabel.string = `gold ${this.gold}`;
+        }
     }
 
     // === 游戏结束弹窗 ===
@@ -1983,6 +1934,7 @@ export class SceneInitializer extends Component {
     private gameOver(): void {
         if (this.isGameOver) return;
         this.isGameOver = true;
+        this.stopCountdown();
         this.waveActive = false;
         this.waveDelay = 0;
         this.isWavePaused = false;
@@ -1993,7 +1945,6 @@ export class SceneInitializer extends Component {
         this.hideTowerMenu();
         this.hideBuffCards();
         this.updatePauseButton();
-        this.updateNextWaveButton();
 
         // 清除所有敌人和子弹
         for (const en of this.enemies) en.node.destroy();
@@ -2070,6 +2021,8 @@ export class SceneInitializer extends Component {
             this.gameOverPanel = null;
         }
 
+        this.stopCountdown();
+
         // 清除所有塔和建造点
         for (const tower of this.towers) tower.node.destroy();
         this.towers.length = 0;
@@ -2101,7 +2054,6 @@ export class SceneInitializer extends Component {
         this.hideTowerMenu();
         this.hideBuffCards();
         this.updatePauseButton();
-        this.updateNextWaveButton();
 
         // 更新 HUD
         this.updateGoldLabel();
@@ -2137,7 +2089,7 @@ export class SceneInitializer extends Component {
         labelNode.setParent(node);
         labelNode.setPosition(0, 0, 0);
         const label = labelNode.addComponent(Label);
-        label.string = `${this.SPEND_COST}金币`;
+        label.string = `${this.SPEND_COST}金币召唤`;
         label.fontSize = 24;
         label.color = new Color(255, 255, 255, 255);
         label.horizontalAlign = Label.HorizontalAlign.CENTER;
@@ -2178,42 +2130,6 @@ export class SceneInitializer extends Component {
         label.verticalAlign = Label.VerticalAlign.CENTER;
         const textTransform = textNode.getComponent(UITransform)!;
         textTransform.setContentSize(72, 36);
-
-        return node;
-    }
-
-    /** 创建中上"开始下一波"按钮 */
-    private createNextWaveButton(): Node {
-        const node = new Node('NextWaveButton');
-        node.layer = Layers.Enum.UI_2D;
-        const transform = node.addComponent(UITransform);
-        transform.setContentSize(160, 40);
-        node.setPosition(this.NEXT_WAVE_BUTTON_POS);
-
-        const gfx = node.addComponent(Graphics);
-        // 圆角按钮背景（绿色，醒目）
-        gfx.fillColor = new Color(60, 160, 80, 255);
-        gfx.roundRect(-76, -18, 152, 36, 8);
-        gfx.fill();
-        gfx.strokeColor = new Color(255, 255, 255, 200);
-        gfx.lineWidth = 2;
-        gfx.roundRect(-76, -18, 152, 36, 8);
-        gfx.stroke();
-
-        // 按钮文字
-        const textNode = new Node('Text');
-        textNode.layer = Layers.Enum.UI_2D;
-        textNode.addComponent(UITransform);
-        textNode.setParent(node);
-        textNode.setPosition(0, 0, 0);
-        const label = textNode.addComponent(Label);
-        label.string = '▶ 开始 Wave 1';
-        label.fontSize = 18;
-        label.color = new Color(255, 255, 255, 255);
-        label.horizontalAlign = Label.HorizontalAlign.CENTER;
-        label.verticalAlign = Label.VerticalAlign.CENTER;
-        const textTransform = textNode.getComponent(UITransform)!;
-        textTransform.setContentSize(152, 36);
 
         return node;
     }
