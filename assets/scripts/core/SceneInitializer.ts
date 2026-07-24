@@ -135,6 +135,7 @@ export class SceneInitializer extends Component {
     private get EXPLOSION_RADIUS() { return EXPLOSION_RADIUS; }
     private get EXPLOSION_DAMAGE() { return EXPLOSION_DAMAGE; }
     private get LEVEL_START_COUNTDOWN() { return LEVEL_START_COUNTDOWN; }
+    private get WAVE_COUNTDOWN() { return WAVE_COUNTDOWN; }
     private get HEAL_RADIUS() { return HEAL_RADIUS; }
     private get HEAL_INTERVAL() { return HEAL_INTERVAL; }
     private get HEAL_AMOUNT() { return HEAL_AMOUNT; }
