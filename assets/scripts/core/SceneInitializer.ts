@@ -370,7 +370,7 @@ export class SceneInitializer extends Component {
     private targetSlot = -1;  // 当前拖拽目标槽位（TOUCH_MOVE 时确定，TOUCH_END 直接用）
 
     // 运行时状态
-    private gameLayer: Node | null = null;
+    private mapRoot: Node | null = null;
     private gameTransform: UITransform | null = null;
     private enemies: EnemyRuntime[] = [];
     private towers: TowerRuntime[] = [];
@@ -444,6 +444,8 @@ export class SceneInitializer extends Component {
     private mergeHighlights: Node[] = [];
 
     protected start(): void {
+        // 设计分辨率 640x960，策略 3 = ResolutionPolicy.FIXED_WIDTH：
+        // 宽度固定 640，高度随设备比例拉伸，竖屏适配（顶部 HUD / 底部塔卡栏 / 中央战场）
         view.setDesignResolutionSize(640, 960, 3);
         this.setupScene();
     }
@@ -478,32 +480,34 @@ export class SceneInitializer extends Component {
 
         this._visibleSize = visible;
 
-        // === GameLayer（固定逻辑尺寸 + 等比缩放）===
-        this.gameLayer = new Node('GameLayer');
-        this.gameLayer.layer = Layers.Enum.UI_2D;
-        this.gameLayer.setParent(canvas);
-        this.gameTransform = this.gameLayer.addComponent(UITransform);
+        // === MapRoot（固定逻辑尺寸 + 等比缩放）===
+        this.mapRoot = new Node('MapRoot');
+        this.mapRoot.layer = Layers.Enum.UI_2D;
+        this.mapRoot.setParent(canvas);
+        this.gameTransform = this.mapRoot.addComponent(UITransform);
         this.gameTransform.setContentSize(MAP_DESIGN_WIDTH, MAP_DESIGN_HEIGHT);
         this.gameTransform.setAnchorPoint(0.5, 0.5);
-        this.gameLayer.setPosition(battleCenterX, battleCenterY, 0);
-        this.gameLayer.setScale(mapScale, mapScale, 1);
+        this.mapRoot.setPosition(battleCenterX, battleCenterY, 0);
+        this.mapRoot.setScale(mapScale, mapScale, 1);
         // 挂载特效管理器
-        this.gameLayer.addComponent(EffectManager);
+        this.mapRoot.addComponent(EffectManager);
+        // 地图调试框（黄色边框，随 MapRoot 整体缩放；验收：调试框与地图同步缩放）
+        this.drawMapDebugFrame(this.mapRoot);
 
         // === 路径 ===
-        this.drawPath(this.gameLayer);
+        this.drawPath(this.mapRoot);
 
         // === 建造点 ===
         for (let i = 0; i < SLOT_POSITIONS.length; i++) {
             const slot = this.createTowerSlot(SLOT_POSITIONS[i], i);
-            slot.setParent(this.gameLayer);
+            slot.setParent(this.mapRoot);
             this.slotNodes.push(slot);
         }
 
         // === 拖拽幽灵塔 ===
         this.ghostNode = new Node('DragGhost');
         this.ghostNode.layer = Layers.Enum.UI_2D;
-        this.ghostNode.setParent(this.gameLayer);
+        this.ghostNode.setParent(this.mapRoot);
         const ghostTransform = this.ghostNode.addComponent(UITransform);
         ghostTransform.setContentSize(64, 64);
         ghostTransform.setAnchorPoint(0.5, 0.5);
@@ -773,7 +777,7 @@ export class SceneInitializer extends Component {
         this.hud.setStatus('拖拽底部塔按钮到绿色格子');
 
         // === 终点友军建筑（城堡）===
-        this.drawAlly(this.gameLayer);
+        this.drawAlly(this.mapRoot);
 
         // === 关卡开始倒计时 ===
         this.startLevelCountdown();
@@ -1484,10 +1488,10 @@ export class SceneInitializer extends Component {
 
     /** 创建爆炸光波动画（扩散+淡出，约 0.4 秒） */
     private createExplosionWave(pos: Vec3, radius: number = this.EXPLOSION_RADIUS): void {
-        if (!this.gameLayer) return;
+        if (!this.mapRoot) return;
         const wave = new Node('ExplosionWave');
         wave.layer = Layers.Enum.UI_2D;
-        wave.setParent(this.gameLayer);
+        wave.setParent(this.mapRoot);
         wave.setPosition(pos);
         const transform = wave.addComponent(UITransform);
         transform.setContentSize(radius * 2, radius * 2);
@@ -1839,7 +1843,7 @@ export class SceneInitializer extends Component {
 
     /** 生成敌人（从注册表取属性和外观） */
     private spawnEnemy(hp: number, type: string = 'normal'): void {
-        if (!this.gameLayer) return;
+        if (!this.mapRoot) return;
 
         const def = this.getEnemyDef(type);
         if (!def) {
@@ -1852,7 +1856,7 @@ export class SceneInitializer extends Component {
 
         const enemy = new Node(def.name);
         enemy.layer = Layers.Enum.UI_2D;
-        enemy.setParent(this.gameLayer);
+        enemy.setParent(this.mapRoot);
         enemy.setPosition(this.PATH_START);
 
         const transform = enemy.addComponent(UITransform);
@@ -1880,11 +1884,11 @@ export class SceneInitializer extends Component {
 
     /** 发射子弹 */
     private fireBullet(from: Vec3, to: Vec3, target: Node, def: TowerDef, tower: TowerRuntime): void {
-        if (!this.gameLayer) return;
+        if (!this.mapRoot) return;
 
         const bullet = new Node('Bullet');
         bullet.layer = Layers.Enum.UI_2D;
-        bullet.setParent(this.gameLayer);
+        bullet.setParent(this.mapRoot);
         bullet.setPosition(from);
 
         const transform = bullet.addComponent(UITransform);
@@ -1910,14 +1914,14 @@ export class SceneInitializer extends Component {
     }
 
     private placeTower(slotIndex: number, def: TowerDef): void {
-        if (this.slotOccupied[slotIndex] || !this.gameLayer) return;
+        if (this.slotOccupied[slotIndex] || !this.mapRoot) return;
         if (this.gold < def.cost) return;
 
         this.gold -= def.cost;
         this.updateGoldLabel();
 
         const node = this.createTower(SLOT_POSITIONS[slotIndex], def);
-        node.setParent(this.gameLayer);
+        node.setParent(this.mapRoot);
         const tower: TowerRuntime = { node, def, star: 1, affix: null, foughtInWave: false, attackCount: 0 };
         this.setTowerBadge(tower);
 
@@ -2314,6 +2318,17 @@ export class SceneInitializer extends Component {
         gfx.fillColor = new Color(255, 0, 0, 200);
         gfx.circle(this.PATH_END.x, this.PATH_END.y, 20);
         gfx.fill();
+    }
+
+    /** 地图调试框：黄色边框，标示 MapRoot 边界，作为 MapRoot 子节点随地图整体等比缩放 */
+    private drawMapDebugFrame(parent: Node): void {
+        const node = new Node('MapDebugFrame');
+        node.layer = Layers.Enum.UI_2D;
+        node.setParent(parent);
+        const gfx = node.addComponent(Graphics);
+        gfx.lineWidth = 3;
+        gfx.strokeColor = new Color(255, 220, 60, 255);
+        gfx.strokeRect(-MAP_DESIGN_WIDTH / 2, -MAP_DESIGN_HEIGHT / 2, MAP_DESIGN_WIDTH, MAP_DESIGN_HEIGHT);
     }
 
     // ============================================================
