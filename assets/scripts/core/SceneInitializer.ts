@@ -2328,7 +2328,8 @@ export class SceneInitializer extends Component {
         const gfx = node.addComponent(Graphics);
         gfx.lineWidth = 3;
         gfx.strokeColor = new Color(255, 220, 60, 255);
-        gfx.strokeRect(-MAP_DESIGN_WIDTH / 2, -MAP_DESIGN_HEIGHT / 2, MAP_DESIGN_WIDTH, MAP_DESIGN_HEIGHT);
+        gfx.rect(-MAP_DESIGN_WIDTH / 2, -MAP_DESIGN_HEIGHT / 2, MAP_DESIGN_WIDTH, MAP_DESIGN_HEIGHT);
+        gfx.stroke();
     }
 
     // ============================================================
