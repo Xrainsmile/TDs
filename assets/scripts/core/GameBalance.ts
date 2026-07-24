@@ -1,4 +1,4 @@
-import { _decorator, Vec3, Color } from 'cc';
+import { Vec3, Color } from 'cc';
 
 /**
  * GameBalance.ts — 塔防游戏所有静态数值配置
@@ -7,24 +7,9 @@ import { _decorator, Vec3, Color } from 'cc';
  * SceneInitializer 通过 import 引用这些常量和注册表。
  */
 
-// ===== 地图设计尺寸（竖屏：宽 520 × 高 720，与横屏 720×520 同尺寸旋转）=====
-export const MAP_DESIGN_WIDTH = 520;
-export const MAP_DESIGN_HEIGHT = 720;
-
-// ===== 路径：竖屏蛇形（10个waypoint，入口顶部中央→基地底部中央）=====
-// 中央走廊 x∈[-120,120]，转角在 x=±120；塔位布置在走廊两侧与转角内外侧，互不重叠
-export const PATH_WAYPOINTS: Vec3[] = [
-    new Vec3(0, 330, 0),     // 入口（顶部中央）
-    new Vec3(120, 330, 0),
-    new Vec3(120, 150, 0),
-    new Vec3(-120, 150, 0),
-    new Vec3(-120, -30, 0),
-    new Vec3(120, -30, 0),
-    new Vec3(120, -210, 0),
-    new Vec3(-120, -210, 0),
-    new Vec3(-120, -330, 0),
-    new Vec3(0, -330, 0),    // 基地（底部中央）
-];
+// ===== 地图几何已迁移至 MapConfig.ts =====
+// 地图设计尺寸、道路 waypoints、入口/基地、塔位固定坐标与布局校验集中保存在
+// assets/scripts/core/MapConfig.ts，本文件不再定义地图布局相关常量。
 
 // ===== 基础数值 =====
 export const ENEMY_SPEED = 80;
@@ -41,10 +26,6 @@ export const EXPLOSION_DAMAGE = 80;
 
 // ===== 关卡倒计时 =====
 export const LEVEL_START_COUNTDOWN = 5;
-
-// ===== 建造点网格已迁移至 PortraitLayoutSystem =====
-// 固定列/行/塔位清单集中在 PortraitLayoutSystem.ts 的 LayoutConfig 中，
-// 由 PortraitLayoutSystem 根据战场几何计算最终位置（禁止在本文件手写塔位坐标）。
 
 // ===== 治疗兵参数 =====
 export const HEAL_RADIUS = 120;

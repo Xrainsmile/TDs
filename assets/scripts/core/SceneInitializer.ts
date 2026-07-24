@@ -2,22 +2,22 @@ import { _decorator, Component, Node, view, UITransform, Layers, Vec3, Graphics,
 import { HUD } from '../ui/HUD';
 import { EffectManager } from './EffectManager';
 import {
-    PATH_WAYPOINTS, ENEMY_SPEED, BULLET_SPEED,
+    ENEMY_SPEED, BULLET_SPEED,
     INITIAL_GOLD, KILL_REWARD, WAVE_BONUSES,
     EXPLOSION_RADIUS, EXPLOSION_DAMAGE, LEVEL_START_COUNTDOWN,
     HEAL_RADIUS, HEAL_INTERVAL, HEAL_AMOUNT,
     ATTACK_BUTTON_POS, SLOW_BUTTON_POS, POISON_BUTTON_POS,
-    WAVES, MAP_DESIGN_WIDTH, MAP_DESIGN_HEIGHT,
+    WAVES,
     type TowerDef, type EnemyDef, type SpawnEntry, type WaveConfig, type TowerAttackKind,
 } from './GameBalance';
 import {
-    generateSlotPositions, validateLayout,
-    type LayoutGeometry,
-} from './PortraitLayoutSystem';
+    MAP_DESIGN_WIDTH, MAP_DESIGN_HEIGHT, PATH_WAYPOINTS,
+    BUILD_SLOTS, checkMapLayout,
+} from './MapConfig';
 
 const { ccclass } = _decorator;
 
-// 开发模式开关：开启后校验竖屏布局（同列 x 一致 / 镜像对称 / 不越界不重叠路径 / 8px 网格）
+// 开发模式开关：开启后运行布局校验（仅警告，不移动节点）
 const DEBUG = true;
 
 // ============================================================
@@ -479,9 +479,9 @@ export class SceneInitializer extends Component {
         const battleCenterX = (battleLeft + battleRight) / 2;
         const battleCenterY = (battleTop + battleBottom) / 2;
 
-        // 计算地图等比缩放（x/y 统一比例）
+        // 屏幕适配：只缩放并居中 MapRoot；内部元素相对位置固定，绝不按手机尺寸重排。
+        // scale = min(战场宽/地图宽, 战场高/地图高)
         const mapScale = Math.min(
-            1.1,
             battleWidth / MAP_DESIGN_WIDTH,
             battleHeight / MAP_DESIGN_HEIGHT
         );
@@ -505,11 +505,10 @@ export class SceneInitializer extends Component {
         // === 路径 ===
         this.drawPath(this.battleRoot);
 
-        // === 塔位（统一网格：4 列按战场宽度百分比 + 固定行，由 PortraitLayoutSystem 计算）===
-        const layoutGeo: LayoutGeometry = { battleWidth, battleLeft, battleCenterX, mapScale };
-        // 开发模式布局校验：同列 x 一致 / 镜像对称 / 不越界不重叠路径 / 8px 网格
-        if (DEBUG) validateLayout(layoutGeo);
-        this.slotPositions = generateSlotPositions(layoutGeo);
+        // === 塔位（固定设计坐标，来自 MapConfig；与手机尺寸无关，仅供适配缩放）===
+        // 开发模式布局校验：仅警告（超出地图/重叠道路/间距过小/出入口裁切），绝不移动节点
+        if (DEBUG) checkMapLayout();
+        this.slotPositions = BUILD_SLOTS.map(s => s.pos.clone());
         this.slotOccupied = new Array(this.slotPositions.length).fill(false);
 
         // === 建造点 ===
