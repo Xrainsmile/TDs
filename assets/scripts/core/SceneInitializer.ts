@@ -12,13 +12,16 @@ import {
 } from './GameBalance';
 import {
     MAP_DESIGN_WIDTH, MAP_DESIGN_HEIGHT, PATH_WAYPOINTS,
-    BUILD_SLOTS, checkMapLayout,
+    BUILD_CELLS, validateMapLayout,
+    gridToLocal, CELL_SIZE, ROAD_WIDTH_RATIO, SLOT_SIZE_RATIO, GRID_COLS, GRID_ROWS,
 } from './MapConfig';
 
 const { ccclass } = _decorator;
 
-// 开发模式开关：开启后运行布局校验（仅警告，不移动节点）
+// 开发模式开关：开启后运行地图校验（仅输出错误，不移动节点）
 const DEBUG = true;
+// 6×8 调试网格开关
+const SHOW_GRID = true;
 
 // ============================================================
 //  系统扩展约定：塔/敌人配置表
@@ -501,14 +504,16 @@ export class SceneInitializer extends Component {
         this.battleRoot.addComponent(EffectManager);
         // 地图调试框（黄色边框，随 BattleRoot 整体缩放；验收：调试框与地图同步缩放）
         this.drawMapDebugFrame(this.battleRoot);
+        // 6×8 调试网格（可开关，随 BattleRoot 整体缩放）
+        if (SHOW_GRID) this.drawGridDebug(this.battleRoot);
 
         // === 路径 ===
         this.drawPath(this.battleRoot);
 
-        // === 塔位（固定设计坐标，来自 MapConfig；与手机尺寸无关，仅供适配缩放）===
-        // 开发模式布局校验：仅警告（超出地图/重叠道路/间距过小/出入口裁切），绝不移动节点
-        if (DEBUG) checkMapLayout();
-        this.slotPositions = BUILD_SLOTS.map(s => s.pos.clone());
+        // === 塔位（仅 GridCell，由 gridToLocal 计算位置；与手机尺寸无关，仅供适配缩放）===
+        // 开发模式地图校验：仅输出错误（越界/不相邻/重复/压道路），绝不移动节点
+        if (DEBUG) validateMapLayout();
+        this.slotPositions = BUILD_CELLS.map(c => gridToLocal(c));
         this.slotOccupied = new Array(this.slotPositions.length).fill(false);
 
         // === 建造点 ===
@@ -558,8 +563,8 @@ export class SceneInitializer extends Component {
         this.nextWaveButtonLabel = this.nextWaveButton.getChildByName('Text')?.getComponent(Label) ?? null;
         this.nextWaveButton.active = false;  // 初始隐藏
 
-        // === Roguelike buff 卡片（3 张，波次间暂停时显示）===
-        const cardPositions = [new Vec3(-220, 40, 0), new Vec3(0, 40, 0), new Vec3(220, 40, 0)];
+        // === Roguelike buff 卡片（3 张，波次间暂停时显示，竖向堆叠居中）===
+        const cardPositions = [new Vec3(0, 110, 0), new Vec3(0, 0, 0), new Vec3(0, -110, 0)];
         for (let i = 0; i < 3; i++) {
             const card = this.createBuffCard(cardPositions[i], i);
             card.setParent(canvas);
@@ -618,8 +623,11 @@ export class SceneInitializer extends Component {
                 for (let i = 0; i < this.buffCards.length; i++) {
                     const card = this.buffCards[i];
                     if (!card.active) continue;
-                    const cardPos = new Vec3(-220 + i * 220, 40, 0);
-                    if (Math.abs(buttonLocal.x - cardPos.x) <= 100 && Math.abs(buttonLocal.y - cardPos.y) <= 70) {
+                    const cardPos = card.getPosition();
+                    const ct = card.getComponent(UITransform);
+                    const halfW = (ct ? ct.width : 160) / 2;
+                    const halfH = (ct ? ct.height : 96) / 2;
+                    if (Math.abs(buttonLocal.x - cardPos.x) <= halfW && Math.abs(buttonLocal.y - cardPos.y) <= halfH) {
                         this.selectBuff(i);
                         return;
                     }
@@ -961,18 +969,18 @@ export class SceneInitializer extends Component {
         const node = new Node(`BuffCard_${index}`);
         node.layer = Layers.Enum.UI_2D;
         const transform = node.addComponent(UITransform);
-        transform.setContentSize(200, 140);
+        transform.setContentSize(160, 96);
         node.setPosition(pos);
 
         const gfx = node.addComponent(Graphics);
         // 深紫色圆角背景
         gfx.fillColor = new Color(40, 30, 70, 230);
-        gfx.roundRect(-100, -70, 200, 140, 12);
+        gfx.roundRect(-80, -48, 160, 96, 10);
         gfx.fill();
         // 金色边框
         gfx.strokeColor = new Color(255, 200, 80, 255);
         gfx.lineWidth = 3;
-        gfx.roundRect(-100, -70, 200, 140, 12);
+        gfx.roundRect(-80, -48, 160, 96, 10);
         gfx.stroke();
 
         // buff 名称
@@ -980,30 +988,30 @@ export class SceneInitializer extends Component {
         nameNode.layer = Layers.Enum.UI_2D;
         nameNode.addComponent(UITransform);
         nameNode.setParent(node);
-        nameNode.setPosition(0, 20, 0);
+        nameNode.setPosition(0, 14, 0);
         const nameLabel = nameNode.addComponent(Label);
         nameLabel.string = '';
-        nameLabel.fontSize = 18;
+        nameLabel.fontSize = 16;
         nameLabel.color = new Color(255, 220, 100, 255);
         nameLabel.horizontalAlign = Label.HorizontalAlign.CENTER;
         nameLabel.verticalAlign = Label.VerticalAlign.CENTER;
         const nameTransform = nameNode.getComponent(UITransform)!;
-        nameTransform.setContentSize(190, 30);
+        nameTransform.setContentSize(150, 28);
 
         // buff 描述
         const descNode = new Node('BuffDesc');
         descNode.layer = Layers.Enum.UI_2D;
         descNode.addComponent(UITransform);
         descNode.setParent(node);
-        descNode.setPosition(0, -15, 0);
+        descNode.setPosition(0, -16, 0);
         const descLabel = descNode.addComponent(Label);
         descLabel.string = '';
-        descLabel.fontSize = 14;
+        descLabel.fontSize = 12;
         descLabel.color = new Color(200, 200, 220, 255);
         descLabel.horizontalAlign = Label.HorizontalAlign.CENTER;
         descLabel.verticalAlign = Label.VerticalAlign.CENTER;
         const descTransform = descNode.getComponent(UITransform)!;
-        descTransform.setContentSize(190, 60);
+        descTransform.setContentSize(150, 56);
 
         return node;
     }
@@ -2239,7 +2247,9 @@ export class SceneInitializer extends Component {
         node.setPosition(pos);
 
         const transform = node.addComponent(UITransform);
-        transform.setContentSize(56, 56);
+        const slotSize = CELL_SIZE * SLOT_SIZE_RATIO;   // 塔位尺寸 = 单元格的 70%
+        const slotHalf = slotSize / 2;
+        transform.setContentSize(slotSize, slotSize);
 
         const gfx = node.addComponent(Graphics);
         // 判断是否为转角塔位：到最近转角 waypoint 的距离 < range（200）
@@ -2249,7 +2259,7 @@ export class SceneInitializer extends Component {
         gfx.lineWidth = 3;
         gfx.strokeColor = baseColor;
         gfx.fillColor = fillColor;
-        gfx.rect(-28, -28, 56, 56);
+        gfx.rect(-slotHalf, -slotHalf, slotSize, slotSize);
         gfx.fill();
         gfx.stroke();
 
@@ -2314,7 +2324,7 @@ export class SceneInitializer extends Component {
         transform.setAnchorPoint(0.5, 0.5);
 
         const gfx = node.addComponent(Graphics);
-        gfx.lineWidth = 40;
+        gfx.lineWidth = CELL_SIZE * ROAD_WIDTH_RATIO;   // 道路宽度 = 单元格的 65%
         gfx.strokeColor = new Color(200, 180, 140, 180);
         // 绘制折线路径
         gfx.moveTo(PATH_WAYPOINTS[0].x, PATH_WAYPOINTS[0].y);
@@ -2344,6 +2354,48 @@ export class SceneInitializer extends Component {
         gfx.strokeColor = new Color(255, 220, 60, 255);
         gfx.rect(-MAP_DESIGN_WIDTH / 2, -MAP_DESIGN_HEIGHT / 2, MAP_DESIGN_WIDTH, MAP_DESIGN_HEIGHT);
         gfx.stroke();
+    }
+
+    /** 6×8 调试网格：随 BattleRoot 整体缩放，显示行列分隔线与每格 (col,row) 坐标 */
+    private drawGridDebug(parent: Node): void {
+        const node = new Node('GridDebug');
+        node.layer = Layers.Enum.UI_2D;
+        node.setParent(parent);
+        const gfx = node.addComponent(Graphics);
+        gfx.lineWidth = 1;
+        gfx.strokeColor = new Color(120, 200, 255, 110);
+        const halfW = MAP_DESIGN_WIDTH / 2;
+        const halfH = MAP_DESIGN_HEIGHT / 2;
+        for (let c = 0; c <= GRID_COLS; c++) {
+            const x = -halfW + c * CELL_SIZE;
+            gfx.moveTo(x, -halfH);
+            gfx.lineTo(x, halfH);
+        }
+        for (let r = 0; r <= GRID_ROWS; r++) {
+            const y = halfH - r * CELL_SIZE;
+            gfx.moveTo(-halfW, y);
+            gfx.lineTo(halfW, y);
+        }
+        gfx.stroke();
+
+        // 每格中心标注 (col,row)
+        for (let c = 0; c < GRID_COLS; c++) {
+            for (let r = 0; r < GRID_ROWS; r++) {
+                const cell = gridToLocal({ col: c, row: r });
+                const lbl = new Node(`G_${c}_${r}`);
+                lbl.layer = Layers.Enum.UI_2D;
+                const lt = lbl.addComponent(UITransform);
+                lt.setContentSize(50, 20);
+                lbl.setParent(node);
+                lbl.setPosition(cell.x, cell.y);
+                const lab = lbl.addComponent(Label);
+                lab.string = `${c},${r}`;
+                lab.fontSize = 12;
+                lab.color = new Color(180, 220, 255, 150);
+                lab.horizontalAlign = Label.HorizontalAlign.CENTER;
+                lab.verticalAlign = Label.VerticalAlign.CENTER;
+            }
+        }
     }
 
     // ============================================================

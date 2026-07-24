@@ -1,72 +1,88 @@
 import { Vec3 } from 'cc';
 
 // ============================================================
-// MapConfig — 固定地图设计坐标（唯一来源）
+// MapConfig — 6×8 逻辑网格地图（固定设计坐标，唯一来源）
 //
-// 强制约束（撤销 PortraitLayoutSystem 后）：
-//  * Road / BuildSlot / 入口 / 基地 的位置统一保存在本文件，全部为 MapRoot 局部（设计空间）固定坐标。
-//  * 塔位允许根据道路转角单独设计位置（直接写坐标，不做 row/column 抽象、不做自动镜像、不做自动吸附）。
-//  * 屏幕适配只操作 MapRoot（整体缩放 + 居中），绝不根据手机尺寸重排 MapRoot 内部元素。
-//  * checkMapLayout 仅输出警告（具体塔位 ID），绝不调用 setPosition 移动任何节点。
+//  * 所有地图元素（道路/塔位/入口/基地）只保存网格坐标 GridCell{col,row}，
+//    禁止保存或手写 Vec3/x/y。位置统一由 gridToLocal() 计算（MapRoot 局部坐标）。
+//  * 屏幕适配只操作 BattleRoot（整体等比缩放 + 居中），绝不重排内部元素。
+//  * 校验函数仅输出错误，绝不修改地图数据。
 // ============================================================
 
-// ===== 地图设计尺寸（设计空间，固定；适配只缩放 MapRoot）=====
-export const MAP_DESIGN_WIDTH = 520;
-export const MAP_DESIGN_HEIGHT = 720;
+// ===== 网格定义 =====
+export const GRID_COLS = 6;
+export const GRID_ROWS = 8;
+export const CELL_SIZE = 80;
 
-// ===== 道路：竖屏蛇形（10 waypoint，入口顶部中央 → 基地底部中央）=====
-// 中央走廊 x∈[-120,120]，转角在 x=±120；塔位（见 BUILD_SLOTS）布置在走廊两侧，互不重叠。
-// 坐标为 MapRoot 局部（设计空间）固定值，与设备尺寸无关。
-export const PATH_WAYPOINTS: Vec3[] = [
-    new Vec3(0, 330, 0),     // 入口（顶部中央）
-    new Vec3(120, 330, 0),
-    new Vec3(120, 150, 0),
-    new Vec3(-120, 150, 0),
-    new Vec3(-120, -30, 0),
-    new Vec3(120, -30, 0),
-    new Vec3(120, -210, 0),
-    new Vec3(-120, -210, 0),
-    new Vec3(-120, -330, 0),
-    new Vec3(0, -330, 0),    // 基地（底部中央）
-];
+export const MAP_DESIGN_WIDTH = GRID_COLS * CELL_SIZE;   // 480
+export const MAP_DESIGN_HEIGHT = GRID_ROWS * CELL_SIZE;  // 640
 
-export const ENTRANCE: Vec3 = PATH_WAYPOINTS[0];
-export const BASE: Vec3 = PATH_WAYPOINTS[PATH_WAYPOINTS.length - 1];
-
-// ===== 塔位：固定设计坐标（禁止 row/column 抽象 / 自动镜像 / 自动吸附）=====
-// 仅保存固定坐标，可单独按道路转角设计。id 用于布局校验输出具体塔位。
-// 设计：外侧两列 x=±210（严格对齐，共享同一组 y）；内部战略塔位位于蛇形回折区，共 16 个。
-export interface BuildSlotDef {
-    id: string;
-    pos: Vec3;
+export interface GridCell {
+    col: number; // 0~5，左到右
+    row: number; // 0~7，上到下
 }
 
-// 外侧塔位统一使用的 y（左右两列共享同一组 y，严格对齐）
-const OUTER_ROWS = [300, 180, 60, -60, -180, -300];
+// ===== 坐标转换（唯一入口）=====
+/** 网格坐标 → MapRoot 局部坐标（格子中心） */
+export function gridToLocal(cell: GridCell): Vec3 {
+    return new Vec3(
+        (cell.col + 0.5) * CELL_SIZE - MAP_DESIGN_WIDTH / 2,
+        MAP_DESIGN_HEIGHT / 2 - (cell.row + 0.5) * CELL_SIZE,
+        0
+    );
+}
 
-export const BUILD_SLOTS: BuildSlotDef[] = [
-    // 左右外侧塔位：两列严格对齐
-    ...OUTER_ROWS.map((y, i) => ({
-        id: `L${i}`,
-        pos: new Vec3(-210, y, 0),
-    })),
-    ...OUTER_ROWS.map((y, i) => ({
-        id: `R${i}`,
-        pos: new Vec3(210, y, 0),
-    })),
+/** 局部坐标 → 最近网格坐标（手机点击/拖动/未来地图操作使用） */
+export function localToGrid(local: Vec3): GridCell {
+    const col = Math.round((local.x + MAP_DESIGN_WIDTH / 2) / CELL_SIZE - 0.5);
+    const row = Math.round((MAP_DESIGN_HEIGHT / 2 - local.y) / CELL_SIZE - 0.5);
+    return { col, row };
+}
 
-    // 蛇形道路内部的战略塔位：每个回折区域一个
-    { id: 'C0', pos: new Vec3(60, 240, 0) },
-    { id: 'C1', pos: new Vec3(-60, 60, 0) },
-    { id: 'C2', pos: new Vec3(60, -120, 0) },
-    { id: 'C3', pos: new Vec3(-60, -270, 0) },
+// ===== 道路（蛇形，16 格，全部用 GridCell）=====
+export const PATH_CELLS: GridCell[] = [
+    { col: 2, row: 0 },
+    { col: 3, row: 0 },
+    { col: 3, row: 1 },
+    { col: 3, row: 2 },
+    { col: 2, row: 2 },
+    { col: 1, row: 2 },
+    { col: 1, row: 3 },
+    { col: 1, row: 4 },
+    { col: 2, row: 4 },
+    { col: 3, row: 4 },
+    { col: 4, row: 4 },
+    { col: 4, row: 5 },
+    { col: 4, row: 6 },
+    { col: 3, row: 6 },
+    { col: 2, row: 6 },
+    { col: 2, row: 7 },
 ];
 
-// ===== 布局校验阈值（仅提示，不修改）=====
-const ROAD_HALF_STROKE = 20;   // 道路描边半宽（drawPath lineWidth=40）
-const SLOT_RADIUS = 28;        // 塔位视觉半径（createTowerSlot 56×56）
-const MIN_ROAD_CLEARANCE = 12; // 与道路最小间距
-const MIN_SLOT_SPACING = 56;   // 塔位间最小中心距
+// 入口 = 第一个道路格；基地 = 最后一个道路格
+export const ENTRANCE_CELL: GridCell = PATH_CELLS[0];
+export const BASE_CELL: GridCell = PATH_CELLS[PATH_CELLS.length - 1];
+
+// 道路 waypoints（必须由 PATH_CELLS 派生，禁止手写 Vec3；供移动/绘制使用）
+export const PATH_WAYPOINTS: Vec3[] = PATH_CELLS.map(gridToLocal);
+export const ENTRANCE: Vec3 = gridToLocal(ENTRANCE_CELL);
+export const BASE: Vec3 = gridToLocal(BASE_CELL);
+
+// ===== 塔位（仅 GridCell，禁止 Vec3/x/y）=====
+// 左右两外侧列（col0 / col5）各 8 行，共 16 个，均不与道路格重叠。
+export const BUILD_CELLS: GridCell[] = [
+    ...Array.from({ length: GRID_ROWS }, (_, r) => ({ col: 0, row: r } as GridCell)),
+    ...Array.from({ length: GRID_ROWS }, (_, r) => ({ col: GRID_COLS - 1, row: r } as GridCell)),
+];
+
+// ===== 渲染参数 =====
+export const ROAD_WIDTH_RATIO = 0.65;   // 道路宽度 = CELL_SIZE 的 65%
+export const SLOT_SIZE_RATIO = 0.70;    // 塔位尺寸 = CELL_SIZE 的 70%
+
+// ===== 布局校验（仅输出错误，不修改地图数据）=====
+const ROAD_HALF_STROKE = (CELL_SIZE * ROAD_WIDTH_RATIO) / 2;
+const SLOT_RADIUS = (CELL_SIZE * SLOT_SIZE_RATIO) / 2;
+const MIN_ROAD_CLEARANCE = 12;
 
 /** 点到线段距离 */
 function distToSegment(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
@@ -83,50 +99,74 @@ function distToSegment(px: number, py: number, ax: number, ay: number, bx: numbe
 }
 
 /**
- * 布局校验：只输出警告（含具体塔位 ID），绝不移动任何节点。
- * 检查项：塔位超出地图 / 塔位与道路重叠 / 塔位间距过小 / 入口或基地被裁切。
+ * 地图校验：仅 console.error 输出问题（含具体格坐标），绝不调用 setPosition 或修改任何数据。
+ * 检查项：col/row 边界 / 道路相邻曼哈顿距离=1 / 塔位不与道路重复 / 塔位不重复 /
+ *         PATH_WAYPOINTS 必须由 PATH_CELLS 派生（禁止手写 Vec3）/ 塔位不压道路 / 出入口不越界。
  */
-export function checkMapLayout(): void {
-    const halfW = MAP_DESIGN_WIDTH / 2;
-    const halfH = MAP_DESIGN_HEIGHT / 2;
-    const roadOverlapThreshold = ROAD_HALF_STROKE + SLOT_RADIUS + MIN_ROAD_CLEARANCE;
+export function validateMapLayout(): void {
+    const errors: string[] = [];
 
-    for (const slot of BUILD_SLOTS) {
-        const { x, y } = slot.pos;
-
-        // 1. 塔位超出地图
-        if (Math.abs(x) > halfW || Math.abs(y) > halfH) {
-            console.warn(`[MapLayout] 塔位超出地图: id=${slot.id} pos=(${x},${y}) 地图半尺寸=(${halfW},${halfH})`);
-            continue; // 越界时距离类检查无意义
-        }
-
-        // 2. 塔位与道路重叠
-        let minRoadDist = Infinity;
-        for (let i = 0; i < PATH_WAYPOINTS.length - 1; i++) {
-            const a = PATH_WAYPOINTS[i];
-            const b = PATH_WAYPOINTS[i + 1];
-            const d = distToSegment(x, y, a.x, a.y, b.x, b.y);
-            if (d < minRoadDist) minRoadDist = d;
-        }
-        if (minRoadDist < roadOverlapThreshold) {
-            console.warn(`[MapLayout] 塔位与道路重叠: id=${slot.id} pos=(${x},${y}) 距道路=${minRoadDist.toFixed(1)} 阈值=${roadOverlapThreshold}`);
-        }
-
-        // 3. 塔位间距过小
-        for (const other of BUILD_SLOTS) {
-            if (other === slot) continue;
-            const d = Math.hypot(x - other.pos.x, y - other.pos.y);
-            if (d < MIN_SLOT_SPACING) {
-                console.warn(`[MapLayout] 塔位间距过小: id=${slot.id}(${x},${y}) ↔ id=${other.id}(${other.pos.x},${other.pos.y}) 距离=${d.toFixed(1)} 阈值=${MIN_SLOT_SPACING}`);
-                break;
-            }
+    // 1. 道路格边界
+    for (const c of PATH_CELLS) {
+        if (c.col < 0 || c.col >= GRID_COLS || c.row < 0 || c.row >= GRID_ROWS) {
+            errors.push(`道路格越界: (${c.col},${c.row})`);
         }
     }
 
-    // 4. 入口或基地被裁切
-    for (const [name, p] of [['入口', ENTRANCE], ['基地', BASE]] as const) {
-        if (Math.abs(p.x) > halfW || Math.abs(p.y) > halfH) {
-            console.warn(`[MapLayout] ${name}被裁切: pos=(${p.x},${p.y}) 地图半尺寸=(${halfW},${halfH})`);
+    // 2. 道路相邻格曼哈顿距离必须为 1
+    for (let i = 0; i < PATH_CELLS.length - 1; i++) {
+        const a = PATH_CELLS[i];
+        const b = PATH_CELLS[i + 1];
+        const m = Math.abs(a.col - b.col) + Math.abs(a.row - b.row);
+        if (m !== 1) {
+            errors.push(`道路相邻格不相邻: (${a.col},${a.row})→(${b.col},${b.row}) 曼哈顿=${m}`);
         }
+    }
+
+    // 3. 塔位边界 / 不与道路重复 / 不重复
+    const pathSet = new Set(PATH_CELLS.map(c => `${c.col},${c.row}`));
+    const seen = new Set<string>();
+    for (const c of BUILD_CELLS) {
+        if (c.col < 0 || c.col >= GRID_COLS || c.row < 0 || c.row >= GRID_ROWS) {
+            errors.push(`塔位越界: (${c.col},${c.row})`);
+            continue;
+        }
+        const key = `${c.col},${c.row}`;
+        if (pathSet.has(key)) errors.push(`塔位与道路格重复: (${c.col},${c.row})`);
+        if (seen.has(key)) errors.push(`塔位重复: (${c.col},${c.row})`);
+        seen.add(key);
+    }
+
+    // 4. 地图元素禁止手写 Vec3：PATH_WAYPOINTS 必须由 PATH_CELLS 派生（长度一致视为派生）
+    if (PATH_WAYPOINTS.length !== PATH_CELLS.length) {
+        errors.push('PATH_WAYPOINTS 与 PATH_CELLS 长度不一致（疑似手写 Vec3，应改用 gridToLocal 派生）');
+    }
+
+    // 5. 塔位不压道路（距离检查）
+    const overlapThreshold = ROAD_HALF_STROKE + SLOT_RADIUS + MIN_ROAD_CLEARANCE;
+    for (const c of BUILD_CELLS) {
+        const p = gridToLocal(c);
+        let minRoad = Infinity;
+        for (let i = 0; i < PATH_WAYPOINTS.length - 1; i++) {
+            const a = PATH_WAYPOINTS[i];
+            const b = PATH_WAYPOINTS[i + 1];
+            const d = distToSegment(p.x, p.y, a.x, a.y, b.x, b.y);
+            if (d < minRoad) minRoad = d;
+        }
+        if (minRoad < overlapThreshold) {
+            errors.push(`塔位距道路过近: (${c.col},${c.row}) 距道路=${minRoad.toFixed(1)} 阈值=${overlapThreshold}`);
+        }
+    }
+
+    // 6. 入口/基地不越界
+    for (const [name, cell] of [['入口', ENTRANCE_CELL], ['基地', BASE_CELL]] as const) {
+        if (cell.col < 0 || cell.col >= GRID_COLS || cell.row < 0 || cell.row >= GRID_ROWS) {
+            errors.push(`${name}格越界: (${cell.col},${cell.row})`);
+        }
+    }
+
+    if (errors.length > 0) {
+        console.error('[MapLayout] 校验失败（仅提示，未修改地图数据）：');
+        for (const e of errors) console.error('  - ' + e);
     }
 }
