@@ -65,7 +65,7 @@ interface TowerRuntime {
     def: TowerDef;
     star: number;            // 1 = 一星, 2 = 二星
     affix: AffixId | null;   // 一星为 null，二星随机获得一个
-    foughtInWave: boolean;   // 是否至少参与过一波战斗（合并前提）
+
     attackCount: number;     // 攻击计数（连发词缀用）
 }
 
@@ -331,13 +331,8 @@ export class SceneInitializer extends Component {
     // 长按移动（取消所有点击交互，仅长按拖动）
     private pendingTower = -1;       // 长按待定的塔索引，长按超时即开始拖动
     private static readonly LONG_PRESS_TIME = 0.4;
-    private static readonly MAX_STAR = 3;
+    private static readonly MAX_STAR = 2;
 
-    // 合并系统状态
-    private mergeMode = false;
-    private mergeTargetIdx = -1;
-    private mergeCandidates: number[] = [];
-    private mergeHighlights: Node[] = [];
 
     protected start(): void {
         // 设计分辨率 640x960，策略 3 = ResolutionPolicy.FIXED_WIDTH：
@@ -521,15 +516,6 @@ export class SceneInitializer extends Component {
                 }
             }
             if (hitTower < 0) {
-                // 点空白处：合并模式下取消
-                if (this.mergeMode) this.cancelMerge();
-                return;
-            }
-            // 合并模式：点击高亮候选塔直接合并（目标已确定）
-            if (this.mergeMode) {
-                if (this.mergeCandidates.includes(hitTower) && hitTower !== this.mergeTargetIdx) {
-                    this.doMerge(this.mergeTargetIdx, hitTower);
-                }
                 return;
             }
             // 普通：长按超时直接开始拖动（取消所有点击交互）
@@ -1036,7 +1022,6 @@ export class SceneInitializer extends Component {
         this.isWavePaused = false;
         this.isUserPaused = false;
         this.buffSelected = false;
-        this.cancelMerge();
         this.hideTowerMenu();
         this.hideTowerMenu();
         this.hideBuffCards();
@@ -1527,7 +1512,6 @@ export class SceneInitializer extends Component {
             this.towerTimers[i] += dt;
             if (this.towerTimers[i] >= p.interval) {
                 this.towerTimers[i] = 0;
-                tower.foughtInWave = true;
                 tower.attackCount += 1;
 
                 // 只对主目标发射 1 颗子弹；分裂在主弹命中后触发（见子弹更新段）
@@ -1768,7 +1752,7 @@ export class SceneInitializer extends Component {
 
         const node = this.createTower(this.slotPositions[slotIndex], def);
         node.setParent(this.battleRoot);
-        const tower: TowerRuntime = { node, def, star: 1, affix: null, foughtInWave: false, attackCount: 0 };
+        const tower: TowerRuntime = { node, def, star: 1, affix: null, attackCount: 0 };
         this.setTowerBadge(tower);
 
         this.towers.push(tower);
@@ -1830,7 +1814,6 @@ export class SceneInitializer extends Component {
         this.isWavePaused = false;
         this.isUserPaused = false;
         this.buffSelected = false;
-        this.cancelMerge();
         this.hideTowerMenu();
         this.hideTowerMenu();
         this.hideBuffCards();
@@ -1939,7 +1922,6 @@ export class SceneInitializer extends Component {
         this.isUserPaused = false;
         this.buffSelected = false;
         this.towerStats.reset();
-        this.cancelMerge();
         this.hideTowerMenu();
         this.hideTowerMenu();
         this.hideBuffCards();
@@ -2246,7 +2228,7 @@ export class SceneInitializer extends Component {
         let rapid = false;            // 连发
 
         // 二星固定强化核心属性
-        if (star >= 2) {
+        if (star === 2) {
             damage *= 1.3;
             range *= 1.15;
             interval /= 1.1;
@@ -2325,156 +2307,11 @@ export class SceneInitializer extends Component {
         if (!badge) return;
         const bl = badge.getComponent(Label);
         if (!bl) return;
-        const stars = tower.star >= 2 ? '★★' : '★';
+        const stars = tower.star === 2 ? '★★' : '★';
         const affixName = tower.affix
             ? TOWER_AFFIXES[tower.def.id]?.find(a => a.id === tower.affix)?.name ?? ''
             : '';
         bl.string = affixName ? `${stars}${affixName}` : stars;
     }
 
-    /** 高亮可合并塔（目标 + 候选） */
-    private highlightMergeCandidates(): void {
-        this.clearMergeHighlights();
-        const idxs = [this.mergeTargetIdx, ...this.mergeCandidates];
-        for (const idx of idxs) {
-            const tower = this.towers[idx];
-            if (!tower || !tower.node.isValid) continue;
-            const ring = new Node('MergeRing');
-            ring.layer = Layers.Enum.UI_2D;
-            ring.setParent(tower.node);
-            ring.setPosition(0, 0, 0);
-            const gfx = ring.addComponent(Graphics);
-            gfx.strokeColor = new Color(255, 220, 60, 255);
-            gfx.lineWidth = 3;
-            gfx.circle(0, 0, 30);
-            gfx.stroke();
-            this.mergeHighlights.push(ring);
-        }
-    }
-
-    private clearMergeHighlights(): void {
-        for (const r of this.mergeHighlights) {
-            if (r && r.isValid) r.destroy();
-        }
-        this.mergeHighlights = [];
-    }
-
-    /** 进入合并模式：高亮可合并的同类型一星塔 */
-    private startMerge(targetIdx: number): void {
-        if (targetIdx < 0 || targetIdx >= this.towers.length) return;
-        const target = this.towers[targetIdx];
-        if (target.star >= 2) {
-            if (this.statusLabel) this.statusLabel.string = '已是二星，无法继续合并';
-            return;
-        }
-        if (!target.foughtInWave) {
-            if (this.statusLabel) this.statusLabel.string = '该塔尚未参与过战斗，无法合并';
-            return;
-        }
-        const candidates: number[] = [];
-        for (let i = 0; i < this.towers.length; i++) {
-            if (i === targetIdx) continue;
-            const t = this.towers[i];
-            if (t.def.id === target.def.id && t.star === 1 && t.foughtInWave) {
-                candidates.push(i);
-            }
-        }
-        if (candidates.length === 0) {
-            if (this.statusLabel) this.statusLabel.string = '无可合并的塔（需同类型·一星·打过至少一波）';
-            return;
-        }
-        this.mergeMode = true;
-        this.mergeTargetIdx = targetIdx;
-        this.mergeCandidates = candidates;
-        this.highlightMergeCandidates();
-        if (this.statusLabel) this.statusLabel.string = '选择材料塔（点击高亮塔合并，点空白取消）';
-    }
-
-    /** 执行合并：目标升二星 + 随机词缀，材料塔销毁并释放地基 */
-    private doMerge(targetIdx: number, materialIdx: number): void {
-        const target = this.towers[targetIdx];
-        const material = this.towers[materialIdx];
-        if (!target || !material) return;
-        if (target.def.id !== material.def.id || material.star !== 1 || !material.foughtInWave) return;
-
-        // 目标升二星 + 随机专属词缀
-        target.star = 2;
-        const affixes = TOWER_AFFIXES[target.def.id] ?? [];
-        target.affix = affixes.length > 0 ? affixes[Math.floor(Math.random() * affixes.length)].id : null;
-        target.foughtInWave = true;
-        this.setTowerBadge(target);
-
-        // 释放材料塔的地基
-        const matPos = material.node.position.clone();
-        for (let s = 0; s < this.slotPositions.length; s++) {
-            if (Vec3.distance(matPos, this.slotPositions[s]) < 5) {
-                this.slotOccupied[s] = false;
-                this.slotNodes[s].active = true;
-                break;
-            }
-        }
-
-        // 删除材料塔并维护塔数组 / 计时器
-        material.node.removeFromParent();
-        material.node.destroy();
-        const matArrIdx = this.towers.indexOf(material);
-        if (matArrIdx >= 0) {
-            this.towers.splice(matArrIdx, 1);
-            this.towerTimers.splice(matArrIdx, 1);
-        }
-
-        // 合并特效 + 词缀展示
-        EffectManager.instance?.playExplosion(matPos, 50);
-        this.showAffixPopup(target);
-        this.clearMergeHighlights();
-        this.mergeMode = false;
-        this.mergeTargetIdx = -1;
-        this.mergeCandidates = [];
-    }
-
-    /** 展示获得词缀的弹窗（2.5s 后自动消失） */
-    private showAffixPopup(tower: TowerRuntime): void {
-        if (!this.node) return;
-        const affixName = tower.affix
-            ? TOWER_AFFIXES[tower.def.id]?.find(a => a.id === tower.affix)?.name ?? ''
-            : '';
-        const popup = new Node('MergePopup');
-        popup.layer = Layers.Enum.UI_2D;
-        popup.setParent(this.node);
-        const worldPos = new Vec3();
-        tower.node.getWorldPosition(worldPos);
-        const canvasTransform = this.node.getComponent(UITransform)!;
-        const canvasPos = canvasTransform.convertToNodeSpaceAR(worldPos);
-        popup.setPosition(canvasPos.x, canvasPos.y + 60, 0);
-        const t = popup.addComponent(UITransform);
-        t.setContentSize(170, 54);
-        const gfx = popup.addComponent(Graphics);
-        gfx.fillColor = new Color(40, 30, 60, 240);
-        gfx.roundRect(-85, -27, 170, 54, 8);
-        gfx.fill();
-        gfx.strokeColor = new Color(255, 220, 60, 255);
-        gfx.lineWidth = 2;
-        gfx.roundRect(-85, -27, 170, 54, 8);
-        gfx.stroke();
-        const label = new Node('Txt');
-        label.setParent(popup);
-        const lt = label.addComponent(UITransform);
-        lt.setContentSize(170, 54);
-        const l = label.addComponent(Label);
-        l.string = `★★ ${tower.def.name}\n获得词缀：${affixName}`;
-        l.fontSize = 14;
-        l.color = new Color(255, 255, 255, 255);
-        l.horizontalAlign = Label.HorizontalAlign.CENTER;
-        l.verticalAlign = Label.VerticalAlign.CENTER;
-        this.scheduleOnce(() => { if (popup && popup.isValid) popup.destroy(); }, 2.5);
-    }
-
-    /** 取消合并模式 */
-    private cancelMerge(): void {
-        this.clearMergeHighlights();
-        this.mergeMode = false;
-        this.mergeTargetIdx = -1;
-        this.mergeCandidates = [];
-        if (this.statusLabel) this.statusLabel.string = '已取消合并';
-    }
 }
