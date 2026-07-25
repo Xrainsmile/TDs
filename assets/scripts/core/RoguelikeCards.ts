@@ -35,6 +35,10 @@ export class TowerStats {
     get critChance() { return 0.3 + this.bleedLevel * 0.1; }       // 暴击率 30%+10%/级
     get critMultiplier() { return 2.0 + this.bleedLevel * 0.5; }    // 暴击倍率 2x+0.5/级
 
+    // 减速参数（随等级提升，所有子弹附带减速）
+    get slowMultiplier() { return Math.max(0.3, 0.85 - this.slowLevel * 0.05); }
+    get slowDuration() { return 1.5 + this.slowLevel * 0.5; }
+
     reset(): void {
         this.damageBonus = 0;
         this.speedBonus = 0;
@@ -83,6 +87,12 @@ export const ROGUELIKE_BUFFS: BuffOption[] = [
         name: '出血',
         desc: '',  // 动态生成，见 getBuffDisplay
         apply: s => { s.bleedLevel += 1; },
+    },
+    {
+        id: 'slow',
+        name: '减速强化',
+        desc: '',  // 动态生成，见 getBuffDisplay
+        apply: s => { s.slowLevel += 1; },
     },
 ];
 
@@ -145,6 +155,18 @@ export function getBuffDisplay(buff: BuffOption, stats: TowerStats): { name: str
         return {
             name: `出血强化 Lv${after.bleedLevel}`,
             desc: `${Math.round(stats.bleedChance * 100)}%/${Math.round(stats.critChance * 100)}%/${stats.critMultiplier}x → ${Math.round(after.bleedChance * 100)}%/${Math.round(after.critChance * 100)}%/${after.critMultiplier}x`,
+        };
+    }
+    if (buff.id === 'slow') {
+        if (stats.slowLevel === 0) {
+            return {
+                name: '减速强化',
+                desc: `解锁：所有子弹附带减速 ${Math.round(after.slowMultiplier * 100)}% / ${after.slowDuration.toFixed(1)}s`,
+            };
+        }
+        return {
+            name: `减速强化 Lv${after.slowLevel}`,
+            desc: `${Math.round(stats.slowMultiplier * 100)}% / ${stats.slowDuration.toFixed(1)}s → ${Math.round(after.slowMultiplier * 100)}% / ${after.slowDuration.toFixed(1)}s`,
         };
     }
     return { name: buff.name, desc: buff.desc };

@@ -6,7 +6,7 @@ import { TowerStats, BuffOption, ROGUELIKE_BUFFS, getBuffDisplay } from './Rogue
 import {
     ENEMY_SPEED, BULLET_SPEED,
     INITIAL_GOLD, KILL_REWARD, WAVE_BONUSES,
-    LEVEL_START_COUNTDOWN, WAVE_COUNTDOWN,
+    LEVEL_START_COUNTDOWN,
     HEAL_RADIUS, HEAL_INTERVAL, HEAL_AMOUNT,
     ATTACK_BUTTON_POS, SLOW_BUTTON_POS, POISON_BUTTON_POS,
     WAVES,
@@ -14,7 +14,7 @@ import {
 } from './GameBalance';
 import {
     MAP_DESIGN_WIDTH, MAP_DESIGN_HEIGHT, PATH_WAYPOINTS,
-    BUILD_CELLS, validateMapLayout,
+    BUILD_CELLS,
     gridToLocal, CELL_SIZE, ROAD_WIDTH_RATIO, SLOT_SIZE_RATIO, GRID_COLS, GRID_ROWS,
 } from './MapConfig';
 
@@ -96,6 +96,8 @@ const TOWER_AFFIXES: Record<string, { id: AffixId; name: string; desc: string }[
 interface EnemyRuntime {
     node: Node; hp: number; maxHp: number;
     slowTimer: number; slowMultiplier: number;
+    vulnerable: number;     // 易伤倍率（默认 1，易伤词缀目标承受额外伤害）
+    vulnerableTimer: number; // 易伤剩余时间（>0 时生效，归零恢复 1）
     type: EnemyType;        // 对应 EnemyDef.enemyType
     healTimer: number;      // 治疗者光环计时
     // 扩展字段：新敌人的特殊计时器都挂这里，避免改结构
@@ -105,7 +107,6 @@ interface EnemyRuntime {
     // 通用 buff 字典：存 { timer: 剩余秒数, dps: 每秒掉血量 }
     // 新增 buff 只需往这里写一个 key，update 中自动处理掉血
     buffs: Record<string, { timer: number; dps: number }>;
-    vulnerable: number;   // 易伤倍率（默认 1，易伤词缀目标承受额外伤害）
 }
 
 
@@ -133,7 +134,7 @@ export class SceneInitializer extends Component {
     private get KILL_REWARD() { return KILL_REWARD; }
     private get WAVE_BONUSES() { return WAVE_BONUSES; }
     private get LEVEL_START_COUNTDOWN() { return LEVEL_START_COUNTDOWN; }
-    private get WAVE_COUNTDOWN() { return WAVE_COUNTDOWN; }
+
     private get HEAL_RADIUS() { return HEAL_RADIUS; }
     private get HEAL_INTERVAL() { return HEAL_INTERVAL; }
     private get HEAL_AMOUNT() { return HEAL_AMOUNT; }
@@ -276,7 +277,6 @@ export class SceneInitializer extends Component {
     private waveActive = false;
     private waveElapsed = 0;      // 当前波次已流逝时间（秒）
     private spawnCursor = 0;       // 下一个要生成的 entry 索引
-    private waveDelay = 0;  // 波次间延迟（保留兼容，未使用）
     // 暂停状态：
     // - isWavePaused: 波次结束后的"自动暂停"→ 可以建塔/移塔，点"开始下一波"继续
     // - isUserPaused: 用户在波次进行中主动暂停 → 完全冻结，不能拖拽
@@ -324,9 +324,6 @@ export class SceneInitializer extends Component {
     private dragMode: 'place' | 'move' = 'place';
     // 移动塔时记录原槽位
     private moveFromSlot = -1;
-    // 点击塔弹出的操作菜单（移动/出售）
-    private towerMenu: Node | null = null;
-    private towerMenuIndex = -1;  // 菜单对应的塔索引
 
     // 长按移动（取消所有点击交互，仅长按拖动）
     private pendingTower = -1;       // 长按待定的塔索引，长按超时即开始拖动
@@ -395,8 +392,6 @@ export class SceneInitializer extends Component {
         this.drawPath(this.battleRoot);
 
         // === 塔位（仅 GridCell，由 gridToLocal 计算位置；与手机尺寸无关，仅供适配缩放）===
-        // 开发模式地图校验：仅输出错误（越界/不相邻/重复/压道路），绝不移动节点
-        if (DEBUG) validateMapLayout();
         this.slotPositions = BUILD_CELLS.map(c => gridToLocal(c));
         this.slotOccupied = new Array(this.slotPositions.length).fill(false);
 
@@ -544,8 +539,7 @@ export class SceneInitializer extends Component {
             this.ghostNode!.active = false;
 
             // 直接用 targetSlot（在 TOUCH_MOVE 中已确定）
-            // 进攻中禁止移动已放置的塔（只允许新建放置）
-            if (this.canPlace && this.targetSlot >= 0 && !(this.dragMode === 'move' && this.waveActive)) {
+            if (this.canPlace && this.targetSlot >= 0) {
                 const slot = this.targetSlot;
 
                 if (this.dragMode === 'place') {
@@ -638,7 +632,6 @@ export class SceneInitializer extends Component {
             this.targetSlot = -1;
             this.moveFromSlot = -1;
             this.dragMode = 'place';
-            this.hideTowerMenu();
         });
 
         // === HUD（统一顶部状态栏：Gold / Base / Status / Wave）===
@@ -647,7 +640,6 @@ export class SceneInitializer extends Component {
         hudNode.setParent(canvas);
         this.hud = hudNode.addComponent(HUD);
         this.hud.init(this._visibleSize.width, this._visibleSize.height);
-        // 兼容旧字段引用：现有 goldLabel/waveLabel/livesLabel/statusLabel 调用无需改动
         this.goldLabel = this.hud.goldLabel;
         this.waveLabel = this.hud.waveLabel;
         this.livesLabel = this.hud.livesLabel;
@@ -686,15 +678,6 @@ export class SceneInitializer extends Component {
         }
         console.log(`关卡开始倒计时 ${this.LEVEL_START_COUNTDOWN} 秒`);
         this.startCountdown(this.LEVEL_START_COUNTDOWN, () => this.startNextWave());
-    }
-
-    /** 波次之间倒计时：选完 buff 后开始（选 buff 期间不显示圆环），结束自动开下一波（也可点圆环立即开始） */
-    private startWaveCountdown(): void {
-        if (this.statusLabel) {
-            this.statusLabel.string = '下一波即将开始…';
-        }
-        console.log(`波次间倒计时 ${this.WAVE_COUNTDOWN} 秒`);
-        this.startCountdown(this.WAVE_COUNTDOWN, () => this.startNextWaveFromButton());
     }
 
     /** 创建倒计时圆环（带宽度，中心展示 "GO"） */
@@ -785,17 +768,6 @@ export class SceneInitializer extends Component {
         cb?.();
     }
 
-    /** 开始下一波按钮：波次间自动暂停时点击启动下一波 */
-    private startNextWaveFromButton(): void {
-        if (!this.isWavePaused) return;
-        this.stopCountdown();  // 手动点击即跳过倒计时
-        this.isWavePaused = false;
-        this.buffSelected = false;
-        this.hideBuffCards();
-        this.startNextWave();
-        console.log('用户点击开始下一波 → 启动 Wave', this.currentWave + 1);
-    }
-
     /** 波次间暂停时：随机选 3 种 buff 并显示卡片 */
     /**
      * 根据当前局面构建动态加权卡池
@@ -827,6 +799,10 @@ export class SceneInitializer extends Component {
             if ((buff.id === 'splash' || buff.id === 'bleed') && !hasPoisonTower) {
                 continue;  // 跳过，不加入卡池
             }
+            // 规则1b：没有减速塔时，减速强化不出现（减速塔专属）
+            if (buff.id === 'slow' && slowTowerCount === 0) {
+                continue;
+            }
 
             // 规则2：下一波有治疗兵时，提高治疗抑制出现率
             if (buff.id === 'healSuppress' && nextWaveHasHealer) {
@@ -839,7 +815,7 @@ export class SceneInitializer extends Component {
                 weight = 3;
             }
 
-            // 通用：已解锁的 buff 降权（避免重复刷同一个）
+            // 流派深化增权：已解锁的 buff 提高权重，鼓励同一流派继续强化
             if (buff.id === 'splash' && stats.splashLevel > 0) weight = Math.max(weight, 2);
             if (buff.id === 'bleed' && stats.bleedLevel > 0) weight = Math.max(weight, 2);
 
@@ -914,8 +890,9 @@ export class SceneInitializer extends Component {
         if (this.statusLabel) {
             this.statusLabel.string = `已选: ${display.name}  塔: ${this.towers.length}`;
         }
-        // 选完 buff 后启动 30s 倒计时圆环（点圆环可跳过），选 buff 期间不显示
-        this.startWaveCountdown();
+        // 选完 buff 直接开始下一波（不再有波次间倒计时）
+        this.isWavePaused = false;
+        this.startNextWave();
         console.log(`Roguelike 选择: ${display.name}`);
     }
 
@@ -1022,8 +999,6 @@ export class SceneInitializer extends Component {
         this.isWavePaused = false;
         this.isUserPaused = false;
         this.buffSelected = false;
-        this.hideTowerMenu();
-        this.hideTowerMenu();
         this.hideBuffCards();
         this.updatePauseButton();
 
@@ -1233,15 +1208,6 @@ export class SceneInitializer extends Component {
         return this.node.getComponent(UITransform)!.convertToNodeSpaceAR(v3(uiPos.x, uiPos.y, 0));
     }
 
-    /** 隐藏塔操作菜单（保留空实现以兼容 gameOver 清理，菜单交互已移除） */
-    private hideTowerMenu(): void {
-        if (this.towerMenu) {
-            this.towerMenu.destroy();
-            this.towerMenu = null;
-        }
-        this.towerMenuIndex = -1;
-    }
-
     /** 开始移动塔（设置拖拽状态，保留原塔降低透明度） */
     private startMoveTower(towerIndex: number): void {
         if (towerIndex < 0 || towerIndex >= this.towers.length) return;
@@ -1282,12 +1248,11 @@ export class SceneInitializer extends Component {
         }
     }
 
-    /** 长按计时器触发：直接开始移动塔（战斗中禁用则忽略） */
+    /** 长按计时器触发：直接开始移动塔 */
     private onLongPressMove(): void {
         const idx = this.pendingTower;
         this.pendingTower = -1;
         if (idx < 0) return;
-        if (this.waveActive) return;  // 战斗中禁止移动
         this.startMoveTower(idx);
     }
 
@@ -1424,7 +1389,7 @@ export class SceneInitializer extends Component {
                 }
             }
         }
-        // 注意：原 waveDelay 自动倒计时逻辑已删除——下一波由用户点暂停按钮触发
+        // 注意：波次间不再倒计时——玩家选完 buff 即直接开下一波
 
         // === 敌人移动 ===
         for (let i = this.enemies.length - 1; i >= 0; i--) {
@@ -1452,29 +1417,26 @@ export class SceneInitializer extends Component {
                     this.gameOver();
                 }
             } else {
-                // 沿 waypoints 逐段移动
+                // 沿 waypoints 逐段移动（pathIdx 跟踪目标；按本帧步长判定到达，避免掉帧时卡在折点）
                 const eDef = this.getEnemyDef(e.type);
                 const speedMult = eDef?.speedMultiplier ?? 1;
                 const speed = this.ENEMY_SPEED * speedMult * e.slowMultiplier;
-                // 用 pathIdx 跟踪当前目标 waypoint
-                if (e.pathIdx >= PATH_WAYPOINTS.length) {
-                    // 已到达终点 waypoint，目标就是终点
-                    e.pathIdx = PATH_WAYPOINTS.length - 1;
-                }
+                if (e.pathIdx >= PATH_WAYPOINTS.length) e.pathIdx = PATH_WAYPOINTS.length - 1;
+
                 const target = PATH_WAYPOINTS[e.pathIdx];
-                // 到达当前 waypoint → 前往下一个
-                if (Vec3.distance(pos, target) <= 5 && e.pathIdx < PATH_WAYPOINTS.length - 1) {
-                    e.pathIdx++;
-                }
-                const finalTarget = PATH_WAYPOINTS[Math.min(e.pathIdx, PATH_WAYPOINTS.length - 1)];
-                // 朝目标移动
-                const dir = new Vec3(finalTarget.x - pos.x, finalTarget.y - pos.y, 0);
-                const dist = dir.length();
-                if (dist > 0) {
-                    const moveDist = Math.min(speed * dt, dist);
+                const toX = target.x - pos.x;
+                const toY = target.y - pos.y;
+                const distToTarget = Math.hypot(toX, toY);
+                const step = speed * dt;
+                // 本帧步长 >= 到当前 waypoint 的距离（或已极近）→ 吸附到该点并前往下一个。
+                // 用 step 作为到达阈值：掉帧时单帧移动很大也不会在折点反复横跳卡死。
+                if (distToTarget <= step || distToTarget <= 1) {
+                    e.node.setPosition(target.x, target.y, 0);
+                    if (e.pathIdx < PATH_WAYPOINTS.length - 1) e.pathIdx++;
+                } else {
                     e.node.setPosition(
-                        pos.x + (dir.x / dist) * moveDist,
-                        pos.y + (dir.y / dist) * moveDist,
+                        pos.x + (toX / distToTarget) * step,
+                        pos.y + (toY / distToTarget) * step,
                         0
                     );
                 }
@@ -1482,7 +1444,7 @@ export class SceneInitializer extends Component {
         }
 
         // === HP 显示（选项框显示时保留提示，不覆盖）===
-        if (this.statusLabel && !this.towerMenu) {
+        if (this.statusLabel) {
             if (this.isWavePaused && !this.buffSelected && this.currentWave < this.WAVES.length) {
                 this.statusLabel.string = `选择强化 - 三选一  塔: ${this.towers.length}`;
             } else if (this.isWavePaused) {
@@ -1532,12 +1494,18 @@ export class SceneInitializer extends Component {
             }
         }
 
-        // === 敌人减速计时 ===
+        // === 敌人减速 / 易伤计时 ===
         for (const e of this.enemies) {
             if (e.slowTimer > 0) {
                 e.slowTimer -= dt;
                 if (e.slowTimer <= 0) {
                     e.slowMultiplier = 1;
+                }
+            }
+            if (e.vulnerableTimer > 0) {
+                e.vulnerableTimer -= dt;
+                if (e.vulnerableTimer <= 0) {
+                    e.vulnerable = 1;  // 易伤限时结束，恢复默认
                 }
             }
         }
@@ -1709,6 +1677,7 @@ export class SceneInitializer extends Component {
             pathIdx: 1,  // 从起点 waypoint[0] 出发，目标是 waypoint[1]
             buffs: {},
             vulnerable: 1,   // 易伤倍率（默认 1，易伤词缀目标承受额外伤害）
+            vulnerableTimer: 0,  // 易伤剩余时间（归零恢复 1）
         });
     }
 
@@ -1814,8 +1783,6 @@ export class SceneInitializer extends Component {
         this.isWavePaused = false;
         this.isUserPaused = false;
         this.buffSelected = false;
-        this.hideTowerMenu();
-        this.hideTowerMenu();
         this.hideBuffCards();
         this.updatePauseButton();
 
@@ -1922,8 +1889,6 @@ export class SceneInitializer extends Component {
         this.isUserPaused = false;
         this.buffSelected = false;
         this.towerStats.reset();
-        this.hideTowerMenu();
-        this.hideTowerMenu();
         this.hideBuffCards();
         this.updatePauseButton();
 
@@ -2058,10 +2023,8 @@ export class SceneInitializer extends Component {
         transform.setContentSize(slotSize, slotSize);
 
         const gfx = node.addComponent(Graphics);
-        // 判断是否为转角塔位：到最近转角 waypoint 的距离 < range（200）
-        const isCornerSlot = this.isCornerSlot(pos);
-        const baseColor = isCornerSlot ? new Color(255, 120, 80, 255) : new Color(100, 200, 100, 255);
-        const fillColor = isCornerSlot ? new Color(255, 120, 80, 60) : new Color(100, 200, 100, 60);
+        const baseColor = new Color(100, 200, 100, 255);
+        const fillColor = new Color(100, 200, 100, 60);
         gfx.lineWidth = 3;
         gfx.strokeColor = baseColor;
         gfx.fillColor = fillColor;
@@ -2076,23 +2039,6 @@ export class SceneInitializer extends Component {
         gfx.stroke();
 
         return node;
-    }
-
-    /** 判断地基是否为转角塔位：到最近转角 waypoint 的距离 < 200 */
-    private isCornerSlot(pos: Vec3): boolean {
-        // 转角 waypoint（排除入口和基地）
-        const corners = [
-            PATH_WAYPOINTS[1], // 前段下转角
-            PATH_WAYPOINTS[2], // 前段上转角
-            PATH_WAYPOINTS[3], // 中央上转角
-            PATH_WAYPOINTS[4], // 中央下转角
-            PATH_WAYPOINTS[5], // 末段下转角
-            PATH_WAYPOINTS[6], // 末段上转角
-        ];
-        for (const c of corners) {
-            if (Vec3.distance(pos, c) <= 200) return true;
-        }
-        return false;
     }
 
     /** 绘制终点友军建筑（城堡）*/
@@ -2215,8 +2161,8 @@ export class SceneInitializer extends Component {
         const star = tower.star;
         const affix = tower.affix;
 
-        // 基础（全局 roguelike 倍率）
-        let damage = def.damage * ts.damageMultiplier;
+        // 基础（全局 roguelike 倍率）；各塔攻击力统一 +20%（Math.round 取整）
+        let damage = Math.round(def.damage * 1.2 * ts.damageMultiplier);
         let interval = def.interval / ts.speedMultiplier;
         let range = def.range * ts.rangeMultiplier;
         let poisonDps = 8;            // 毒塔基础毒伤（子弹命中）
@@ -2260,7 +2206,10 @@ export class SceneInitializer extends Component {
     private applyTowerEffect(tower: TowerRuntime, enemy: EnemyRuntime, p: TowerParams): void {
         enemy.slowMultiplier = Math.min(enemy.slowMultiplier, p.slowMultiplier);
         enemy.slowTimer = Math.max(enemy.slowTimer, p.slowDuration);
-        if (p.vulnerable > 1) enemy.vulnerable = Math.max(enemy.vulnerable, p.vulnerable);
+        if (p.vulnerable > 1) {
+            enemy.vulnerable = Math.max(enemy.vulnerable, p.vulnerable);
+            enemy.vulnerableTimer = Math.max(enemy.vulnerableTimer, p.slowDuration);
+        }
         EffectManager.instance?.playSlow(enemy.node);
     }
 

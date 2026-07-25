@@ -23,9 +23,7 @@ export const WAVE_BONUSES = [30, 30, 30, 30];
 
 // ===== 倒计时 =====
 // 关卡开头倒计时（秒）：给玩家时间建塔布防
-export const LEVEL_START_COUNTDOWN = 30;
-// 波次之间倒计时（秒）：选完 buff 后自动开战
-export const WAVE_COUNTDOWN = 30;
+export const LEVEL_START_COUNTDOWN = 5;
 
 // ===== 治疗兵参数 =====
 export const HEAL_RADIUS = 120;
