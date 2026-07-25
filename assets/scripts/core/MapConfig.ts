@@ -69,7 +69,7 @@ export const ENTRANCE: Vec3 = gridToLocal(ENTRANCE_CELL);
 export const BASE: Vec3 = gridToLocal(BASE_CELL);
 
 // ===== 塔位（仅 GridCell，禁止 Vec3/x/y）=====
-// 除道路格外，所有格子都可放塔（共 6×8 - 16 = 32 个）。
+// 除道路格外，所有格子都可放塔；此处限定可用塔位数量（12~16），优先靠近路径的格子。
 export const BUILD_CELLS: GridCell[] = (() => {
     const pathSet = new Set(PATH_CELLS.map(c => `${c.col},${c.row}`));
     const cells: GridCell[] = [];
@@ -78,7 +78,17 @@ export const BUILD_CELLS: GridCell[] = (() => {
             if (!pathSet.has(`${c},${r}`)) cells.push({ col: c, row: r });
         }
     }
-    return cells;
+    // 按"到最近路径格的曼哈顿距离"升序排序，优先选紧邻路径的塔位（覆盖射程最大化）
+    const distToPath = (cell: GridCell) => {
+        let min = Infinity;
+        for (const p of PATH_CELLS) {
+            const d = Math.abs(p.col - cell.col) + Math.abs(p.row - cell.row);
+            if (d < min) min = d;
+        }
+        return min;
+    };
+    cells.sort((a, b) => distToPath(a) - distToPath(b));
+    return cells.slice(0, 16);  // 上限 16 个可用塔位（实际紧邻路径的格子约 16 个，落在 12~16 区间）
 })();
 
 // ===== 渲染参数 =====

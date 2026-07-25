@@ -8,6 +8,7 @@ import {
     INITIAL_GOLD, KILL_REWARD, WAVE_BONUSES,
     LEVEL_START_COUNTDOWN,
     HEAL_RADIUS, HEAL_INTERVAL, HEAL_AMOUNT,
+    BOSS_SKILL_INTERVAL, BOSS_SKILL_CHANCE,
     ATTACK_BUTTON_POS, SLOW_BUTTON_POS, POISON_BUTTON_POS,
     WAVES,
     type TowerDef, type EnemyDef, type SpawnEntry, type WaveConfig, type TowerAttackKind,
@@ -23,7 +24,7 @@ const { ccclass } = _decorator;
 // 开发模式开关：开启后运行地图校验（仅输出错误，不移动节点）
 const DEBUG = true;
 // 6×8 调试网格开关
-const SHOW_GRID = true;
+const SHOW_GRID = false;
 
 // ============================================================
 //  系统扩展约定：塔/敌人配置表
@@ -138,6 +139,8 @@ export class SceneInitializer extends Component {
     private get HEAL_RADIUS() { return HEAL_RADIUS; }
     private get HEAL_INTERVAL() { return HEAL_INTERVAL; }
     private get HEAL_AMOUNT() { return HEAL_AMOUNT; }
+    private get BOSS_SKILL_INTERVAL() { return BOSS_SKILL_INTERVAL; }
+    private get BOSS_SKILL_CHANCE() { return BOSS_SKILL_CHANCE; }
 
     // ===== 塔注册表（含闭包引用 this.towerStats，保留在 SceneInitializer）=====
     private readonly TOWER_REGISTRY: TowerDef[] = [
@@ -225,6 +228,52 @@ export class SceneInitializer extends Component {
                 gfx.fill();
             },
         },
+        {
+            id: 'elite',
+            enemyType: EnemyType.ELITE,
+            name: '精英怪',
+            speedMultiplier: 0.7,
+            hpMultiplier: 1.6,
+            color: new Color(180, 100, 255, 255),
+            radius: 20,
+            drawExtra: (gfx) => {
+                // 精英怪外圈光环
+                gfx.strokeColor = new Color(220, 160, 255, 180);
+                gfx.lineWidth = 3;
+                gfx.circle(0, 0, 24);
+                gfx.stroke();
+            },
+        },
+        {
+            id: 'boss',
+            enemyType: EnemyType.BOSS,
+            name: 'BOSS',
+            speedMultiplier: 0.5,
+            hpMultiplier: 10,              // 血量是同波普通兵的 10 倍
+            color: new Color(255, 70, 70, 255),
+            radius: 28,
+            onUpdate: (enemy, dt) => {
+                // BOSS 技能：每 BOSS_SKILL_INTERVAL 秒尝试一次，10% 概率摧毁一座随机防御塔
+                enemy.extraTimer += dt;
+                if (enemy.extraTimer >= this.BOSS_SKILL_INTERVAL) {
+                    enemy.extraTimer = 0;
+                    if (Math.random() < this.BOSS_SKILL_CHANCE) {
+                        this.destroyRandomTower();
+                    }
+                }
+            },
+            drawExtra: (gfx) => {
+                // BOSS 双层红色光环
+                gfx.strokeColor = new Color(255, 200, 100, 220);
+                gfx.lineWidth = 4;
+                gfx.circle(0, 0, 34);
+                gfx.stroke();
+                gfx.strokeColor = new Color(255, 120, 120, 160);
+                gfx.lineWidth = 2;
+                gfx.circle(0, 0, 40);
+                gfx.stroke();
+            },
+        },
     ];
 
     /** 按 id 查塔定义 */
@@ -277,6 +326,9 @@ export class SceneInitializer extends Component {
     private waveActive = false;
     private waveElapsed = 0;      // 当前波次已流逝时间（秒）
     private spawnCursor = 0;       // 下一个要生成的 entry 索引
+    private summonCount = 0;        // 已召唤次数（底部随机建塔按钮），用于开局保证输出塔
+    private hasOutputTower = false; // 是否已建造过攻击/毒塔（输出塔）
+    private midWaveRewardGiven = false; // 本波中间奖励（10 金币）是否已发放
     // 暂停状态：
     // - isWavePaused: 波次结束后的"自动暂停"→ 可以建塔/移塔，点"开始下一波"继续
     // - isUserPaused: 用户在波次进行中主动暂停 → 完全冻结，不能拖拽
@@ -302,6 +354,8 @@ export class SceneInitializer extends Component {
     private buffCardLabels: { name: Label; desc: Label }[] = [];
     private currentBuffChoices: BuffOption[] = [];
     private buffSelected = false;             // 本轮是否已选 buff
+    /** 是否正在三选一选卡（波次间暂停且未选 buff） */
+    private get isBuffSelecting(): boolean { return this.isWavePaused && !this.buffSelected; }
 
     // 塔按钮位置已移入 TOWER_REGISTRY.buttonPos
     // 游戏暂停按钮：右侧（setupScene 中动态赋值）
@@ -493,6 +547,9 @@ export class SceneInitializer extends Component {
                 return;
             }
 
+            // 1.4 三选一选卡期间：禁止召唤、移动、交换、合并（卡片点击已在 0a 处理并返回）
+            if (this.isBuffSelecting) return;
+
             // 1.5 判断是否点中了底部「10金币」随机建塔按钮
             if (Vec3.distance(buttonLocal, this.SPEND_BUTTON_POS) <= this.SPEND_BUTTON_RADIUS) {
                 this.spendRandomTower();
@@ -645,10 +702,11 @@ export class SceneInitializer extends Component {
         this.livesLabel = this.hud.livesLabel;
         this.statusLabel = this.hud.statusLabel;
         this.gold = this.INITIAL_GOLD;
-        this.hud.setGold(this.gold);
+        // 统一同步 HUD 顶部金币与按钮上方常驻金币（避免开局按钮上方显示 0）
+        this.updateGoldLabel();
         this.hud.setWave(0, this.WAVES.length);
         this.hud.setLives(this.allyHp, this.ALLY_MAX_HP);
-        this.hud.setStatus('拖拽底部塔按钮到绿色格子');
+        this.hud.setStatus('点击底部「10金币」按钮随机建塔');
 
         // === 终点友军建筑（城堡）===
         this.drawAlly(this.battleRoot);
@@ -819,6 +877,9 @@ export class SceneInitializer extends Component {
             if (buff.id === 'splash' && stats.splashLevel > 0) weight = Math.max(weight, 2);
             if (buff.id === 'bleed' && stats.bleedLevel > 0) weight = Math.max(weight, 2);
 
+            // 首次解锁抑制：尚未获得溅射时，权重压到 0.2（约 20% 倾向），避免过早解锁
+            if (buff.id === 'splash' && stats.splashLevel === 0) weight = 0.2;
+
             pool.push({ buff, weight });
         }
 
@@ -979,6 +1040,7 @@ export class SceneInitializer extends Component {
         this.waveActive = true;
         this.waveElapsed = 0;
         this.spawnCursor = 0;
+        this.midWaveRewardGiven = false;  // 本波中间奖励尚未发放
 
         // 当前波次总敌人数 = 时间线条目数
         this.waveTotalCount = wave.entries.length;
@@ -1250,6 +1312,7 @@ export class SceneInitializer extends Component {
 
     /** 长按计时器触发：直接开始移动塔 */
     private onLongPressMove(): void {
+        if (this.isBuffSelecting) return;  // 选卡期间禁止发起移动
         const idx = this.pendingTower;
         this.pendingTower = -1;
         if (idx < 0) return;
@@ -1295,6 +1358,17 @@ export class SceneInitializer extends Component {
         this.towerTimers.splice(towerIndex, 1);
     }
 
+    /** BOSS 技能：随机摧毁一座防御塔（无则跳过） */
+    private destroyRandomTower(): void {
+        if (this.towers.length === 0) return;
+        const idx = Math.floor(Math.random() * this.towers.length);
+        const t = this.towers[idx];
+        EffectManager.instance?.playExplosion(t.node.position.clone(), 60);
+        this.removeTowerNode(idx);
+        if (this.statusLabel) this.statusLabel.string = 'BOSS 摧毁了一座防御塔！';
+        console.log('BOSS 技能触发：摧毁一座防御塔');
+    }
+
     /** 溅射 AOE：在命中点爆炸，伤害周围敌人（伤害 = 主弹有效伤害 × splashDamage 倍率） */
     private triggerSplash(pos: Vec3, def: TowerDef, tower: TowerRuntime): void {
         const ts = this.towerStats;
@@ -1311,19 +1385,31 @@ export class SceneInitializer extends Component {
                 if (def.id === 'poison') {
                     this.applyPoisonFromTower(tower, e, p);
                 }
-                if (e.hp <= 0) {
-                    EffectManager.instance?.playDeath(e.node.position, e.node.getComponent(Graphics)?.fillColor ?? new Color(255, 255, 255, 255));
-                    e.node.removeFromParent();
-                    e.node.destroy();
-                    this.enemies.splice(j, 1);
-                    this.gold += this.KILL_REWARD;
-                    this.updateGoldLabel();
-                    console.log(`溅射击杀！+${this.KILL_REWARD} 金币`);
-                }
+                // 死亡移除统一在 cleanupDeadEnemies() 处理
             }
         }
         // 爆炸光波动画
         EffectManager.instance?.playExplosion(pos, radius);
+    }
+
+    /** 统一清理：移除所有 hp<=0 的敌人。所有致死路径（子弹/溅射/buff）只减血，
+     *  死亡移除集中在此，避免遍历 enemies 时嵌套 splice 导致的数组错乱与敌人永久残留 */
+    private cleanupDeadEnemies(): void {
+        for (let i = this.enemies.length - 1; i >= 0; i--) {
+            const e = this.enemies[i];
+            if (e.hp > 0) continue;
+            // 中毒死亡触发传染词缀
+            if (e.buffs['poison']) {
+                this.tryContagion(e);
+            }
+            EffectManager.instance?.playDeath(e.node.position, e.node.getComponent(Graphics)?.fillColor ?? new Color(255, 255, 255, 255));
+            e.node.removeFromParent();
+            e.node.destroy();
+            this.enemies.splice(i, 1);
+            this.gold += this.KILL_REWARD;
+            this.updateGoldLabel();
+            console.log(`击杀！+${this.KILL_REWARD} 金币，当前 ${this.gold}`);
+        }
     }
 
 
@@ -1366,29 +1452,6 @@ export class SceneInitializer extends Component {
             }
         }
 
-        // === 波次完成检测 ===
-        if (this.waveActive) {
-            // 全部生成且全部死亡 → 自动暂停，等用户选 buff + 点"开始下一波"
-            if (this.spawnedInWave >= this.waveTotalCount && this.enemies.length === 0) {
-                this.waveActive = false;
-                // 每个波次结束都给金币（含最后一波）
-                const waveBonus = this.WAVE_BONUSES[this.currentWave - 1] || 0;
-                if (waveBonus > 0) {
-                    this.gold += waveBonus;
-                    this.updateGoldLabel();
-                    console.log(`波次奖励 +${waveBonus} 金币，当前 ${this.gold}`);
-                }
-                // 还有下一波才显示 buff 选择 + 暂停状态，否则直接胜利
-                if (this.currentWave < this.WAVES.length) {
-                    this.isWavePaused = true;
-                    this.updatePauseButton();
-                    this.showBuffSelection();
-                    console.log(`Wave ${this.currentWave} 完成（${this.waveTotalCount} 只全部消灭），已自动暂停`);
-                } else {
-                    this.victory();
-                }
-            }
-        }
         // 注意：波次间不再倒计时——玩家选完 buff 即直接开下一波
 
         // === 敌人移动 ===
@@ -1521,17 +1584,7 @@ export class SceneInitializer extends Component {
                     delete e.buffs[key];
                 }
             }
-            // buff 掉血致死（中毒死亡触发传染词缀）
-            if (e.hp <= 0) {
-                this.tryContagion(e);
-                EffectManager.instance?.playDeath(e.node.position, e.node.getComponent(Graphics)?.fillColor ?? new Color(255, 255, 255, 255));
-                e.node.removeFromParent();
-                e.node.destroy();
-                this.enemies.splice(i, 1);
-                this.gold += this.KILL_REWARD;
-                this.updateGoldLabel();
-                console.log(`buff击杀！+${this.KILL_REWARD} 金币`);
-            }
+            // buff 掉血致死：仅减血，死亡移除统一在 cleanupDeadEnemies() 处理
         }
 
         // === 敌人特殊行为（治疗者光环等）——遍历注册表的 onUpdate ===
@@ -1610,16 +1663,7 @@ export class SceneInitializer extends Component {
                     this.bullets.splice(i, 1);
                     hit = true;
 
-                    // splash 可能已杀死主目标（从 enemies 数组移除），需检查节点是否仍有效
-                    if (e.hp <= 0 && e.node.isValid) {
-                        EffectManager.instance?.playDeath(e.node.position, e.node.getComponent(Graphics)?.fillColor ?? new Color(255, 255, 255, 255));
-                        e.node.removeFromParent();
-                        e.node.destroy();
-                        this.enemies.splice(j, 1);
-                        this.gold += this.KILL_REWARD;
-                        this.updateGoldLabel();
-                        console.log(`击杀！+${this.KILL_REWARD} 金币，当前 ${this.gold}`);
-                    }
+                    // 主目标死亡由 cleanupDeadEnemies() 统一移除
                     break;
                 }
             }
@@ -1635,6 +1679,40 @@ export class SceneInitializer extends Component {
             if (Vec3.distance(b.node.position, Vec3.ZERO) > 800) {
                 b.node.destroy();
                 this.bullets.splice(i, 1);
+            }
+        }
+
+        // === 敌人死亡统一清理：所有致死路径只减血，死亡移除集中在此 ===
+        this.cleanupDeadEnemies();
+
+        // === 波次完成检测（在 cleanup 之后，确保本帧所有死亡已移除）===
+        if (this.waveActive) {
+            // 波次进行到一半（已生成过半）时一次性发放 10 金币
+            if (!this.midWaveRewardGiven && this.waveTotalCount > 0 &&
+                this.spawnedInWave >= Math.ceil(this.waveTotalCount / 2)) {
+                this.gold += 10;
+                this.midWaveRewardGiven = true;
+                this.updateGoldLabel();
+                console.log(`波次中间奖励 +10 金币，当前 ${this.gold}`);
+            }
+            // 全部生成且全部死亡 → 自动暂停，等用户选 buff + 点"开始下一波"
+            if (this.spawnedInWave >= this.waveTotalCount && this.enemies.length === 0) {
+                this.waveActive = false;
+                const waveBonus = this.WAVE_BONUSES[this.currentWave - 1] || 0;
+                if (waveBonus > 0) {
+                    this.gold += waveBonus;
+                    this.updateGoldLabel();
+                    console.log(`波次奖励 +${waveBonus} 金币，当前 ${this.gold}`);
+                }
+                // 还有下一波才显示 buff 选择 + 暂停状态，否则直接胜利
+                if (this.currentWave < this.WAVES.length) {
+                    this.isWavePaused = true;
+                    this.updatePauseButton();
+                    this.showBuffSelection();
+                    console.log(`Wave ${this.currentWave} 完成（${this.waveTotalCount} 只全部消灭），已自动暂停`);
+                } else {
+                    this.victory();
+                }
             }
         }
     }
@@ -1730,6 +1808,7 @@ export class SceneInitializer extends Component {
         this.slotNodes[slotIndex].active = false;
 
         console.log(`${def.name}放置到位置 ${slotIndex + 1}，花费 ${def.cost}，当前 ${this.towers.length} 塔`);
+        if (def.id === 'attack' || def.id === 'poison') this.hasOutputTower = true;
     }
 
     /**
@@ -1737,6 +1816,8 @@ export class SceneInitializer extends Component {
      * 按网格顺序（BUILD_CELLS 行优先，已排除道路）从第一个空位开始放置。
      */
     private spendRandomTower(): void {
+        // 三选一选卡期间禁止召唤
+        if (this.isBuffSelecting) return;
         if (this.slotOccupied.every(o => o)) {
             if (this.statusLabel) this.statusLabel.string = '塔位已满，无法建造';
             return;
@@ -1753,9 +1834,17 @@ export class SceneInitializer extends Component {
         }
         if (slot < 0) return;
 
-        // 随机选一种已有塔
-        const def = this.TOWER_REGISTRY[Math.floor(Math.random() * this.TOWER_REGISTRY.length)];
+        // 开局前三次召唤保证至少一座输出塔：
+        // 前两次都没输出塔时，第三次只在 attack / poison 中随机
+        const outputPool = this.TOWER_REGISTRY.filter(t => t.id === 'attack' || t.id === 'poison');
+        let def: TowerDef;
+        if (this.summonCount === 2 && !this.hasOutputTower) {
+            def = outputPool[Math.floor(Math.random() * outputPool.length)];
+        } else {
+            def = this.TOWER_REGISTRY[Math.floor(Math.random() * this.TOWER_REGISTRY.length)];
+        }
         this.placeTower(slot, def, this.SPEND_COST);
+        this.summonCount++;
         if (this.statusLabel) {
             this.statusLabel.string = `随机建塔：${def.name} @ 格${slot + 1}（-${this.SPEND_COST}金）`;
         }
@@ -1779,7 +1868,6 @@ export class SceneInitializer extends Component {
         this.isGameOver = true;
         this.stopCountdown();
         this.waveActive = false;
-        this.waveDelay = 0;
         this.isWavePaused = false;
         this.isUserPaused = false;
         this.buffSelected = false;
@@ -1868,11 +1956,35 @@ export class SceneInitializer extends Component {
         this.towers.length = 0;
         this.towerTimers.length = 0;
 
+        // 清除残留敌人（destroy 节点，避免场景残留）
+        for (const e of this.enemies) {
+            e.node.removeFromParent();
+            e.node.destroy();
+        }
+        this.enemies.length = 0;
+
+        // 清除残留子弹
+        for (const b of this.bullets) b.node.destroy();
+        this.bullets.length = 0;
+
+        // 取消任何进行中的长按拖拽调度
+        this.unschedule(this.onLongPressMove);
+
         // 恢复建造点
         for (let i = 0; i < this.slotOccupied.length; i++) {
             this.slotOccupied[i] = false;
             this.slotNodes[i].active = true;
         }
+
+        // 重置拖拽 / 选卡 / 长按状态
+        this.isDragging = false;
+        if (this.ghostNode) this.ghostNode.active = false;
+        this.canPlace = false;
+        this.targetSlot = -1;
+        this.moveFromSlot = -1;
+        this.dragMode = 'place';
+        this.dragTowerDef = null;
+        this.pendingTower = -1;
 
         // 重置状态
         this.isGameOver = false;
@@ -1881,13 +1993,18 @@ export class SceneInitializer extends Component {
         this.currentWave = 0;
         this.spawnedInWave = 0;
         this.spawnTimer = 0;
+        this.waveTotalCount = 0;
         this.waveActive = false;
-        this.waveDelay = 0;
         this.waveElapsed = 0;
         this.spawnCursor = 0;
+        this.summonCount = 0;
+        this.hasOutputTower = false;
+        this.midWaveRewardGiven = false;
         this.isWavePaused = false;
         this.isUserPaused = false;
         this.buffSelected = false;
+        this.currentBuffChoices = [];
+        this.selectedBuffIndex = -1;
         this.towerStats.reset();
         this.hideBuffCards();
         this.updatePauseButton();

@@ -30,4 +30,5 @@ export enum EnemyType {
     TANK = 3,
     BOSS = 4,
     HEALER = 5,
+    ELITE = 6,
 }
