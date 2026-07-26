@@ -45,7 +45,9 @@ export class EffectManager extends Component {
     // ===== 1. 命中反馈：敌人闪白0.08秒＋轻微放大 =====
     public playHit(enemyNode: Node): void {
         if (!enemyNode || !enemyNode.isValid) return;
-        const originalScale = enemyNode.scale.clone();
+        // 回弹基准必须用固定值(1,1,1)，不能用当前 enemyNode.scale：
+        // 否则高频命中时每次以"放大中"的 scale 为基准再放大于是越打越大（BOSS 血厚最明显）
+        const baseScale = new Vec3(1, 1, 1);
         // 叠加白色半透明圆作为子节点（不清除敌人原绘制）
         const flash = new Node('HitFlash');
         flash.layer = Layers.Enum.UI_2D;
@@ -53,13 +55,13 @@ export class EffectManager extends Component {
         flash.setPosition(0, 0, 0);
         flash.addComponent(UITransform);
         const gfx = flash.addComponent(Graphics);
-        gfx.fillColor = new Color(255, 255, 255, 200);
-        gfx.circle(0, 0, 14);
+        gfx.fillColor = new Color(255, 255, 255, 160);
+        gfx.circle(0, 0, 10);
         gfx.fill();
-        // 放大
+        // 放大（基于固定基准，避免累积放大；幅度调小避免过于夸张）
         tween(enemyNode)
-            .to(0.04, { scale: new Vec3(originalScale.x * 1.3, originalScale.y * 1.3, 1) })
-            .to(0.04, { scale: originalScale })
+            .to(0.04, { scale: new Vec3(baseScale.x * 1.12, baseScale.y * 1.12, 1) })
+            .to(0.04, { scale: baseScale })
             .start();
         // 闪白淡出后销毁
         tween(gfx)

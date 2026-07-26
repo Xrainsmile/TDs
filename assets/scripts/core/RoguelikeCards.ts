@@ -26,8 +26,9 @@ export class TowerStats {
     get healMultiplier() { return Math.max(0, 1 - this.healSuppression); }
 
     // 溅射 AOE 参数（随等级提升）
-    get splashRadius() { return 40 + this.splashLevel * 10; }       // 基础 40px，每级 +10
-    get splashDamage() { return 0.5 + this.splashLevel * 0.15; }    // 主弹伤害的 50%+15%/级
+    // Lv1: 半径 43 / 30%；Lv2: 51 / 40%；Lv3: 59 / 50%
+    get splashRadius() { return 35 + this.splashLevel * 8; }       // 基础 35px，每级 +8
+    get splashDamage() { return 0.2 + this.splashLevel * 0.1; }    // 主弹伤害的 20%+10%/级
 
     // 出血参数（随等级提升）
     get bleedChance() { return 0.05 + this.bleedLevel * 0.05; }     // 5%+5%/级
@@ -73,8 +74,8 @@ export const ROGUELIKE_BUFFS: BuffOption[] = [
         apply: s => { s.rangeBonus += 0.1; },
     },
     {
-        id: 'healSuppress', name: '治疗抑制', desc: '抑制10%的敌人回复量',
-        apply: s => { s.healSuppression += 0.1; },
+        id: 'healSuppress', name: '治疗抑制', desc: '命中治疗兵使其沉默2秒，并削弱其治疗量',
+        apply: s => { s.healSuppression += 0.4; },
     },
     {
         id: 'splash',
@@ -130,7 +131,7 @@ export function getBuffDisplay(buff: BuffOption, stats: TowerStats): { name: str
     if (buff.id === 'healSuppress') {
         return {
             name: '治疗抑制',
-            desc: `抑制 ${Math.round(stats.healSuppression * 100)}% → ${Math.round(after.healSuppression * 100)}%`,
+            desc: `命中沉默 2s + 抑制 ${Math.round(stats.healSuppression * 100)}% → ${Math.round(after.healSuppression * 100)}%`,
         };
     }
     if (buff.id === 'splash') {

@@ -29,10 +29,13 @@ export const LEVEL_START_COUNTDOWN = 5;
 export const HEAL_RADIUS = 120;
 export const HEAL_INTERVAL = 3.0;
 export const HEAL_AMOUNT = 5;
+// 治疗抑制卡：命中治疗兵后使其进入沉默的持续时间（秒），期间无法治疗
+export const HEAL_SILENCE = 2.0;
 
 // ===== BOSS 参数 =====
-export const BOSS_SKILL_INTERVAL = 5.0;   // 每 5 秒尝试释放一次技能
-export const BOSS_SKILL_CHANCE = 0.1;     // 技能有 10% 概率摧毁一座防御塔
+export const BOSS_SKILL_INTERVAL = 5.0;   // 每 5 秒锁定一座塔释放技能
+export const BOSS_LOCK_DURATION = 3.0;    // 锁定后玩家可应对的倒计时（秒）
+export const BOSS_CEASEFIRE = 8.0;        // 一星塔未应对时的停火时长（秒）
 
 // ===== 类型定义 =====
 export type TowerAttackKind = 'bullet' | 'instant';

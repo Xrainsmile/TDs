@@ -7,8 +7,8 @@ import {
     ENEMY_SPEED, BULLET_SPEED,
     INITIAL_GOLD, KILL_REWARD, WAVE_BONUSES,
     LEVEL_START_COUNTDOWN,
-    HEAL_RADIUS, HEAL_INTERVAL, HEAL_AMOUNT,
-    BOSS_SKILL_INTERVAL, BOSS_SKILL_CHANCE,
+    HEAL_RADIUS, HEAL_INTERVAL, HEAL_AMOUNT, HEAL_SILENCE,
+    BOSS_SKILL_INTERVAL, BOSS_LOCK_DURATION, BOSS_CEASEFIRE,
     ATTACK_BUTTON_POS, SLOW_BUTTON_POS, POISON_BUTTON_POS,
     WAVES,
     type TowerDef, type EnemyDef, type SpawnEntry, type WaveConfig, type TowerAttackKind,
@@ -68,6 +68,7 @@ interface TowerRuntime {
     affix: AffixId | null;   // 一星为 null，二星随机获得一个
 
     attackCount: number;     // 攻击计数（连发词缀用）
+    disabledTimer: number;   // BOSS 技能导致的停火倒计时（>0 时该塔不攻击）
 }
 
 
@@ -101,6 +102,7 @@ interface EnemyRuntime {
     vulnerableTimer: number; // 易伤剩余时间（>0 时生效，归零恢复 1）
     type: EnemyType;        // 对应 EnemyDef.enemyType
     healTimer: number;      // 治疗者光环计时
+    healCd: number;         // 治疗沉默剩余时间（受击后一段时间内无法治疗，由治疗抑制卡触发）
     // 扩展字段：新敌人的特殊计时器都挂这里，避免改结构
     extraTimer: number;
     // 路径目标索引（当前前往的 waypoint）
@@ -139,8 +141,10 @@ export class SceneInitializer extends Component {
     private get HEAL_RADIUS() { return HEAL_RADIUS; }
     private get HEAL_INTERVAL() { return HEAL_INTERVAL; }
     private get HEAL_AMOUNT() { return HEAL_AMOUNT; }
+    private get HEAL_SILENCE() { return HEAL_SILENCE; }
     private get BOSS_SKILL_INTERVAL() { return BOSS_SKILL_INTERVAL; }
-    private get BOSS_SKILL_CHANCE() { return BOSS_SKILL_CHANCE; }
+    private get BOSS_LOCK_DURATION() { return BOSS_LOCK_DURATION; }
+    private get BOSS_CEASEFIRE() { return BOSS_CEASEFIRE; }
 
     // ===== 塔注册表（含闭包引用 this.towerStats，保留在 SceneInitializer）=====
     private readonly TOWER_REGISTRY: TowerDef[] = [
@@ -202,6 +206,11 @@ export class SceneInitializer extends Component {
             color: new Color(255, 150, 200, 255),
             radius: 14,
             onUpdate: (enemy, dt, allEnemies) => {
+                // 治疗沉默：受击后 HEAL_SILENCE 秒内无法治疗（由治疗抑制卡触发）
+                if (enemy.healCd > 0) {
+                    enemy.healCd = Math.max(0, enemy.healCd - dt);
+                    return;
+                }
                 enemy.healTimer += dt;
                 if (enemy.healTimer >= this.HEAL_INTERVAL) {
                     enemy.healTimer = 0;
@@ -253,13 +262,11 @@ export class SceneInitializer extends Component {
             color: new Color(255, 70, 70, 255),
             radius: 28,
             onUpdate: (enemy, dt) => {
-                // BOSS 技能：每 BOSS_SKILL_INTERVAL 秒尝试一次，10% 概率摧毁一座随机防御塔
+                // BOSS 技能：每 BOSS_SKILL_INTERVAL 秒锁定一座塔，倒计时内玩家可应对
                 enemy.extraTimer += dt;
                 if (enemy.extraTimer >= this.BOSS_SKILL_INTERVAL) {
                     enemy.extraTimer = 0;
-                    if (Math.random() < this.BOSS_SKILL_CHANCE) {
-                        this.destroyRandomTower();
-                    }
+                    this.triggerBossSkill();
                 }
             },
             drawExtra: (gfx) => {
@@ -307,6 +314,11 @@ export class SceneInitializer extends Component {
     private towers: TowerRuntime[] = [];
     private towerTimers: number[] = [];
     private bullets: { node: Node; vx: number; vy: number; target: Node; def: TowerDef; tower: TowerRuntime }[] = [];
+
+    // === BOSS 锁定技能状态 ===
+    private bossLockedTower: TowerRuntime | null = null;
+    private bossLockTimer = 0;            // 当前锁定倒计时（秒）
+    private bossLockMode: 'merge' | 'ceasefire' | 'downgrade' = 'merge';
     private statusLabel: Label | null = null;
     private goldLabel: Label | null = null;
     private waveLabel: Label | null = null;
@@ -368,6 +380,15 @@ export class SceneInitializer extends Component {
     private spendButton: Node | null = null;
     private spendButtonLabel: Label | null = null;
     private goldAboveButtonLabel: Label | null = null;  // 金币按钮上方的常驻金币显示
+
+    // 单击塔信息面板
+    private towerInfoPanel: Node | null = null;
+    private towerInfoPanelLabel: Label | null = null;
+    private towerInfoTimer = 0;            // 信息面板自动隐藏倒计时（秒）
+
+    // 暂停时显示全局 buff 面板
+    private globalBuffPanel: Node | null = null;
+    private globalBuffLabel: Label | null = null;
 
     // 响应式布局动态计算结果（setupScene 中赋值，仅 UI 用）
     private _visibleSize: { width: number; height: number } = { width: 640, height: 960 };
@@ -516,6 +537,11 @@ export class SceneInitializer extends Component {
             const buttonLocal = this.eventToCanvasLocal(event);
             const gameLocal = this.eventToGameLocal(event);
 
+            // 信息面板打开时，任意点击先关闭它（同一次点击不重复触发）
+            if (this.towerInfoPanel && this.towerInfoPanel.active) {
+                this.hideTowerInfo();
+            }
+
             // 0. （已移除）塔点击菜单交互：现改为长按移动，无点击菜单
 
             // 0a. 判定：是否点中了 buff 卡片（仅波次间暂停且未选时可见）
@@ -585,10 +611,12 @@ export class SceneInitializer extends Component {
         });
 
         canvas.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
-            // 长按未触发（短按）→ 取消，不弹菜单（已取消所有点击交互）
+            // 长按未触发（短按）→ 展示塔信息面板
             if (!this.isDragging && this.pendingTower >= 0) {
+                const t = this.towers[this.pendingTower];
                 this.pendingTower = -1;
                 this.unschedule(this.onLongPressMove);
+                if (t) this.showTowerInfo(t);
                 return;
             }
             if (!this.isDragging) return;
@@ -727,6 +755,9 @@ export class SceneInitializer extends Component {
         this.isUserPaused = !this.isUserPaused;
         console.log(this.isUserPaused ? '游戏暂停' : '游戏继续');
         this.updatePauseButton();
+        // 暂停时显示全局 buff 面板，继续时隐藏
+        if (this.isUserPaused) this.showGlobalBuffPanel();
+        else this.hideGlobalBuffPanel();
     }
 
     /** 关卡开始倒计时：给玩家时间建塔布防，结束后启动第一波 */
@@ -877,7 +908,9 @@ export class SceneInitializer extends Component {
             if (buff.id === 'splash' && stats.splashLevel > 0) weight = Math.max(weight, 2);
             if (buff.id === 'bleed' && stats.bleedLevel > 0) weight = Math.max(weight, 2);
 
-            // 首次解锁抑制：尚未获得溅射时，权重压到 0.2（约 20% 倾向），避免过早解锁
+            // 首次解锁抑制：尚未获得溅射时，相对权重压到 0.2（在加权随机池中占比低，
+            // 但不等于 20% 绝对概率；权重含义见 buildBuffPool 的加权随机抽取）。
+            // 实际伤害上限已由 TowerStats 降低（Lv1: 43px/30%），此处仅延缓首次解锁节奏。
             if (buff.id === 'splash' && stats.splashLevel === 0) weight = 0.2;
 
             pool.push({ buff, weight });
@@ -1063,6 +1096,7 @@ export class SceneInitializer extends Component {
         this.buffSelected = false;
         this.hideBuffCards();
         this.updatePauseButton();
+        this.hideGlobalBuffPanel();
 
         const canvas = this.node;
         const panel = new Node('VictoryPanel');
@@ -1358,15 +1392,126 @@ export class SceneInitializer extends Component {
         this.towerTimers.splice(towerIndex, 1);
     }
 
-    /** BOSS 技能：随机摧毁一座防御塔（无则跳过） */
-    private destroyRandomTower(): void {
+    /** BOSS 技能：每 BOSS_SKILL_INTERVAL 秒锁定一座塔，按规则给玩家应对机会 */
+    private triggerBossSkill(): void {
+        // 已有锁定中的塔，等其结算完再锁定下一座
+        if (this.bossLockedTower) return;
         if (this.towers.length === 0) return;
-        const idx = Math.floor(Math.random() * this.towers.length);
-        const t = this.towers[idx];
-        EffectManager.instance?.playExplosion(t.node.position.clone(), 60);
+
+        // 1) 可合并的一星塔：存在同类型另一座一星塔 → 锁定一座，玩家可合并解除
+        const mergeable = this.findMergeableOneStar();
+        if (mergeable) {
+            this.lockTower(mergeable, 'merge');
+            return;
+        }
+        // 2) 存在一星塔但无可合并 → 锁定一座一星塔，倒计时结束停火 8 秒
+        const oneStar = this.towers.find(t => t.star === 1);
+        if (oneStar) {
+            this.lockTower(oneStar, 'ceasefire');
+            return;
+        }
+        // 3) 全是二星塔 → 锁定一座二星塔，倒计时结束降为一星并清词缀
+        this.lockTower(this.towers[0], 'downgrade');
+    }
+
+    /** 查找一座「可合并的一星塔」（存在同类型另一座一星塔） */
+    private findMergeableOneStar(): TowerRuntime | null {
+        const counts: Record<string, number> = {};
+        for (const t of this.towers) {
+            if (t.star === 1) counts[t.def.id] = (counts[t.def.id] ?? 0) + 1;
+        }
+        for (const t of this.towers) {
+            if (t.star === 1 && (counts[t.def.id] ?? 0) >= 2) return t;
+        }
+        return null;
+    }
+
+    /** 锁定一座塔并进入倒计时（玩家在倒计时内成功应对可解除） */
+    private lockTower(tower: TowerRuntime, mode: 'merge' | 'ceasefire' | 'downgrade'): void {
+        this.bossLockedTower = tower;
+        this.bossLockMode = mode;
+        this.bossLockTimer = this.BOSS_LOCK_DURATION;
+        this.setTowerLockVisual(tower, true);
+        const hint = mode === 'merge' ? 'BOSS 锁定了一星塔！合并它可解除锁定'
+            : mode === 'ceasefire' ? 'BOSS 锁定了一星塔！无同型可合并则停火 8 秒'
+            : 'BOSS 锁定了二星塔！倒计时结束将降为一星并失去词缀';
+        if (this.statusLabel) this.statusLabel.string = hint;
+        console.log(`BOSS 技能：锁定 ${tower.def.name}(${mode})`);
+    }
+
+    /** 每帧推进 BOSS 锁定倒计时并结算 */
+    private updateBossLock(dt: number): void {
+        const t = this.bossLockedTower;
+        if (!t) return;
+
+        // 合并模式：锁定塔已被合并（移除或升为二星）→ 视为玩家成功应对
+        if (this.bossLockMode === 'merge') {
+            if (!this.towers.includes(t) || t.star !== 1) {
+                this.clearBossLock();
+                return;
+            }
+        }
+
+        this.bossLockTimer -= dt;
+        if (this.bossLockTimer > 0) return;
+
+        // 倒计时结束 → 按模式结算惩罚
+        switch (this.bossLockMode) {
+            case 'merge':
+                // 未合并 → 摧毁
+                this.destroyLockedTower(t);
+                break;
+            case 'ceasefire':
+                // 一星无法降级 → 停火 8 秒
+                t.disabledTimer = this.BOSS_CEASEFIRE;
+                break;
+            case 'downgrade':
+                // 二星降为一星并清除词缀
+                t.star = 1;
+                t.affix = null;
+                this.setTowerBadge(t);
+                break;
+        }
+        this.clearBossLock();
+    }
+
+    /** 清除 BOSS 锁定状态并恢复塔外观 */
+    private clearBossLock(): void {
+        if (this.bossLockedTower) {
+            this.setTowerLockVisual(this.bossLockedTower, false);
+        }
+        this.bossLockedTower = null;
+        this.bossLockTimer = 0;
+    }
+
+    /** 摧毁被锁定的塔（合并模式未应对） */
+    private destroyLockedTower(tower: TowerRuntime): void {
+        const idx = this.towers.indexOf(tower);
+        if (idx < 0) return;
+        EffectManager.instance?.playExplosion(tower.node.position.clone(), 60);
         this.removeTowerNode(idx);
-        if (this.statusLabel) this.statusLabel.string = 'BOSS 摧毁了一座防御塔！';
-        console.log('BOSS 技能触发：摧毁一座防御塔');
+        if (this.statusLabel) this.statusLabel.string = 'BOSS 摧毁了一座未合并的防御塔！';
+        console.log('BOSS 技能：摧毁未合并的防御塔');
+    }
+
+    /** 锁定视觉：在塔上加红色锁定环 */
+    private setTowerLockVisual(tower: TowerRuntime, locked: boolean): void {
+        let ring = tower.node.getChildByName('BossLock');
+        if (locked) {
+            if (!ring) {
+                ring = new Node('BossLock');
+                ring.layer = Layers.Enum.UI_2D;
+                ring.setParent(tower.node);
+                const g = ring.addComponent(Graphics);
+                g.strokeColor = new Color(255, 60, 60, 255);
+                g.lineWidth = 3;
+                g.circle(0, 0, 26);
+                g.stroke();
+            }
+            ring.active = true;
+        } else if (ring) {
+            ring.active = false;
+        }
     }
 
     /** 溅射 AOE：在命中点爆炸，伤害周围敌人（伤害 = 主弹有效伤害 × splashDamage 倍率） */
@@ -1418,6 +1563,12 @@ export class SceneInitializer extends Component {
 
         // 用户暂停：完全冻结游戏逻辑（敌人/塔/子弹都不动），拖拽也在 TOUCH_START 中被阻止
         if (this.isUserPaused) return;
+
+        // 塔信息面板自动隐藏倒计时
+        if (this.towerInfoTimer > 0) {
+            this.towerInfoTimer -= dt;
+            if (this.towerInfoTimer <= 0) this.hideTowerInfo();
+        }
 
         // === 倒计时（关卡开头 + 波次之间共用圆环）===
         if (this.countdownActive) {
@@ -1527,6 +1678,11 @@ export class SceneInitializer extends Component {
         for (let i = 0; i < this.towers.length; i++) {
             if (this.enemies.length === 0) continue;
             const tower = this.towers[i];
+            // BOSS 停火惩罚：disabledTimer > 0 时不攻击，仅倒计时
+            if (tower.disabledTimer > 0) {
+                tower.disabledTimer = Math.max(0, tower.disabledTimer - dt);
+                continue;
+            }
             const def = tower.def;
             const p = this.getTowerParams(tower);
 
@@ -1595,6 +1751,9 @@ export class SceneInitializer extends Component {
             }
         }
 
+        // === BOSS 锁定技能倒计时结算 ===
+        this.updateBossLock(dt);
+
         // === 子弹更新 ===
         for (let i = this.bullets.length - 1; i >= 0; i--) {
             const b = this.bullets[i];
@@ -1657,6 +1816,11 @@ export class SceneInitializer extends Component {
                     // Roguelike 溅射 buff：主弹命中后在命中点爆炸 AOE
                     if (this.towerStats.splashLevel > 0) {
                         this.triggerSplash(b.node.position, b.def, b.tower);
+                    }
+
+                    // 治疗抑制卡：命中治疗兵后，使其进入治疗沉默（HEAL_SILENCE 秒内无法治疗）
+                    if (this.towerStats.healSuppression > 0 && e.type === EnemyType.HEALER) {
+                        e.healCd = Math.max(e.healCd, this.HEAL_SILENCE);
                     }
 
                     b.node.destroy();
@@ -1751,7 +1915,7 @@ export class SceneInitializer extends Component {
         this.enemies.push({
             node: enemy, hp: actualHp, maxHp: actualHp,
             slowTimer: 0, slowMultiplier: 1,
-            type, healTimer: 0, extraTimer: 0,
+            type, healTimer: 0, healCd: 0, extraTimer: 0,
             pathIdx: 1,  // 从起点 waypoint[0] 出发，目标是 waypoint[1]
             buffs: {},
             vulnerable: 1,   // 易伤倍率（默认 1，易伤词缀目标承受额外伤害）
@@ -1799,7 +1963,7 @@ export class SceneInitializer extends Component {
 
         const node = this.createTower(this.slotPositions[slotIndex], def);
         node.setParent(this.battleRoot);
-        const tower: TowerRuntime = { node, def, star: 1, affix: null, attackCount: 0 };
+        const tower: TowerRuntime = { node, def, star: 1, affix: null, attackCount: 0, disabledTimer: 0 };
         this.setTowerBadge(tower);
 
         this.towers.push(tower);
@@ -1841,7 +2005,16 @@ export class SceneInitializer extends Component {
         if (this.summonCount === 2 && !this.hasOutputTower) {
             def = outputPool[Math.floor(Math.random() * outputPool.length)];
         } else {
-            def = this.TOWER_REGISTRY[Math.floor(Math.random() * this.TOWER_REGISTRY.length)];
+            // 加权随机：基础攻击塔（蓝色）权重更高，更常出现
+            const weights = this.TOWER_REGISTRY.map(t => (t.id === 'attack' ? 2 : 1));
+            const total = weights.reduce((s, w) => s + w, 0);
+            let r = Math.random() * total;
+            let idx = 0;
+            for (; idx < weights.length; idx++) {
+                r -= weights[idx];
+                if (r < 0) break;
+            }
+            def = this.TOWER_REGISTRY[idx];
         }
         this.placeTower(slot, def, this.SPEND_COST);
         this.summonCount++;
@@ -1873,6 +2046,7 @@ export class SceneInitializer extends Component {
         this.buffSelected = false;
         this.hideBuffCards();
         this.updatePauseButton();
+        this.hideGlobalBuffPanel();
 
         // 清除所有敌人和子弹
         for (const en of this.enemies) en.node.destroy();
@@ -1955,6 +2129,11 @@ export class SceneInitializer extends Component {
         for (const tower of this.towers) tower.node.destroy();
         this.towers.length = 0;
         this.towerTimers.length = 0;
+        // 复位 BOSS 锁定状态（避免指向已销毁的塔）
+        this.bossLockedTower = null;
+        this.bossLockTimer = 0;
+        // 关闭塔信息面板
+        this.hideTowerInfo();
 
         // 清除残留敌人（destroy 节点，避免场景残留）
         for (const e of this.enemies) {
@@ -2004,10 +2183,10 @@ export class SceneInitializer extends Component {
         this.isUserPaused = false;
         this.buffSelected = false;
         this.currentBuffChoices = [];
-        this.selectedBuffIndex = -1;
         this.towerStats.reset();
         this.hideBuffCards();
         this.updatePauseButton();
+        this.hideGlobalBuffPanel();
 
         // 更新 HUD
         this.updateGoldLabel();
@@ -2378,6 +2557,192 @@ export class SceneInitializer extends Component {
             ? TOWER_AFFIXES[tower.def.id]?.find(a => a.id === tower.affix)?.name ?? ''
             : '';
         bl.string = affixName ? `${stars}${affixName}` : stars;
+    }
+
+    // ============================================================
+    //  单击塔信息面板
+    // ============================================================
+
+    /** 懒创建信息面板 */
+    private ensureTowerInfoPanel(): void {
+        if (this.towerInfoPanel) return;
+        const canvas = this.node;
+        const panel = new Node('TowerInfoPanel');
+        panel.layer = Layers.Enum.UI_2D;
+        panel.setParent(canvas);
+        const t = panel.addComponent(UITransform);
+        t.setContentSize(300, 220);
+        t.setAnchorPoint(0.5, 0.5);
+        const g = panel.addComponent(Graphics);
+        g.fillColor = new Color(18, 20, 32, 230);
+        g.roundRect(-150, -110, 300, 220, 12);
+        g.fill();
+        g.strokeColor = new Color(120, 200, 255, 255);
+        g.lineWidth = 2;
+        g.roundRect(-150, -110, 300, 220, 12);
+        g.stroke();
+
+        const label = new Node('InfoText');
+        label.layer = Layers.Enum.UI_2D;
+        label.setParent(panel);
+        const lt = label.addComponent(UITransform);
+        lt.setContentSize(280, 200);
+        lt.setAnchorPoint(0.5, 0.5);
+        const ll = label.addComponent(Label);
+        ll.string = '';
+        ll.fontSize = 15;
+        ll.color = new Color(255, 255, 255, 255);
+        ll.lineHeight = 21;
+        ll.horizontalAlign = Label.HorizontalAlign.LEFT;
+        ll.verticalAlign = Label.VerticalAlign.CENTER;
+        ll.enableWrapText = true;
+
+        panel.setPosition(0, 130, 0);
+        panel.active = false;
+        this.towerInfoPanel = panel;
+        this.towerInfoPanelLabel = ll;
+    }
+
+    /** 展示指定塔的信息面板 */
+    private showTowerInfo(tower: TowerRuntime): void {
+        this.ensureTowerInfoPanel();
+        if (!this.towerInfoPanel || !this.towerInfoPanelLabel) return;
+        this.towerInfoPanelLabel.string = this.buildTowerInfoText(tower);
+        this.towerInfoPanel.active = true;
+        this.towerInfoTimer = 3.0;   // 3 秒后自动隐藏
+    }
+
+    /** 隐藏信息面板 */
+    private hideTowerInfo(): void {
+        if (this.towerInfoPanel) this.towerInfoPanel.active = false;
+        this.towerInfoTimer = 0;
+    }
+
+    /** 组装塔信息文本（DPS / 攻速 / 词缀 BUFF / 全局增益） */
+    private buildTowerInfoText(tower: TowerRuntime): string {
+        const def = tower.def;
+        const p = this.getTowerParams(tower);
+        const aps = 1 / p.interval;            // 每秒攻击次数
+        const lines: string[] = [];
+
+        lines.push(`${def.name}  ${tower.star === 2 ? '★★' : '★'}`);
+
+        // 词缀
+        const affixName = tower.affix
+            ? TOWER_AFFIXES[def.id]?.find(a => a.id === tower.affix)?.name ?? ''
+            : '';
+        const affixDesc = tower.affix
+            ? TOWER_AFFIXES[def.id]?.find(a => a.id === tower.affix)?.desc ?? ''
+            : '';
+
+        // 伤害 / 攻速 / DPS
+        lines.push(`伤害：${p.damage.toFixed(0)}`);
+        lines.push(`攻速：${aps.toFixed(2)} 次/秒`);
+        if (def.attackKind === 'bullet') {
+            let dps = p.damage * aps;
+            if (p.rapid) dps *= 1.25;          // 连发：每 4 次攻击追加一发 → 5 发/4 次
+            lines.push(`DPS：${dps.toFixed(1)}`);
+        }
+        lines.push(`射程：${p.range.toFixed(0)}`);
+
+        // 类型专属效果
+        if (def.id === 'poison') {
+            lines.push(`毒：${p.poisonDps.toFixed(1)}/s · ${p.poisonDuration.toFixed(1)}s`);
+        } else if (def.id === 'slow') {
+            lines.push(`减速：${Math.round((1 - p.slowMultiplier) * 100)}% · ${p.slowDuration.toFixed(1)}s`);
+        }
+        if (p.executeBonus > 0) {
+            lines.push(`处决：低血(<30%)增伤 ${Math.round(p.executeBonus * 100)}%`);
+        }
+
+        // 词缀效果描述
+        if (affixName) lines.push(`词缀：${affixName}（${affixDesc}）`);
+
+        // 全局 roguelike 增益（作用于所有塔）
+        const ts = this.towerStats;
+        const globals: string[] = [];
+        if (ts.damageBonus > 0) globals.push(`伤害+${Math.round(ts.damageBonus * 100)}%`);
+        if (ts.speedBonus > 0) globals.push(`攻速+${Math.round(ts.speedBonus * 100)}%`);
+        if (ts.rangeBonus > 0) globals.push(`范围+${Math.round(ts.rangeBonus * 100)}%`);
+        if (ts.splashLevel > 0) globals.push(`溅射Lv${ts.splashLevel}`);
+        if (ts.bleedLevel > 0) globals.push(`出血Lv${ts.bleedLevel}`);
+        if (ts.slowLevel > 0) globals.push(`减速Lv${ts.slowLevel}`);
+        if (ts.healSuppression > 0) globals.push(`治疗抑制${Math.round(ts.healSuppression * 100)}%`);
+        if (globals.length) lines.push(`全局增益：${globals.join(' ')}`);
+
+        return lines.join('\n');
+    }
+
+    // ============================================================
+    //  暂停时全局 buff 面板
+    // ============================================================
+
+    /** 懒创建全局 buff 面板 */
+    private ensureGlobalBuffPanel(): void {
+        if (this.globalBuffPanel) return;
+        const canvas = this.node;
+        const panel = new Node('GlobalBuffPanel');
+        panel.layer = Layers.Enum.UI_2D;
+        panel.setParent(canvas);
+        const t = panel.addComponent(UITransform);
+        t.setContentSize(320, 280);
+        t.setAnchorPoint(0.5, 0.5);
+        const g = panel.addComponent(Graphics);
+        g.fillColor = new Color(18, 20, 32, 235);
+        g.roundRect(-160, -140, 320, 280, 12);
+        g.fill();
+        g.strokeColor = new Color(255, 215, 120, 255);
+        g.lineWidth = 2;
+        g.roundRect(-160, -140, 320, 280, 12);
+        g.stroke();
+
+        const label = new Node('BuffText');
+        label.layer = Layers.Enum.UI_2D;
+        label.setParent(panel);
+        const lt = label.addComponent(UITransform);
+        lt.setContentSize(300, 260);
+        lt.setAnchorPoint(0.5, 0.5);
+        const ll = label.addComponent(Label);
+        ll.string = '';
+        ll.fontSize = 16;
+        ll.color = new Color(255, 255, 255, 255);
+        ll.lineHeight = 24;
+        ll.horizontalAlign = Label.HorizontalAlign.LEFT;
+        ll.verticalAlign = Label.VerticalAlign.CENTER;
+        ll.enableWrapText = true;
+
+        panel.setPosition(0, 40, 0);
+        panel.active = false;
+        this.globalBuffPanel = panel;
+        this.globalBuffLabel = ll;
+    }
+
+    /** 显示全局 buff 面板 */
+    private showGlobalBuffPanel(): void {
+        this.ensureGlobalBuffPanel();
+        if (!this.globalBuffPanel || !this.globalBuffLabel) return;
+        this.globalBuffLabel.string = this.buildGlobalBuffText();
+        this.globalBuffPanel.active = true;
+    }
+
+    /** 隐藏全局 buff 面板 */
+    private hideGlobalBuffPanel(): void {
+        if (this.globalBuffPanel) this.globalBuffPanel.active = false;
+    }
+
+    /** 组装全局 buff 文本（当前已累计的 roguelike 加成） */
+    private buildGlobalBuffText(): string {
+        const ts = this.towerStats;
+        const lines: string[] = ['全局强化'];
+        if (ts.damageBonus > 0) lines.push(`· 攻击伤害 +${Math.round(ts.damageBonus * 100)}%`);
+        if (ts.speedBonus > 0) lines.push(`· 攻速 +${Math.round(ts.speedBonus * 100)}%`);
+        if (ts.rangeBonus > 0) lines.push(`· 范围 +${Math.round(ts.rangeBonus * 100)}%`);
+        if (ts.splashLevel > 0) lines.push(`· 溅射 Lv${ts.splashLevel}（${ts.splashRadius}px / ${Math.round(ts.splashDamage * 100)}%）`);
+        if (ts.bleedLevel > 0) lines.push(`· 出血 Lv${ts.bleedLevel}（${Math.round(ts.bleedChance * 100)}% 施加 / ${Math.round(ts.critChance * 100)}% 暴击 / ${ts.critMultiplier}x 暴伤）`);
+        if (ts.slowLevel > 0) lines.push(`· 减速 Lv${ts.slowLevel}（${Math.round((1 - ts.slowMultiplier) * 100)}% / ${ts.slowDuration.toFixed(1)}s）`);
+        if (ts.healSuppression > 0) lines.push(`· 治疗抑制 ${Math.round(ts.healSuppression * 100)}%`);
+        if (lines.length === 1) lines.push('（暂无，波次间三选一可获取）');
+        return lines.join('\n');
     }
 
 }
