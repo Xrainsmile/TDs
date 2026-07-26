@@ -3,7 +3,8 @@
  *
  * 从 SceneInitializer.ts 抽出，集中管理：
  * - TowerStats：全局塔属性与 roguelike 加成累计
- * - BuffOption / ROGUELIKE_BUFFS：6 种 buff 选项定义
+ * - BuffOption / ROGUELIKE_BUFFS：7 种 buff 选项定义
+ * - BuildPath：构筑路线类型（firepower / poison / control / general）
  * - getBuffDisplay：根据当前加成动态生成卡片上展示的名称/描述
  *
  * SceneInitializer 通过 import 引用这些定义与函数。
@@ -51,49 +52,70 @@ export class TowerStats {
     }
 }
 
+/** 构筑路线类型 */
+export type BuildPath =
+    | 'firepower'   // 火力路线
+    | 'poison'      // 剧毒路线
+    | 'control'     // 控制路线
+    | 'general';    // 通用（不计入主构筑路线）
+
 /** Roguelike buff 选项定义 */
 export interface BuffOption {
     id: string;
     name: string;          // 显示名
     desc: string;          // 描述
     apply: (stats: TowerStats) => void;
+
+    path: BuildPath;       // 所属构筑路线
+    tier: number;          // 卡牌层级
+    requires: string[];    // 必须已选择的前置卡牌
+    excludes: string[];    // 选择后互斥的卡牌
+    minWave: number;       // 最早出现波次
+    maxStacks: number;     // 本局最多选择次数
 }
 
-/** 6 种 buff（每次随机选 3 种，玩家三选一） */
+/** 7 种 buff（每次随机选 3 种，玩家三选一） */
 export const ROGUELIKE_BUFFS: BuffOption[] = [
     {
         id: 'damage', name: '攻击伤害 +10%', desc: '所有塔伤害提升',
         apply: s => { s.damageBonus += 0.1; },
+        path: 'firepower', tier: 1, requires: [], excludes: [], minWave: 1, maxStacks: 99,
     },
     {
         id: 'speed', name: '攻速 +15%', desc: '所有塔攻击速度提升',
         apply: s => { s.speedBonus += 0.15; },
+        path: 'firepower', tier: 1, requires: [], excludes: [], minWave: 1, maxStacks: 99,
     },
     {
         id: 'range', name: '范围 +10%', desc: '所有塔攻击范围提升',
         apply: s => { s.rangeBonus += 0.1; },
+        path: 'general', tier: 1, requires: [], excludes: [], minWave: 1, maxStacks: 99,
     },
     {
         id: 'healSuppress', name: '治疗抑制', desc: '命中治疗兵使其沉默2秒，并削弱其治疗量',
         apply: s => { s.healSuppression += 0.4; },
+        path: 'general', tier: 1, requires: [], excludes: [], minWave: 1, maxStacks: 99,
     },
     {
         id: 'splash',
         name: '溅射爆炸',
         desc: '',  // 动态生成，见 getBuffDisplay
         apply: s => { s.splashLevel += 1; },
+        path: 'poison', tier: 1, requires: [], excludes: [], minWave: 1, maxStacks: 99,
     },
     {
         id: 'bleed',
         name: '出血',
         desc: '',  // 动态生成，见 getBuffDisplay
         apply: s => { s.bleedLevel += 1; },
+        path: 'poison', tier: 1, requires: [], excludes: [], minWave: 1, maxStacks: 99,
     },
     {
         id: 'slow',
         name: '减速强化',
         desc: '',  // 动态生成，见 getBuffDisplay
         apply: s => { s.slowLevel += 1; },
+        path: 'control', tier: 1, requires: [], excludes: [], minWave: 1, maxStacks: 99,
     },
 ];
 

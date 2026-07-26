@@ -2,7 +2,7 @@ import { _decorator, Component, Node, view, UITransform, Layers, Vec3, Graphics,
 import { HUD } from '../ui/HUD';
 import { EffectManager } from './EffectManager';
 import { EnemyType } from './Constants';
-import { TowerStats, BuffOption, ROGUELIKE_BUFFS, getBuffDisplay } from './RoguelikeCards';
+import { TowerStats, BuffOption, BuildPath, ROGUELIKE_BUFFS, getBuffDisplay } from './RoguelikeCards';
 import {
     ENEMY_SPEED, BULLET_SPEED,
     INITIAL_GOLD, KILL_REWARD, WAVE_BONUSES,
@@ -366,6 +366,11 @@ export class SceneInitializer extends Component {
     private buffCardLabels: { name: Label; desc: Label }[] = [];
     private currentBuffChoices: BuffOption[] = [];
     private buffSelected = false;             // 本轮是否已选 buff
+
+    // 本局构筑状态
+    private selectedBuffIds: string[] = [];   // 已选卡牌 id（同 id 只保留一次）
+    private buffPickCounts: Record<string, number> = {};  // 各卡牌已选次数
+    private mainBuildPath: Exclude<BuildPath, 'general'> | null = null;  // 主构筑路线
     /** 是否正在三选一选卡（波次间暂停且未选 buff） */
     private get isBuffSelecting(): boolean { return this.isWavePaused && !this.buffSelected; }
 
@@ -407,6 +412,8 @@ export class SceneInitializer extends Component {
 
 
     protected start(): void {
+        // 启动时校验卡牌配置（仅 console.error 报告，不修改数据）
+        SceneInitializer.validateBuffConfigs();
         // 设计分辨率 640x960，策略 3 = ResolutionPolicy.FIXED_WIDTH：
         // 宽度固定 640，高度随设备比例拉伸，竖屏适配（顶部 HUD / 底部塔卡栏 / 中央战场）
         view.setDesignResolutionSize(640, 960, 3);
@@ -573,6 +580,9 @@ export class SceneInitializer extends Component {
                 return;
             }
 
+            // 1.2 全局暂停（⏸）：除「继续」按钮外，禁止一切交互（召唤/挪动/合并）
+            if (this.isUserPaused) return;
+
             // 1.4 三选一选卡期间：禁止召唤、移动、交换、合并（卡片点击已在 0a 处理并返回）
             if (this.isBuffSelecting) return;
 
@@ -581,9 +591,6 @@ export class SceneInitializer extends Component {
                 this.spendRandomTower();
                 return;
             }
-
-            // 2. 游戏暂停时完全冻结，不允许拖拽
-            if (this.isUserPaused) return;
 
             // 3. 判断是否点中了已建好的塔（长按开始移动；无点击菜单）
             let hitTower = -1;
@@ -604,6 +611,7 @@ export class SceneInitializer extends Component {
         });
 
         canvas.on(Node.EventType.TOUCH_MOVE, (event: EventTouch) => {
+            if (this.isUserPaused) return;  // 全局暂停时禁止拖动
             if (!this.isDragging) return;
             const local = this.eventToGameLocal(event);
             this.ghostNode!.setPosition(local);
@@ -611,6 +619,7 @@ export class SceneInitializer extends Component {
         });
 
         canvas.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
+            if (this.isUserPaused) return;  // 全局暂停时禁止松手合并/弹信息
             // 长按未触发（短按）→ 展示塔信息面板
             if (!this.isDragging && this.pendingTower >= 0) {
                 const t = this.towers[this.pendingTower];
@@ -865,6 +874,71 @@ export class SceneInitializer extends Component {
      * - 已获得溅射：溅射强化仍可出现
      * - 减速塔较多（≥2）：提高攻速/范围出现率
      */
+    /**
+     * 卡牌配置校验（启动时调用）。发现错误仅通过 console.error 报告，不修改数据。
+     * 校验项：ID 重复 / requires、excludes 引用存在 / 自引用 / tier>0 / minWave>=1 / maxStacks>0
+     */
+    private static validateBuffConfigs(): void {
+        const buffs = ROGUELIKE_BUFFS;
+        const ids = buffs.map(b => b.id);
+        for (const buff of buffs) {
+            // ID 重复
+            const dupCount = ids.filter(id => id === buff.id).length;
+            if (dupCount > 1) {
+                console.error(`[BuffConfig] 卡牌ID重复: "${buff.id}"（出现 ${dupCount} 次）`);
+            }
+            // 自引用
+            if (buff.requires.includes(buff.id) || buff.excludes.includes(buff.id)) {
+                console.error(`[BuffConfig] 卡牌 "${buff.id}" 引用了自身`);
+            }
+            // requires 引用存在
+            for (const req of buff.requires) {
+                if (!ids.includes(req)) {
+                    console.error(`[BuffConfig] 卡牌 "${buff.id}" 的 requires 引用了不存在的卡牌 "${req}"`);
+                }
+            }
+            // excludes 引用存在
+            for (const ex of buff.excludes) {
+                if (!ids.includes(ex)) {
+                    console.error(`[BuffConfig] 卡牌 "${buff.id}" 的 excludes 引用了不存在的卡牌 "${ex}"`);
+                }
+            }
+            // tier > 0
+            if (!(buff.tier > 0)) {
+                console.error(`[BuffConfig] 卡牌 "${buff.id}" 的 tier 必须 > 0（当前 ${buff.tier}）`);
+            }
+            // minWave >= 1
+            if (buff.minWave < 1) {
+                console.error(`[BuffConfig] 卡牌 "${buff.id}" 的 minWave 必须 >= 1（当前 ${buff.minWave}）`);
+            }
+            // maxStacks > 0
+            if (!(buff.maxStacks > 0)) {
+                console.error(`[BuffConfig] 卡牌 "${buff.id}" 的 maxStacks 必须 > 0（当前 ${buff.maxStacks}）`);
+            }
+        }
+    }
+
+    /**
+     * 卡牌资格判断：当前波次 / 前置 / 互斥 / 次数限制
+     * - 当前波次不得低于 minWave
+     * - requires 中的卡牌必须全部已选择
+     * - excludes 中任意卡牌已选择时，该卡不得出现
+     * - 当前选择次数达到 maxStacks 后，该卡不得出现
+     */
+    private isBuffEligible(buff: BuffOption): boolean {
+        const wave = this.currentWave;  // 选卡发生在波次间，currentWave 已指向下一波
+        if (wave < buff.minWave) return false;
+        for (const req of buff.requires) {
+            if (!this.selectedBuffIds.includes(req)) return false;
+        }
+        for (const ex of buff.excludes) {
+            if (this.selectedBuffIds.includes(ex)) return false;
+        }
+        const picked = this.buffPickCounts[buff.id] ?? 0;
+        if (picked >= buff.maxStacks) return false;
+        return true;
+    }
+
     private buildBuffPool(): { buff: BuffOption; weight: number }[] {
         const stats = this.towerStats;
         // 统计当前塔类型
@@ -882,6 +956,11 @@ export class SceneInitializer extends Component {
         const pool: { buff: BuffOption; weight: number }[] = [];
 
         for (const buff of ROGUELIKE_BUFFS) {
+            // 资格判断（前置/互斥/波次/次数），不通过则不进卡池
+            if (!this.isBuffEligible(buff)) {
+                continue;
+            }
+
             let weight = 1;  // 默认权重
 
             // 规则1：没有毒塔时，溅射/出血不出现（毒塔专属）
@@ -977,6 +1056,14 @@ export class SceneInitializer extends Component {
             EffectManager.instance?.playCardSelected(this.buffCards[index], display.name);
         }
         buff.apply(this.towerStats);
+        // 记录本局构筑状态
+        if (!this.selectedBuffIds.includes(buff.id)) {
+            this.selectedBuffIds.push(buff.id);
+        }
+        this.buffPickCounts[buff.id] = (this.buffPickCounts[buff.id] ?? 0) + 1;
+        if (this.mainBuildPath === null && buff.path !== 'general') {
+            this.mainBuildPath = buff.path;
+        }
         this.buffSelected = true;
         // 延迟隐藏卡片，让特效播放完
         this.scheduleOnce(() => this.hideBuffCards(), 0.3);
@@ -1346,6 +1433,7 @@ export class SceneInitializer extends Component {
 
     /** 长按计时器触发：直接开始移动塔 */
     private onLongPressMove(): void {
+        if (this.isUserPaused) return;     // 全局暂停时禁止发起移动/合并
         if (this.isBuffSelecting) return;  // 选卡期间禁止发起移动
         const idx = this.pendingTower;
         this.pendingTower = -1;
@@ -2184,6 +2272,9 @@ export class SceneInitializer extends Component {
         this.buffSelected = false;
         this.currentBuffChoices = [];
         this.towerStats.reset();
+        this.selectedBuffIds = [];
+        this.buffPickCounts = {};
+        this.mainBuildPath = null;
         this.hideBuffCards();
         this.updatePauseButton();
         this.hideGlobalBuffPanel();
