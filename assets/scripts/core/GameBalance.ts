@@ -17,8 +17,8 @@ export const ENEMY_SPEED = 80;
 export const BULLET_SPEED = 500;
 
 // ===== 金币 =====
-export const INITIAL_GOLD = 30;
-export const KILL_REWARD = 0;
+export const INITIAL_GOLD = 30;   // 开局金币
+export const KILL_REWARD = 5;     // 每击杀一个敌人奖励
 export const WAVE_BONUSES = [30, 30, 30, 30, 30, 30, 30];
 
 // ===== 倒计时 =====
@@ -116,7 +116,7 @@ export const WAVES: WaveConfig[] = [
         { time: 12.6, type: EnemyType.NORMAL, hp: 160 },  { time: 13.5, type: EnemyType.HEALER, hp: 200 },
         { time: 14.4, type: EnemyType.NORMAL, hp: 160 },  { time: 15.3, type: EnemyType.NORMAL, hp: 160 },
     ]},
-    // Wave 4（最终波）：16 普通(HP=240) + 3 治疗(HP=200) + 2 精英(HP=350) 穿插，每 0.8s 一只（约 25s）
+    // Wave 4：17 普通(HP=240) + 3 治疗(HP=200) + 2 精英(HP=300) 穿插，每 0.8s 一只（共 22 只，约 25s）
     { entries: [
         { time: 0.0,  type: EnemyType.NORMAL, hp: 240 },  { time: 0.8,  type: EnemyType.NORMAL, hp: 240 },
         { time: 1.6,  type: EnemyType.NORMAL, hp: 240 },  { time: 2.4,  type: EnemyType.HEALER, hp: 200 },
@@ -143,7 +143,7 @@ export const WAVES: WaveConfig[] = [
         { time: 12.0, type: EnemyType.NORMAL, hp: 340 },  { time: 12.75,type: EnemyType.NORMAL, hp: 340 },
         { time: 13.5, type: EnemyType.NORMAL, hp: 340 },  { time: 14.25,type: EnemyType.NORMAL, hp: 340 },
     ]},
-    // Wave 6：20 只，普通 HP=460 + 3 治疗(HP=200) + 2 精英(HP=500)，每 0.7s 一只
+    // Wave 6：22 只，普通 HP=460 + 3 治疗(HP=200) + 2 精英(HP=500)，每 0.7s 一只
     { entries: [
         { time: 0.0,  type: EnemyType.NORMAL, hp: 460 },  { time: 0.7,  type: EnemyType.NORMAL, hp: 460 },
         { time: 1.4,  type: EnemyType.NORMAL, hp: 460 },  { time: 2.1,  type: EnemyType.HEALER, hp: 200 },
@@ -157,7 +157,7 @@ export const WAVES: WaveConfig[] = [
         { time: 12.6, type: EnemyType.NORMAL, hp: 460 },  { time: 13.3, type: EnemyType.NORMAL, hp: 460 },
         { time: 14.0, type: EnemyType.NORMAL, hp: 460 },  { time: 14.7, type: EnemyType.NORMAL, hp: 460 },
     ]},
-    // Wave 7（最终波）：普通 HP=600 + 2 治疗 + 2 精英(HP=400) + 1 BOSS(HP=600，×10=6000)，每 0.7s 一只
+    // Wave 7（最终波）：23 只，普通 HP=600 + 2 治疗 + 2 精英(HP=400) + 1 BOSS(HP=600，×10=6000)，每 0.7s 一只
     { entries: [
         { time: 0.0,  type: EnemyType.NORMAL, hp: 600 },  { time: 0.7,  type: EnemyType.NORMAL, hp: 600 },
         { time: 1.4,  type: EnemyType.NORMAL, hp: 600 },  { time: 2.1,  type: EnemyType.HEALER, hp: 200 },
