@@ -2,7 +2,15 @@ import { _decorator, Component, Node, view, UITransform, Layers, Vec3, Graphics,
 import { HUD } from '../ui/HUD';
 import { EffectManager } from './EffectManager';
 import { EnemyType } from './Constants';
-import { TowerStats, BuffOption, BuildPath, ROGUELIKE_BUFFS, getBuffDisplay } from './RoguelikeCards';
+import { TowerStats, BuildPath } from './RoguelikeCards';
+// 新卡牌/强化统一数据层（assets/scripts/core/cards/）
+import { WAVE_BUFFS } from './cards/BuffRegistry';
+import { DRAW_CARDS } from './cards/CardRegistry';
+import { meetsUnlock, triggersExclude } from './cards/ConditionEvaluator';
+import { computeWeight } from './cards/WeightCalculator';
+import { executeEffects } from './cards/EffectExecutor';
+import { RunBuildState } from './cards/RunBuildState';
+import { WaveBuffDefinition, GameSnapshot } from './cards/types';
 import {
     ENEMY_SPEED, BULLET_SPEED,
     INITIAL_GOLD, KILL_REWARD, WAVE_BONUSES,
@@ -21,8 +29,9 @@ import {
 
 /** 手牌卡定义 */
 interface CardDef {
-    kind: 'tower' | 'hammer';
-    towerId?: string;   // kind==='tower' 时的塔 id
+    sourceId: string;       // 对应 DrawCardDefinition.id
+    kind: 'tower' | 'hammer' | 'modifier' | 'tactic';
+    towerId?: string;       // kind==='tower' 时的塔 id
     name: string;
     desc: string;
     color: Color;
@@ -75,6 +84,7 @@ interface TowerRuntime {
     def: TowerDef;
     star: number;            // 1 = 一星, 2 = 二星
     affix: AffixId | null;   // 一星为 null，二星随机获得一个
+    modifiers: string[];     // 改造词缀（modifier 卡叠加，如 'split'）
 
     attackCount: number;     // 攻击计数（连发词缀用）
     disabledTimer: number;   // BOSS 技能导致的停火倒计时（>0 时该塔不攻击）
@@ -390,12 +400,11 @@ export class SceneInitializer extends Component {
     private towerStats = new TowerStats();
     private buffCards: Node[] = [];          // 3 张 buff 卡片
     private buffCardLabels: { name: Label; desc: Label }[] = [];
-    private currentBuffChoices: BuffOption[] = [];
+    private currentBuffChoices: WaveBuffDefinition[] = [];
     private buffSelected = false;             // 本轮是否已选 buff
 
-    // 本局构筑状态
-    private selectedBuffIds: string[] = [];   // 已选卡牌 id（同 id 只保留一次）
-    private buffPickCounts: Record<string, number> = {};  // 各卡牌已选次数
+    // 本局构筑状态（统一数据层：RunBuildState 记录 Buff/分支/层数/流派标签）
+    private runBuild = new RunBuildState();
     private mainBuildPath: Exclude<BuildPath, 'general'> | null = null;  // 主构筑路线
     /** 是否正在三选一选卡（波次间暂停且未选 buff） */
     private get isBuffSelecting(): boolean { return this.isWavePaused && !this.buffSelected; }
@@ -955,151 +964,91 @@ export class SceneInitializer extends Component {
      */
     /**
      * 卡牌配置校验（启动时调用）。发现错误仅通过 console.error 报告，不修改数据。
-     * 校验项：ID 重复 / requires、excludes 引用存在 / 自引用 / tier>0 / minWave>=1 / maxStacks>0
+     * 校验项（新数据层）：三选一与手牌的 ID 各自唯一且不跨表冲突；
+     * unlockConditions/excludeConditions/weightRules 引用合法；minWave>=1；maxStacks>0；
+     * 效果 effects 非空（waveBuff 必需）。
      */
     private static validateBuffConfigs(): void {
-        const buffs = ROGUELIKE_BUFFS;
-        const ids = buffs.map(b => b.id);
-        for (const buff of buffs) {
-            // ID 重复
-            const dupCount = ids.filter(id => id === buff.id).length;
-            if (dupCount > 1) {
-                console.error(`[BuffConfig] 卡牌ID重复: "${buff.id}"（出现 ${dupCount} 次）`);
-            }
-            // 自引用
-            if (buff.requires.includes(buff.id) || buff.excludes.includes(buff.id)) {
-                console.error(`[BuffConfig] 卡牌 "${buff.id}" 引用了自身`);
-            }
-            // requires 引用存在
-            for (const req of buff.requires) {
-                if (!ids.includes(req)) {
-                    console.error(`[BuffConfig] 卡牌 "${buff.id}" 的 requires 引用了不存在的卡牌 "${req}"`);
+        const all: { id: string; where: string }[] = [];
+        const check = (opts: { id: string; minWave: number; maxStacks: number; effects: unknown[]; where: string }[]) => {
+            for (const o of opts) {
+                if (all.some(x => x.id === o.id)) {
+                    console.error(`[BuffConfig] 卡牌ID重复: "${o.id}"（跨表冲突）`);
                 }
+                all.push({ id: o.id, where: o.where });
+                if (o.minWave < 1) console.error(`[BuffConfig] "${o.id}" minWave 必须 >=1（${o.minWave}）`);
+                if (!(o.maxStacks > 0)) console.error(`[BuffConfig] "${o.id}" maxStacks 必须 >0（${o.maxStacks}）`);
+                if (o.effects.length === 0) console.error(`[BuffConfig] "${o.id}" 缺少 effects 配置`);
             }
-            // excludes 引用存在
-            for (const ex of buff.excludes) {
-                if (!ids.includes(ex)) {
-                    console.error(`[BuffConfig] 卡牌 "${buff.id}" 的 excludes 引用了不存在的卡牌 "${ex}"`);
-                }
-            }
-            // tier > 0
-            if (!(buff.tier > 0)) {
-                console.error(`[BuffConfig] 卡牌 "${buff.id}" 的 tier 必须 > 0（当前 ${buff.tier}）`);
-            }
-            // minWave >= 1
-            if (buff.minWave < 1) {
-                console.error(`[BuffConfig] 卡牌 "${buff.id}" 的 minWave 必须 >= 1（当前 ${buff.minWave}）`);
-            }
-            // maxStacks > 0
-            if (!(buff.maxStacks > 0)) {
-                console.error(`[BuffConfig] 卡牌 "${buff.id}" 的 maxStacks 必须 > 0（当前 ${buff.maxStacks}）`);
-            }
-        }
+        };
+        check(WAVE_BUFFS.map(b => ({ id: b.id, minWave: b.minWave, maxStacks: b.maxStacks, effects: b.effects, where: 'waveBuff' })));
+        check(DRAW_CARDS.map(c => ({ id: c.id, minWave: c.minWave, maxStacks: c.maxStacks, effects: c.effects, where: 'drawCard' })));
     }
 
     /**
-     * 场景条件判断（封装为独立函数，抽取与补位共用同一套判断）
-     * - splash / bleed 需场上有毒塔（poison）
-     * - slow 需场上有减速塔（slow）
-     * 返回 true 表示当前局面允许该卡出现；其余场景相关加权逻辑（如治疗抑制增权）
-     * 仅影响权重，不影响资格，不在此处理。
+     * 构建当前局面快照（喂给条件/权重评估）：棋盘状态 + 场上塔 + 本局构筑。
+     * 评估时塔标签取空数组（旧场景条件已改为按 towerId 判断，无需塔标签）。
      */
-    private isBuffSceneEligible(buff: BuffOption): boolean {
-        const towerCounts: Record<string, number> = {};
-        for (const t of this.towers) {
-            towerCounts[t.def.id] = (towerCounts[t.def.id] ?? 0) + 1;
-        }
-        const hasPoisonTower = (towerCounts['poison'] ?? 0) > 0;
-        const slowTowerCount = towerCounts['slow'] ?? 0;
-
-        // 毒塔专属：无中毒塔则溅射/出血不出现
-        if ((buff.id === 'splash' || buff.id === 'bleed') && !hasPoisonTower) return false;
-        // 减速塔专属：无减速塔则减速强化不出现
-        if (buff.id === 'slow' && slowTowerCount === 0) return false;
-        return true;
+    private buildSnapshot(): GameSnapshot {
+        const board = {
+            hasEmptyTile: this.slotPositions.some((_, i) => !this.slotOccupied[i] && !this.lockedSlots[i]),
+            hasLockedTile: this.lockedSlots.some(l => l),
+            boardFull: this.slotPositions.every((_, i) => this.slotOccupied[i] || this.lockedSlots[i]),
+        };
+        const towers = this.towers.map(t => ({ id: t.def.id, tags: [] as string[] }));
+        return this.runBuild.toSnapshot(board, towers, this.currentWave);
     }
 
     /**
-     * 卡牌资格判断（抽取与补位共用）：配置前置 + 场景条件
-     * 配置前置：
-     * - 当前波次不得低于 minWave
-     * - requires 中的卡牌必须全部已选择
-     * - excludes 中任意卡牌已选择时，该卡不得出现
-     * - 当前选择次数达到 maxStacks 后，该卡不得出现
-     * 场景条件：见 isBuffSceneEligible
-     * 两者任一不满足即不合格，补位不得绕过任何一项。
+     * 卡牌资格判断（抽取与补位共用）：波次区间 + 次数上限 + 结构化前置/互斥。
+     * 场景条件（如 splash/bleed 需毒塔、slow 需减速塔）已写入各 Buff 的 unlockConditions，
+     * 由 ConditionEvaluator.meetsUnlock 统一评估，与补位共用同一套，绝不绕过。
      */
-    private isBuffEligible(buff: BuffOption): boolean {
+    private isBuffEligible(buff: WaveBuffDefinition): boolean {
         const wave = this.currentWave;  // 选卡发生在波次间，currentWave 已指向下一波
         if (wave < buff.minWave) return false;
-        for (const req of buff.requires) {
-            if (!this.selectedBuffIds.includes(req)) return false;
-        }
-        for (const ex of buff.excludes) {
-            if (this.selectedBuffIds.includes(ex)) return false;
-        }
-        const picked = this.buffPickCounts[buff.id] ?? 0;
-        if (picked >= buff.maxStacks) return false;
-        if (!this.isBuffSceneEligible(buff)) return false;
+        if (buff.maxWave !== undefined && wave > buff.maxWave) return false;
+        if (this.runBuild.stacksOf(buff.id) >= buff.maxStacks) return false;
+        const snap = this.buildSnapshot();
+        if (!meetsUnlock(buff, snap)) return false;
+        if (triggersExclude(buff, snap)) return false;
         return true;
     }
 
-    private buildBuffPool(): { buff: BuffOption; weight: number }[] {
-        const stats = this.towerStats;
+    private buildBuffPool(): { buff: WaveBuffDefinition; weight: number }[] {
+        const snap = this.buildSnapshot();
 
-        // 检查下一波是否有治疗兵
+        // 下一波是否有治疗兵（运行期特殊加权，经保底补偿注入）
         const nextWave = this.WAVES[this.currentWave];  // currentWave 已 +1，指向下一波
         const nextWaveHasHealer = nextWave?.entries.some(e => e.type === EnemyType.HEALER) ?? false;
 
-        // 统计减速塔数量（仅用于增权，不影响资格）
-        const towerCounts: Record<string, number> = {};
-        for (const t of this.towers) {
-            towerCounts[t.def.id] = (towerCounts[t.def.id] ?? 0) + 1;
-        }
-        const slowTowerCount = towerCounts['slow'] ?? 0;
+        const pool: { buff: WaveBuffDefinition; weight: number }[] = [];
 
-        const pool: { buff: BuffOption; weight: number }[] = [];
+        for (const buff of WAVE_BUFFS) {
+            // 资格判断（波次/次数/前置/互斥/场景条件），不通过则不进卡池
+            if (!this.isBuffEligible(buff)) continue;
 
-        for (const buff of ROGUELIKE_BUFFS) {
-            // 资格判断（前置/互斥/波次/次数/场景条件），不通过则不进卡池
-            // 抽取与补位共用 isBuffEligible，任何分支卡都不会绕过前置/互斥
-            if (!this.isBuffEligible(buff)) {
-                continue;
-            }
+            // 运行期特殊加权：下一波有治疗兵时，治疗抑制显著增权（近似旧 weight=5）
+            let pity = 0;
+            if (buff.id === 'healSuppress' && nextWaveHasHealer) pity += 400;
 
-            let weight = 1;  // 默认权重
-
-            // 规则2：下一波有治疗兵时，提高治疗抑制出现率
-            if (buff.id === 'healSuppress' && nextWaveHasHealer) {
-                weight = 5;
-            }
-
-            // 规则4：减速塔较多（≥2）时，提高攻速/范围出现率
-            if (slowTowerCount >= 2 && (buff.id === 'speed' || buff.id === 'range')) {
-                weight = 3;
-            }
-
-            // 流派深化增权：已解锁的 buff 提高权重，鼓励同一流派继续强化
-            if (buff.id === 'splash' && stats.splashLevel > 0) weight = Math.max(weight, 2);
-            if (buff.id === 'bleed' && stats.bleedLevel > 0) weight = Math.max(weight, 2);
-
-            // 首次解锁抑制：尚未获得溅射时，相对权重压到 0.2（在加权随机池中占比低，
-            // 但不等于 20% 绝对概率；权重含义见 buildBuffPool 的加权随机抽取）。
-            // 实际伤害上限已由 TowerStats 降低（Lv1: 43px/30%），此处仅延缓首次解锁节奏。
-            if (buff.id === 'splash' && stats.splashLevel === 0) weight = 0.2;
-
+            // 动态权重 = baseWeight × 倍率 + 额外 + 保底补偿（由 ConditionEvaluator + WeightCalculator 统一计算）
+            const weight = computeWeight(
+                { baseWeight: buff.baseWeight, weightRules: buff.weightRules, pityBonus: pity },
+                snap,
+            );
             pool.push({ buff, weight });
         }
 
-        // 安全降级：合格卡不足 3 张时，从全量卡中优先挑选其它「仍有效」的通用卡补位。
+        // 安全降级：合格卡不足 3 张时，从全量卡中优先挑选其它「仍有效」的卡补位。
         // 补位同样走 isBuffEligible 全量资格判断，绝不允许绕过前置/互斥/波次/场景条件。
         if (pool.length < 3) {
             const inPool = new Set(pool.map(p => p.buff.id));
-            for (const buff of ROGUELIKE_BUFFS) {
+            for (const buff of WAVE_BUFFS) {
                 if (pool.length >= 3) break;
                 if (inPool.has(buff.id)) continue;
                 if (!this.isBuffEligible(buff)) continue;   // 补位不得绕过任何前置/互斥
-                pool.push({ buff, weight: 1 });
+                pool.push({ buff, weight: buff.baseWeight });
                 inPool.add(buff.id);
             }
         }
@@ -1131,7 +1080,7 @@ export class SceneInitializer extends Component {
         for (let i = 0; i < choiceCount; i++) {
             const card = this.buffCards[i];
             const buff = this.currentBuffChoices[i];
-            const display = getBuffDisplay(buff, this.towerStats);
+            const display = { name: buff.name, desc: buff.description };
             card.active = true;
             if (this.buffCardLabels[i].name) {
                 this.buffCardLabels[i].name.string = display.name;
@@ -1158,19 +1107,18 @@ export class SceneInitializer extends Component {
     private applyBuffChoice(index: number): void {
         const buff = this.currentBuffChoices[index];
         if (!buff) return;
-        const display = getBuffDisplay(buff, this.towerStats);
+        const display = { name: buff.name, desc: buff.description };
         // 选卡反馈特效
         if (this.buffCards[index]) {
             EffectManager.instance?.playCardSelected(this.buffCards[index], display.name);
         }
-        buff.apply(this.towerStats);
-        // 记录本局构筑状态
-        if (!this.selectedBuffIds.includes(buff.id)) {
-            this.selectedBuffIds.push(buff.id);
-        }
-        this.buffPickCounts[buff.id] = (this.buffPickCounts[buff.id] ?? 0) + 1;
-        if (this.mainBuildPath === null && buff.path !== 'general') {
-            this.mainBuildPath = buff.path;
+        // 统一效果执行器：按 effects 配置应用到本局（modifyStat 直接改 towerStats）
+        executeEffects(buff.effects, this.effectContext());
+        // 记录本局构筑状态（Buff/分支/层数/流派标签）
+        this.runBuild.record(buff);
+        const bp = buff.buildPaths.find(p => p !== 'general');
+        if (this.mainBuildPath === null && bp) {
+            this.mainBuildPath = bp as Exclude<BuildPath, 'general'>;
         }
         this.buffSelected = true;
         this.refreshSpendButton();   // 三选一结束：恢复抽卡按钮可用性判定
@@ -1184,6 +1132,40 @@ export class SceneInitializer extends Component {
         this.isWavePaused = false;
         this.startNextWave();
         console.log(`Roguelike 选择: ${display.name}`);
+    }
+
+    /** 构建效果执行上下文：运行主流程在此注入具体棋盘/塔/敌人操作 */
+    private effectContext() {
+        return {
+            towerStats: this.towerStats,
+            // 战术卡：冻结全场（以强减速实现，复用现有 slow 系统）
+            addStatusToEnemies: (status: string, duration: number, chance?: number) => {
+                for (const e of this.enemies) {
+                    if (chance !== undefined && Math.random() >= chance) continue;
+                    e.slowTimer = Math.max(e.slowTimer, duration);
+                    e.slowMultiplier = status === 'freeze' ? 0.4 : 0.6;
+                }
+            },
+            // 战术卡：全场伤害（扣血，死亡交由 update 既有逻辑处理）
+            dealDamageToEnemies: (amount: number) => {
+                for (const e of this.enemies) {
+                    e.hp -= amount;
+                }
+            },
+            // 改造卡：为指定塔附加词缀（记录到 tower.modifiers，供后续玩法扩展）
+            addModifierToTower: (towerId: string, modifierId: string) => {
+                const t = this.towers.find(tw => tw.def.id === towerId);
+                if (t && !t.modifiers.includes(modifierId)) {
+                    t.modifiers.push(modifierId);
+                    this.setTowerBadge(t);
+                }
+            },
+            // 锄头：兜底解锁第一个灰格（手牌拖放的精确解锁仍走 useHammer）
+            unlockTile: () => {
+                const i = this.lockedSlots.findIndex(l => l);
+                if (i >= 0) { this.lockedSlots[i] = false; this.redrawSlot(i, false); }
+            },
+        };
     }
 
     /** 隐藏所有 buff 卡片 */
@@ -2302,13 +2284,17 @@ export class SceneInitializer extends Component {
         if (this.statusLabel) this.statusLabel.string = '已结束选牌';
     }
 
-    /** 单张手牌是否可用：塔牌=存在开放空格 或 场上同型一星塔；锄头=存在未解锁灰格 */
+    /** 单张手牌是否可用：塔牌=空格或同型可升级塔；锄头=灰格；改造=有塔；战术=随时 */
     private isHandCardUsable(card: CardDef): boolean {
         if (card.kind === 'hammer') return this.lockedSlots.some(l => l);
-        // 塔卡：有开放空格可放，或存在可升级的同型一星塔
-        const hasFreeSlot = this.slotPositions.some((_, i) => !this.slotOccupied[i] && !this.lockedSlots[i]);
-        if (hasFreeSlot) return true;
-        return this.towers.some(t => t.def.id === card.towerId && t.star < SceneInitializer.MAX_STAR);
+        if (card.kind === 'tower') {
+            const hasFreeSlot = this.slotPositions.some((_, i) => !this.slotOccupied[i] && !this.lockedSlots[i]);
+            if (hasFreeSlot) return true;
+            return this.towers.some(t => t.def.id === card.towerId && t.star < SceneInitializer.MAX_STAR);
+        }
+        if (card.kind === 'modifier') return this.towers.length > 0;   // 需有塔可改造
+        if (card.kind === 'tactic') return true;                       // 即时战场效果，随时可用
+        return false;
     }
 
     /** 判断剩余手牌中是否还有可用的卡（用于剩余牌全部无效时自动结束） */
@@ -2473,8 +2459,7 @@ export class SceneInitializer extends Component {
         this.buffSelected = false;
         this.currentBuffChoices = [];
         this.towerStats.reset();
-        this.selectedBuffIds = [];
-        this.buffPickCounts = {};
+        this.runBuild.reset();
         this.mainBuildPath = null;
         this.hideBuffCards();
         this.updatePauseButton();
@@ -2677,6 +2662,23 @@ export class SceneInitializer extends Component {
         this.refreshHandCardUsability();   // 撬开灰格后刷新手牌可用性（锄头/塔卡可能转为可用）
     }
 
+    /** 取改造卡对应的 modifierId（从 effects 的 addModifier 参数解析） */
+    private modifierIdOf(cardId: string): string | null {
+        const def = DRAW_CARDS.find(c => c.id === cardId);
+        const eff = def?.effects.find(e => e.effectType === 'addModifier');
+        const id = eff?.parameters?.modifierId;
+        return id !== undefined ? String(id) : null;
+    }
+
+    /** 为指定塔附加改造词缀（记录到 tower.modifiers，供后续玩法扩展） */
+    private applyModifierToTower(tower: TowerRuntime, modId: string): void {
+        if (!tower.modifiers.includes(modId)) {
+            tower.modifiers.push(modId);
+            this.setTowerBadge(tower);
+            if (this.statusLabel) this.statusLabel.string = `${tower.def.name} 获得改造：${modId}`;
+        }
+    }
+
     // ============================================================
     //  卡牌系统：抽卡 / 手牌 UI / 拖放使用
     // ============================================================
@@ -2707,7 +2709,18 @@ export class SceneInitializer extends Component {
 
     /** 按规则构建 5 张手牌 */
     private buildHandCards(): CardDef[] {
+        const snap = this.buildSnapshot();
         const hasLocked = this.lockedSlots.some(l => l);
+
+        // 候选卡：按新数据层条件过滤（波次/次数/前置/互斥/场景）
+        const candidates = DRAW_CARDS.filter(c => {
+            if (this.currentWave < c.minWave) return false;
+            if (c.maxWave !== undefined && this.currentWave > c.maxWave) return false;
+            if (this.runBuild.stacksOf(c.id) >= c.maxStacks) return false;
+            if (!meetsUnlock(c, snap)) return false;
+            if (triggersExclude(c, snap)) return false;
+            return true;
+        });
 
         // 锄头数量（0 或 1）：最多一张；无锁定格则退出牌池并清零计数
         let hammerCount = 0;
@@ -2723,30 +2736,31 @@ export class SceneInitializer extends Component {
         }
 
         const towerCount = 5 - hammerCount;
-        const towers: CardDef[] = [];
+        const result: CardDef[] = [];
 
-        // 前两次刷新保证基础塔类型相对完整
+        // 前两次刷新保证基础塔类型相对完整（从候选中挑 tower 类）
+        const towerCands = candidates.filter(c => c.contentType === 'tower');
         if (this.drawCount < 2 && towerCount >= 3) {
-            towers.push(this.makeTowerCard('attack'));
-            towers.push(this.makeTowerCard('slow'));
-            towers.push(this.makeTowerCard('poison'));
-        }
-        while (towers.length < towerCount) {
-            // 加权随机（attack 权重更高），允许重复
-            const weights = this.TOWER_REGISTRY.map(t => (t.id === 'attack' ? 2 : 1));
-            const total = weights.reduce((s, w) => s + w, 0);
-            let r = Math.random() * total;
-            let idx = 0;
-            for (; idx < weights.length; idx++) {
-                r -= weights[idx];
-                if (r < 0) break;
+            for (const id of ['attack', 'slow', 'poison']) {
+                const c = towerCands.find(x => x.towerId === id);
+                if (c) result.push(this.makeCardFromDef(c));
             }
-            towers.push(this.makeTowerCard(this.TOWER_REGISTRY[idx].id));
+        }
+        // 补足剩余：从候选加权随机（含 tower/tool/modifier/tactic）
+        while (result.length < towerCount) {
+            if (candidates.length === 0) break;
+            const pool = candidates.map(c => ({ c, w: computeWeight({ baseWeight: c.baseWeight, weightRules: c.weightRules }, snap) }));
+            const total = pool.reduce((s, x) => s + Math.max(0, x.w), 0);
+            let r = Math.random() * total;
+            let pick = pool[0].c;
+            for (const x of pool) { r -= Math.max(0, x.w); if (r <= 0) { pick = x.c; break; } }
+            result.push(this.makeCardFromDef(pick));
         }
 
-        const result: CardDef[] = [...towers];
         if (hammerCount > 0) {
-            result.push({ kind: 'hammer', name: '锄头', desc: '解锁一个灰色格', color: new Color(200, 200, 210, 255) });
+            const hammer = candidates.find(c => c.contentType === 'tool' && c.targetType === 'lockedTile');
+            result.push(hammer ? this.makeCardFromDef(hammer)
+                : { sourceId: 'hammer', kind: 'hammer', name: '锄头', desc: '解锁一个灰色格', color: new Color(200, 200, 210, 255) });
         }
 
         // 锄头计数规则：有灰格且本轮没出锄头 → +1；出了锄头 → 0；无灰格 → 0（退出牌池）
@@ -2765,13 +2779,28 @@ export class SceneInitializer extends Component {
         return result;
     }
 
-    private makeTowerCard(id: string): CardDef {
-        const def = this.TOWER_REGISTRY.find(t => t.id === id)!;
-        // 卡牌不再单张计费（抽卡已付 DRAW_COST），卡面显示能力说明而非金币花费
-        const ability = id === 'attack' ? '单体输出'
-            : id === 'slow' ? '范围控制'
-            : id === 'poison' ? '持续伤害' : '';
-        return { kind: 'tower', towerId: id, name: def.name, desc: ability, color: def.color };
+    /** DrawCardDefinition → 渲染用 CardDef（kind 映射：tool→hammer） */
+    private makeCardFromDef(c: DrawCardDefinition): CardDef {
+        return {
+            sourceId: c.id,
+            kind: c.contentType === 'tool' ? 'hammer' : c.contentType,
+            towerId: c.towerId,
+            name: c.name,
+            desc: c.description,
+            color: this.cardColor(c),
+        };
+    }
+
+    /** 按 contentType 解析卡牌渲染颜色 */
+    private cardColor(c: DrawCardDefinition): Color {
+        if (c.contentType === 'tower' && c.towerId) {
+            const def = this.TOWER_REGISTRY.find(t => t.id === c.towerId);
+            if (def) return def.color;
+        }
+        if (c.contentType === 'tool') return new Color(200, 200, 210, 255);
+        if (c.contentType === 'modifier') return new Color(255, 160, 60, 255);
+        if (c.contentType === 'tactic') return new Color(60, 200, 220, 255);
+        return new Color(150, 150, 150, 255);
     }
 
     /** 显示手牌 5 张（复用预建卡槽，横向排列于卡牌栏） */
@@ -3054,10 +3083,27 @@ export class SceneInitializer extends Component {
                     }
                 }
             }
-        } else {
+        } else if (card.kind === 'hammer') {
             const slot = this.findSlotAt(local);
             if (slot >= 0 && this.lockedSlots[slot]) {
                 this.useHammer(slot);
+                used = true;
+            }
+        } else if (card.kind === 'modifier') {
+            // 改造卡：拖到一座塔上 → 附加词缀
+            const towerIdx = this.findTowerAt(local);
+            if (towerIdx >= 0) {
+                const modId = this.modifierIdOf(card.sourceId);
+                if (modId) {
+                    this.applyModifierToTower(this.towers[towerIdx], modId);
+                    used = true;
+                }
+            }
+        } else if (card.kind === 'tactic') {
+            // 战术卡：即时战场效果，落点任意 → 执行 effects
+            const def = DRAW_CARDS.find(c => c.id === card.sourceId);
+            if (def) {
+                executeEffects(def.effects, this.effectContext());
                 used = true;
             }
         }

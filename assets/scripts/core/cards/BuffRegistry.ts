@@ -50,10 +50,12 @@ export const WAVE_BUFFS: WaveBuffDefinition[] = [
         id: 'splash', name: '溅射爆炸', description: '主弹命中后爆炸 AOE', icon: 'spl',
         systemType: 'waveBuff', contentType: 'mechanic', scope: 'element', permanent: true,
         rarity: 'rare', tier: 1, buildPaths: ['poison'], tags: ['poison', 'splash'],
+        // 场景专属：需场上有毒塔（原 isBuffSceneEligible 规则，现并入 unlockConditions）
+        unlockConditions: [{ type: 'hasTower', towerId: 'poison', count: 1, operator: '>=' }],
+        excludeConditions: [],
         // 减速塔较多时鼓励同流派深化（近似旧逻辑：slowTower>=2 时加权）
-        unlockConditions: [], excludeConditions: [],
         weightRules: [
-            { condition: { type: 'hasTower', tag: 'slow', count: 2, operator: '>=' }, multiplier: 1.5 },
+            { condition: { type: 'hasTower', towerId: 'slow', count: 2, operator: '>=' }, multiplier: 1.5 },
             { condition: { type: 'hasBuff', buffId: 'splash', stacks: 1 }, multiplier: 1.3 },
         ],
         minWave: 1, maxStacks: 99, baseWeight: 80,
@@ -63,7 +65,8 @@ export const WAVE_BUFFS: WaveBuffDefinition[] = [
         id: 'bleed', name: '出血', description: '概率施加出血并暴击', icon: 'ble',
         systemType: 'waveBuff', contentType: 'mechanic', scope: 'element', permanent: true,
         rarity: 'rare', tier: 1, buildPaths: ['poison'], tags: ['poison', 'bleed'],
-        unlockConditions: [], excludeConditions: [],
+        unlockConditions: [{ type: 'hasTower', towerId: 'poison', count: 1, operator: '>=' }],
+        excludeConditions: [],
         weightRules: [
             { condition: { type: 'hasBuff', buffId: 'bleed', stacks: 1 }, multiplier: 1.3 },
         ],
@@ -74,9 +77,10 @@ export const WAVE_BUFFS: WaveBuffDefinition[] = [
         id: 'slow', name: '减速强化', description: '所有子弹附带减速', icon: 'slo',
         systemType: 'waveBuff', contentType: 'mechanic', scope: 'element', permanent: true,
         rarity: 'rare', tier: 1, buildPaths: ['control'], tags: ['control', 'slow'],
-        unlockConditions: [], excludeConditions: [],
+        unlockConditions: [{ type: 'hasTower', towerId: 'slow', count: 1, operator: '>=' }],
+        excludeConditions: [],
         weightRules: [
-            { condition: { type: 'hasTower', tag: 'slow', count: 1, operator: '>=' }, multiplier: 1.3 },
+            { condition: { type: 'hasTower', towerId: 'slow', count: 1, operator: '>=' }, multiplier: 1.3 },
         ],
         minWave: 1, maxStacks: 99, baseWeight: 80,
         effects: [{ effectType: 'modifyStat', target: { type: 'allTowers' }, value: 1, parameters: { stat: 'slow' } }],
