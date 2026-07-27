@@ -1,4 +1,4 @@
-import { _decorator, Component, Node, view, UITransform, Layers, Vec3, Graphics, Color, Label, EventTouch, v3 } from 'cc';
+import { _decorator, Component, Node, view, UITransform, Layers, Vec3, Graphics, Color, Label, EventTouch, v3, UIOpacity } from 'cc';
 import { HUD } from '../ui/HUD';
 import { EffectManager } from './EffectManager';
 import { EnemyType } from './Constants';
@@ -2809,9 +2809,12 @@ export class SceneInitializer extends Component {
             const card = this.handCards[i];
             if (!card) continue;
             const usable = this.isHandCardUsable(card);
-            node.setScale(usable ? 1 : 0.9);
-            // 透明度：不可用降到 0.45
-            node.opacity = usable ? 255 : 115;
+            // 修复：Cocos 3.8.8 数字参数 setScale 必须传入 x、y、z，单参数会导致缩放矩阵异常、卡牌不可见
+            const scale = usable ? 1 : 0.9;
+            node.setScale(scale, scale, 1);
+            // 透明度通过 UIOpacity 控制（直接写 node.opacity 在 3.8 无效）
+            const opacity = node.getComponent(UIOpacity);
+            if (opacity) opacity.opacity = usable ? 255 : 115;
             const lbl = node.getChildByName('Unusable');
             if (lbl) lbl.active = !usable;
         }
@@ -2876,6 +2879,10 @@ export class SceneInitializer extends Component {
         unusableLabel.horizontalAlign = Label.HorizontalAlign.CENTER;
         unusableLabel.verticalAlign = Label.VerticalAlign.CENTER;
 
+        // 透明度由 UIOpacity 控制（Cocos 3.8 直接写 node.opacity 无效）
+        const opacity = node.addComponent(UIOpacity);
+        opacity.opacity = 255;
+
         this.handCardSlots.push({ node, gfx, nameLabel, descLabel, unusableNode });
     }
 
@@ -2902,7 +2909,9 @@ export class SceneInitializer extends Component {
         slot.nameLabel.string = card.name;
         slot.descLabel.string = card.desc;
         slot.unusableNode.active = false;
-        slot.node.opacity = 255;
+        // 透明度通过 UIOpacity 恢复（直接写 node.opacity 在 3.8 无效）
+        const opacity = slot.node.getComponent(UIOpacity);
+        if (opacity) opacity.opacity = 255;
         slot.node.setScale(1, 1, 1);
     }
 
