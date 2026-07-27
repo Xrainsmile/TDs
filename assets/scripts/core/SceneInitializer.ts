@@ -465,8 +465,8 @@ export class SceneInitializer extends Component {
         const battleHeight = battleTop - battleBottom;
         const battleCenterX = (battleLeft + battleRight) / 2;
         const battleCenterY = (battleTop + battleBottom) / 2;
-        // 倒计时圆环位置：抽卡区域左上角（手牌栏左上方，不遮挡卡牌）
-        this.countdownPos = new Vec3(-220, -halfH + 170, 0);
+        // 倒计时圆环位置：与抽卡按钮水平对齐（同高，置于按钮左侧，不遮挡卡牌）
+        this.countdownPos = new Vec3(-220, -halfH + 48, 0);
 
         // 屏幕适配：地图以逻辑像素尺寸（MAP_DESIGN = 360×480）显示，居中于战场；
         // 仅当超出战场区域时才缩小，不再拉伸填满战场，保证棋盘视觉尺寸 = MAP_DESIGN。
@@ -531,8 +531,8 @@ export class SceneInitializer extends Component {
         this.spendButton.setParent(canvas);
         this.spendButtonLabel = this.spendButton.getChildByName('Text')?.getComponent(Label) ?? null;
 
-        // === 手牌卡牌栏位置（抽卡后显示 5 张卡，置于抽卡按钮上方、倒计时圆环下方）===
-        this.CARD_BAR_Y = -halfH + 145;
+        // === 手牌卡牌栏位置（抽卡后显示 5 张卡，置于抽卡按钮上方、倒计时圆环上方）===
+        this.CARD_BAR_Y = -halfH + 178;
 
         // === 拖动手牌幽灵 ===
         this.cardGhost = new Node('CardGhost');
