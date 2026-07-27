@@ -95,3 +95,20 @@ export const BUILD_CELLS: GridCell[] = (() => {
 export const ROAD_WIDTH_RATIO = 0.65;   // 道路宽度 = CELL_SIZE 的 65%
 export const SLOT_SIZE_RATIO = 0.70;    // 塔位尺寸 = CELL_SIZE 的 70%
 
+// ===== 封闭格（初始灰色，需锄头撬开才能放塔）=====
+// 显式以网格坐标配置，避免地图排序/塔位数量变化后封闭位置随之漂移。
+// 元素融合阶段调整空间布局时，可在此集中修改。当前沿用 6 个封闭格。
+export const LOCKED_BUILD_CELLS: GridCell[] = [
+    { col: 0, row: 0 },
+    { col: 5, row: 0 },
+    { col: 0, row: 7 },
+    { col: 5, row: 7 },
+    { col: 0, row: 3 },
+    { col: 5, row: 3 },
+];
+
+// 将封闭格转为 gridKey 集合，便于在塔位初始化/重开时按坐标匹配
+export const LOCKED_BUILD_CELL_KEYS: Set<string> = new Set(
+    LOCKED_BUILD_CELLS.map(c => `${c.col},${c.row}`)
+);
+
