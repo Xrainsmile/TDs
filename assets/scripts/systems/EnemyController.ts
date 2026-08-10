@@ -51,7 +51,7 @@ export class EnemyController extends Component {
             for (const result of dotResults) {
                 const enemy = this._enemies.find(e => e.Uuid === result.uuid);
                 if (enemy && !enemy.IsDead) {
-                    enemy.takeDoTDamage(result.damage);
+                    enemy.takeDotDamage(result.damage);
                 }
             }
         }

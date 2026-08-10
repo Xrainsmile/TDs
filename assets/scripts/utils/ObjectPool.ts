@@ -1,10 +1,10 @@
-import { Node, Prefab, instantiate, clone } from 'cc';
+import { Node, Prefab, instantiate } from 'cc';
 
 /**
  * ObjectPool - 通用对象池
  *
  * 支持 Prefab 或 Node 模板。
- * 使用 Node 模板时，通过 clone() 复制节点（用于运行时无 Prefab 的情况）。
+ * 使用 Node 模板时，通过 instantiate() 复制节点（用于运行时无 Prefab 的情况）。
  */
 export class ObjectPool {
     private _prefab: Prefab | null = null;

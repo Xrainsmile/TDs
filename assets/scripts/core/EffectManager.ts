@@ -1,4 +1,6 @@
 import { _decorator, Component, Node, UITransform, Layers, Graphics, Color, Vec3, Label, tween } from 'cc';
+import { getVisualSkin } from './visuals/VisualSkins';
+import { skinCol } from './visuals/VisualFactory';
 
 const { ccclass } = _decorator;
 
@@ -23,6 +25,21 @@ export class EffectManager extends Component {
         if (EffectManager._instance === this) {
             EffectManager._instance = null;
         }
+    }
+
+    /** 屏幕震动：同一时刻只跑一个震动，且始终回到「当前无震动时的基准位置」，
+     *  避免溅射 buff 等高频爆炸场景下多个 tween 互相抓取偏移位置造成地图持续右移漂移。 */
+    private _shakeTween: any = null;
+    private shakeGameLayer(): void {
+        if (this._shakeTween) return;            // 已在震动中，跳过（高频爆炸不再叠加）
+        const node = this.gameLayer;
+        const base = node.position.clone();      // 此刻无震动 → 即真实基准位置
+        this._shakeTween = tween(node)
+            .to(0.03, { position: new Vec3(base.x + 3, base.y + 2, 0) })
+            .to(0.03, { position: new Vec3(base.x - 2, base.y - 3, 0) })
+            .to(0.03, { position: base })
+            .call(() => { this._shakeTween = null; })
+            .start();
     }
 
     private get gameLayer(): Node {
@@ -54,8 +71,9 @@ export class EffectManager extends Component {
         flash.setParent(enemyNode);
         flash.setPosition(0, 0, 0);
         flash.addComponent(UITransform);
+        const skin = getVisualSkin('fx.hit');
         const gfx = flash.addComponent(Graphics);
-        gfx.fillColor = new Color(255, 255, 255, 160);
+        gfx.fillColor = skinCol(skin.body, new Color(255, 255, 255, 160));
         gfx.circle(0, 0, 10);
         gfx.fill();
         // 放大（基于固定基准，避免累积放大；幅度调小避免过于夸张）
@@ -80,7 +98,8 @@ export class EffectManager extends Component {
         const label = node.addComponent(Label);
         label.string = isCrit ? `-${Math.round(damage)}!` : `-${Math.round(damage)}`;
         label.fontSize = isCrit ? 20 : 14;
-        label.color = isCrit ? new Color(255, 80, 80, 255) : new Color(255, 255, 255, 255);
+        const dmgSkin = getVisualSkin('fx.damage_number');
+        label.color = isCrit ? skinCol(dmgSkin.accent, new Color(255, 80, 80, 255)) : skinCol(dmgSkin.body, new Color(255, 255, 255, 255));
         tween(node)
             .by(0.5, { position: new Vec3(0, 30, 0) })
             .start();
@@ -125,8 +144,9 @@ export class EffectManager extends Component {
         const t = node.addComponent(UITransform);
         t.setContentSize(40, 40);
         t.setAnchorPoint(0.5, 0.5);
+        const skin = getVisualSkin('fx.poison');
         const gfx = node.addComponent(Graphics);
-        gfx.strokeColor = new Color(100, 200, 50, 180);
+        gfx.strokeColor = skinCol(skin.body, new Color(100, 200, 50, 180));
         gfx.lineWidth = 3;
         gfx.circle(0, 0, 14);
         gfx.stroke();
@@ -138,7 +158,7 @@ export class EffectManager extends Component {
             bubble.setPosition((i - 1) * 6, 0, 0);
             bubble.addComponent(UITransform);
             const bg = bubble.addComponent(Graphics);
-            bg.fillColor = new Color(100, 200, 50, 200);
+            bg.fillColor = skinCol(skin.accent, new Color(100, 200, 50, 200));
             bg.circle(0, 0, 3);
             bg.fill();
             tween(bubble)
@@ -164,8 +184,9 @@ export class EffectManager extends Component {
         const t = node.addComponent(UITransform);
         t.setContentSize(40, 40);
         t.setAnchorPoint(0.5, 0.5);
+        const skin = getVisualSkin('fx.slow');
         const gfx = node.addComponent(Graphics);
-        gfx.strokeColor = new Color(180, 80, 220, 200);
+        gfx.strokeColor = skinCol(skin.body, new Color(180, 80, 220, 200));
         gfx.lineWidth = 4;
         gfx.circle(0, 0, 16);
         gfx.stroke();
@@ -180,8 +201,9 @@ export class EffectManager extends Component {
     // ===== 6. 治疗效果：绿色脉冲光环＋+5数字 =====
     public playHeal(pos: Vec3, amount: number): void {
         // 脉冲光环
+        const skin = getVisualSkin('fx.heal');
         const { node, gfx } = this.createGfxNode('HealPulse', pos, 80);
-        gfx.strokeColor = new Color(100, 255, 100, 200);
+        gfx.strokeColor = skinCol(skin.body, new Color(100, 255, 100, 200));
         gfx.lineWidth = 3;
         gfx.circle(0, 0, 20);
         gfx.stroke();
@@ -199,7 +221,7 @@ export class EffectManager extends Component {
         const label = labelNode.addComponent(Label);
         label.string = `+${amount}`;
         label.fontSize = 14;
-        label.color = new Color(100, 255, 100, 255);
+        label.color = skinCol(skin.accent, new Color(100, 255, 100, 255));
         tween(labelNode)
             .by(0.8, { position: new Vec3(0, 25, 0) })
             .start();
@@ -213,13 +235,16 @@ export class EffectManager extends Component {
     // ===== 7. 溅射爆炸：橙色扩散圆环＋短暂震动 =====
     public playExplosion(pos: Vec3, radius: number): void {
         const { node, gfx } = this.createGfxNode('ExplosionWave', pos, radius * 2);
+        const skin = getVisualSkin('fx.explosion');
+        const bodyC = skinCol(skin.body, new Color(255, 180, 80, 255));
+        const accentC = skinCol(skin.accent, new Color(255, 100, 50, 255));
         const drawWave = (r: number, alpha: number) => {
             gfx.clear();
-            gfx.strokeColor = new Color(255, 180, 80, alpha);
+            gfx.strokeColor = new Color(bodyC.r, bodyC.g, bodyC.b, alpha);
             gfx.lineWidth = 6;
             gfx.circle(0, 0, r);
             gfx.stroke();
-            gfx.fillColor = new Color(255, 100, 50, alpha * 0.4);
+            gfx.fillColor = new Color(accentC.r, accentC.g, accentC.b, alpha * 0.4);
             gfx.circle(0, 0, r * 0.7);
             gfx.fill();
         };
@@ -237,14 +262,8 @@ export class EffectManager extends Component {
                 drawWave(r, alpha);
             }
         }, 0.08, totalFrames - 1, 0);
-        // 屏幕震动（震动 gameLayer）
-        const gameLayer = this.gameLayer;
-        const originalPos = gameLayer.position.clone();
-        tween(gameLayer)
-            .to(0.03, { position: new Vec3(originalPos.x + 3, originalPos.y + 2, 0) })
-            .to(0.03, { position: new Vec3(originalPos.x - 2, originalPos.y - 3, 0) })
-            .to(0.03, { position: originalPos })
-            .start();
+        // 屏幕震动（震动 gameLayer）——单一震动，回到稳定基准，避免高频爆炸叠加导致地图持续漂移
+        this.shakeGameLayer();
     }
 
     // ===== 8. 选卡反馈：卡片放大、金色闪光、名称停留1秒 =====
@@ -263,8 +282,9 @@ export class EffectManager extends Component {
         flashNode.setPosition(0, 0, 0);
         const t = flashNode.addComponent(UITransform);
         t.setContentSize(140, 160);
+        const skin = getVisualSkin('fx.card_selected');
         const gfx = flashNode.addComponent(Graphics);
-        gfx.fillColor = new Color(255, 215, 0, 180);
+        gfx.fillColor = skinCol(skin.body, new Color(255, 215, 0, 180));
         gfx.roundRect(-70, -80, 140, 160, 10);
         gfx.fill();
         tween(gfx)

@@ -71,7 +71,8 @@ export function meetsUnlock(def: { unlockConditions: Condition[] }, snap: GameSn
     return evaluateAll(def.unlockConditions, snap);
 }
 
-/** 是否触发互斥（任意一条互斥条件成立即视为互斥，应排除） */
+/** 是否触发互斥（任意一条互斥条件成立即视为互斥，应排除；空列表视为不互斥） */
 export function triggersExclude(def: { excludeConditions: Condition[] }, snap: GameSnapshot): boolean {
-    return evaluateAll(def.excludeConditions, snap);
+    // 空列表 → 无互斥规则 → 返回 false（注意：不能用 evaluateAll，空数组会空真返回 true）
+    return def.excludeConditions.some(c => evaluateCondition(c, snap));
 }

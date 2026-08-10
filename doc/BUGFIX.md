@@ -114,6 +114,16 @@
 - **位置**：`SceneInitializer.ts` `buildHandCardSlot` / `showHandCards`。
 - **原则（务必遵守）**：微信端任何动态/复用 Graphics 节点，**绘制命令必须在节点 active 状态下执行**；若需默认隐藏，先 active 画一遍占位再隐藏，后续重绘也要先 active。
 
+### 17. 抽卡后手牌为空（handCards=0，候选池被互斥条件空真排除）
+- **现象**：点「30金抽卡」后底部无任何卡牌；日志 `[showHandCards] handCards=0`。注意：状态栏可能仍显示「剩余5张」等文字（文字来自 `handCards.length` 计数，与节点渲染无关），但真正生成并渲染的卡牌数量为 0。
+- **根因**：`cards/ConditionEvaluator.ts` 的 `triggersExclude()` 实现为 `return evaluateAll(def.excludeConditions, snap);`。`evaluateAll` 对**空数组空真返回 true**（"全部 0 个条件都满足"=真）；而 `buildHandCards()` 的过滤是 `if (triggersExclude(c, snap)) return false;`——于是**全部 `excludeConditions: []` 的卡（当前 13 张全中）都被误判为"互斥、应排除"**，候选池直接为空 → `handCards=0` → 什么卡都不生成。
+- **修复**：`triggersExclude` 改为"任意一条成立即排除"语义：`def.excludeConditions.some(c => evaluateCondition(c, snap))`。空列表返回 `false`（不互斥），命中任意一条返回 `true`。`meetsUnlock` 仍用 `evaluateAll(unlockConditions)`（空列表=无前置=通过，语义正确，不动）。
+- **位置**：`cards/ConditionEvaluator.ts` `triggersExclude`；`SceneInitializer.ts` `buildHandCards` 过滤。
+- **关联修复（同批下发清单，避免此类回归）**：
+  - 开局 `currentWave=0` 但卡牌 `minWave≥1` → `buildHandCards` 过滤统一用 `evaluationWave = Math.max(1, this.currentWave)` 并写回 `snap.currentWave`，避免开局全卡被波次条件排除；
+  - `drawCards` 改为「先 `buildHandCards` → 牌池为空则取消抽卡且不扣金币 → 否则再扣 30 金」，避免牌池配置异常时白白扣金进入空手牌。
+- **关键调试教训**：**"XX 不显示"类问题，先确认对象在 state 里有没有生成**（`handCards.length` / 节点数组长度），再决定查数据层（生成/过滤）还是渲染层（setScale/UIOpacity/Graphics active）。同一症状（卡牌不显示）上次是渲染层（#16 Graphics active 节点），这次是数据层（候选池空），**不能因为上次同层就默认这次也同层**。本项目 `showHandCards` 自带 `[showHandCards] handCards=N` 日志即分水岭，定位时第一时间看这行：为 0 必是数据层，>0 才查渲染。
+
 ---
 
 ## 四、Roguelike 三选一（buff 卡）
@@ -207,3 +217,5 @@
 8. 手牌相关：用牌后**不要**因「剩余全不可用」清整手；自动结束仅在发牌死手牌或达到使用上限时。
 9. 卡牌放置 / 升级 / 锤子 **不二次扣费**（抽卡费即入场价）。
 10. 触摸路由改动后确认 `TOUCH_START/MOVE/END/CANCEL` 各状态在卡拖拽与塔拖拽间互斥且清理完整。
+11. 「空列表应视为不触发」的判断**绝不能用 evaluateAll/全部-&&**（空真返回 true），用 `some`/`none`/`||`；互斥条件用 `some`（任意一条成立即排除），前置条件用 `evaluateAll`（全部满足才通过）——调用处语义必须与函数一致（exclude→some、unlock→evaluateAll）。
+12. 「XX 不显示」类问题：**先确认对象在 state 里有没有生成**（数组长度 / 节点数），再决定查数据层还是渲染层；不要因为上次同类 bug 在同层就默认这次也同层。本项目 `[showHandCards] handCards=N` 日志是分水岭。

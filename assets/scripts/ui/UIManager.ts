@@ -72,8 +72,10 @@ export class UIManager extends Component {
         const waveLabel = this.createLabel('WaveLabel', 'Wave: 0 / 0', W / 2 - 120, 0);
         waveLabel.setParent(this._hudNode);
 
-        this._statusLabel = this.createLabel('StatusLabel', '', 0, -20);
-        this._statusLabel.setParent(this._hudNode);
+        // createLabel 返回 Node；_statusLabel 存的是其 Label 组件（后续按 .string 更新文案）
+        const statusNode = this.createLabel('StatusLabel', '', 0, -20);
+        statusNode.setParent(this._hudNode);
+        this._statusLabel = statusNode.getComponent(Label);
         this._hudNode.active = false;
 
         // HUD 组件
@@ -81,7 +83,7 @@ export class UIManager extends Component {
         hud.goldLabel = goldLabel.getComponent(Label);
         hud.livesLabel = livesLabel.getComponent(Label);
         hud.waveLabel = waveLabel.getComponent(Label);
-        hud.init(this.gameStateManager!);
+        hud.init(W, H);   // HUD.init 接收可视尺寸用于布局，不接收 GameStateManager
 
         // 开始波次按钮
         this._startWaveButton = this.createButton('StartWaveBtn', '开始波次', 0, -H / 2 + 40, () => {

@@ -32,3 +32,14 @@ export enum EnemyType {
     HEALER = 5,
     ELITE = 6,
 }
+
+// ===== 敌人战斗分级（EnemyType 映射，详见 SceneInitializer.ENEMY_REGISTRY）=====
+//   NORMAL = 1级小兵（最弱）
+//   FAST   = 2级小兵（中等）
+//   TANK   = 3级小兵（小兵中最强）
+//   ELITE  = 精英
+//   BOSS   = boss
+//   HEALER = 治疗兵（支援型，独立于战斗分级，不在 1~3 级小兵/精英/boss 序列内）
+// 注：枚举成员名保持 NORMAL/FAST/TANK 不变，因 entities/Enemy.ts、
+//     systems/EnemyController.ts、utils/PrefabFactory.ts（旧架构遗留）仍引用这些名字。
+//     分级语义由 ENEMY_REGISTRY 中的 EnemyDef.name / hpMultiplier / speedMultiplier 表达。

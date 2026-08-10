@@ -5,7 +5,15 @@
  * 也作为存档/统计的数据源（配置化后可直接 JSON 序列化）。
  */
 
-import { BaseOptionDefinition, BuildPath, GameTag } from './types';
+import { BuildPath, DrawCardDefinition, GameTag, WaveBuffDefinition } from './types';
+
+/**
+ * 任意可选项定义（判别联合）。
+ * 必须用联合而非 BaseOptionDefinition：后者的 systemType 是普通联合字段，
+ * `def.systemType === 'waveBuff'` 无法把类型收窄到 WaveBuffDefinition，
+ * 也就取不到只属于它的 branchGroup。
+ */
+export type AnyOptionDefinition = DrawCardDefinition | WaveBuffDefinition;
 
 export class RunBuildState {
     selectedBuffIds: string[] = [];
@@ -15,7 +23,7 @@ export class RunBuildState {
     buildPaths: Set<BuildPath> = new Set();    // 累积的构筑路线
 
     /** 选择一张卡/强化后记录（同时计入层数与标签） */
-    record(def: BaseOptionDefinition): void {
+    record(def: AnyOptionDefinition): void {
         if (def.systemType === 'waveBuff') {
             this.selectedBuffIds.push(def.id);
             this.buffStacks[def.id] = (this.buffStacks[def.id] ?? 0) + 1;

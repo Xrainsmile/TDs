@@ -10,7 +10,7 @@ import { meetsUnlock, triggersExclude } from './cards/ConditionEvaluator';
 import { computeWeight } from './cards/WeightCalculator';
 import { executeEffects } from './cards/EffectExecutor';
 import { RunBuildState } from './cards/RunBuildState';
-import { WaveBuffDefinition, GameSnapshot } from './cards/types';
+import { WaveBuffDefinition, GameSnapshot, EffectDefinition, DrawCardDefinition } from './cards/types';
 import {
     ENEMY_SPEED, BULLET_SPEED,
     INITIAL_GOLD, KILL_REWARD, WAVE_BONUSES,
@@ -26,6 +26,7 @@ import {
     BUILD_CELLS, LOCKED_BUILD_CELL_KEYS,
     gridToLocal, CELL_SIZE, ROAD_WIDTH_RATIO, SLOT_SIZE_RATIO, GRID_COLS, GRID_ROWS,
 } from './MapConfig';
+import * as VisualFactory from './visuals/VisualFactory';   // 表现层：按 visualEffectId 构建攻击视觉
 
 /** 手牌卡定义 */
 interface CardDef {
@@ -43,6 +44,13 @@ const { ccclass } = _decorator;
 const DEBUG = true;
 // 6×8 调试网格开关
 const SHOW_GRID = false;
+
+// thrust（吸管戳击）动画参数：数值与 AttackDefinition.attackDuration(0.22) 对齐
+// 伸出 0.08 + 命中停顿 0.04 + 收回 0.10 = 0.22。吸管根部固定在节点原点，缩放只改横向。
+const THRUST_REST_SCALE = 0.16;  // 收回时吸管横向缩放（视觉上几乎贴回塔身）
+const THRUST_EXTEND = 0.12;      // 伸出（放慢以便看清"戳"）
+const THRUST_PAUSE = 0.06;
+const THRUST_RETRACT = 0.14;
 
 // ============================================================
 //  系统扩展约定：塔/敌人配置表
@@ -88,17 +96,53 @@ interface TowerRuntime {
 
     attackCount: number;     // 攻击计数（连发词缀用）
     disabledTimer: number;   // BOSS 技能导致的停火倒计时（>0 时该塔不攻击）
+    auraSpeedMul: number;    // 充电宝光环攻速倍率（每帧重算，默认 1，不污染基础属性）
+
+    straw?: Node | null;          // thrust 塔的吸管子节点（动画用，根部固定在节点原点）
+    thrust?: ThrustState | null;  // thrust 戳击动画状态机
+    thrustDebug?: Graphics | null;// 调试模式：戳击判定区域绘制
+
+    spin?: SpinState | null;      // spin 旋斩通道状态（打蛋器）
+    spinRing?: Node | null;       // spin 旋斩光环子节点（攻击时显示并旋转）
+}
+
+/** thrust 戳击动画状态机 */
+interface ThrustState {
+    active: boolean;
+    phase: 'extend' | 'pause' | 'retract' | 'idle';
+    timer: number;
+    dirX: number;           // 本次攻击锁定的方向（单位向量）
+    dirY: number;
+    damaged: boolean;        // 本次戳击是否已结算伤害
+}
+
+/** spin 旋斩通道状态机 */
+interface SpinState {
+    active: boolean;
+    timer: number;      // 通道已进行时长（>attackDuration 结束）
+    tickTimer: number;  // 距下一次伤害结算（按 damageTick 累计）
+}
+
+/** pierce 缝衣针飞行弹体 */
+interface PierceShot {
+    node: Node;
+    fromX: number; fromY: number;   // 发射点
+    dirX: number; dirY: number;     // 飞行方向（单位向量）
+    speed: number;
+    traveled: number;               // 已飞行距离
+    range: number;                  // 最大射程
+    halfW: number;                  // 针道半宽
+    damage: number;
+    maxTargets: number;             // 最多穿透目标数
+    hitCount: number;
+    hitSet: Set<EnemyRuntime>;      // 已命中（每敌人一次）
+    targetSet: Set<EnemyRuntime>;   // 预选中目标（针道内"最靠近终点"优先的前 maxTargets 个）
 }
 
 
 
 /** 每种塔的 3 个专属正向词缀（合并升二星时随机获得其一） */
 const TOWER_AFFIXES: Record<string, { id: AffixId; name: string; desc: string }[]> = {
-    attack: [
-        { id: 'rapid', name: '连发', desc: '每4次攻击追加一发' },
-        { id: 'heavy', name: '重炮', desc: '伤害+25%' },
-        { id: 'execute', name: '处决', desc: '对低血敌人增伤50%' },
-    ],
     slow: [
         { id: 'deepfreeze', name: '深寒', desc: '减速更强' },
         { id: 'linger', name: '延滞', desc: '减速持续更久' },
@@ -165,56 +209,232 @@ export class SceneInitializer extends Component {
     private get BOSS_LOCK_DURATION() { return BOSS_LOCK_DURATION; }
     private get BOSS_CEASEFIRE() { return BOSS_CEASEFIRE; }
 
+    // ===== 分裂弹道（改造卡 'split'）数值 =====
+    private static readonly SPLIT_COUNT = 2;      // 终结命中时分裂的子弹数
+    private static readonly SPLIT_DMG_MUL = 0.5;  // 分裂子弹伤害倍率
+    private static readonly SPLIT_RADIUS = 150;   // 分裂索敌半径（命中点附近）
+
     // ===== 塔注册表（含闭包引用 this.towerStats，保留在 SceneInitializer）=====
-    private readonly TOWER_REGISTRY: TowerDef[] = [
-        {
-            id: 'attack',
-            name: '攻击塔',
-            cost: 100,
-            range: 120,
-            interval: 0.56,
-            damage: 20,
-            attackKind: 'bullet',
-            color: new Color(50, 150, 255, 255),
-            rangeColor: new Color(50, 150, 255, 60),
-            buttonPos: ATTACK_BUTTON_POS,
-        },
+    private readonly TOWER_REGISTRY: TowerDef[] = ([
+
         {
             id: 'slow',
             name: '减速塔',
             cost: 120,
-            range: 200,
-            interval: 0.84,
-            damage: 0,
-            attackKind: 'instant',
             color: new Color(180, 80, 220, 255),
             rangeColor: new Color(180, 80, 220, 60),
             buttonPos: SLOW_BUTTON_POS,
+            attack: {
+                attackType: 'spray',   // 过渡占位：当前用 instant 分支施加减速，下一阶段改读 statusEffects
+                rangeBand: 'medium',
+                range: 200,
+                damage: 0,
+                attackInterval: 0.84,
+                maxHitsPerTarget: 1,
+                aimMode: 'unaffected',   // 优先未减速的敌人（软偏好，池内按 first）
+                statusEffects: [
+                    { type: 'SLOW', duration: 1.0, magnitude: 0.7 },
+                    { type: 'MARK', duration: 1.0, magnitude: 1.2 },
+                ],
+                visualEffectId: 'slow_spray',
+            },
         },
         {
             id: 'poison',
             name: '毒塔',
             cost: 140,
-            range: 144,
-            interval: 0.8,
-            damage: 10,
-            attackKind: 'bullet',
             color: new Color(100, 200, 50, 255),
             rangeColor: new Color(100, 200, 50, 60),
             buttonPos: POISON_BUTTON_POS,
+            attack: {
+                attackType: 'projectile',
+                rangeBand: 'short',
+                range: 144,
+                damage: 10,
+                attackInterval: 0.8,
+                maxHitsPerTarget: 1,
+                aimMode: 'unaffected',   // 优先未中毒的敌人（软偏好，池内按 first）
+                statusEffects: [
+                    { type: 'POISON', duration: 6.0, magnitude: 8, tickInterval: 1, stacks: 1 },
+                ],
+                visualEffectId: 'poison_shot',
+            },
         },
-    ];
+
+        // ===== 家庭小物件 Demo 塔 =====
+        {
+            id: 'toothbrush',
+            name: '牙刷',
+            cost: 110,
+            color: new Color(120, 220, 230, 255),
+            rangeColor: new Color(120, 220, 230, 60),
+            buttonPos: ATTACK_BUTTON_POS,   // 仅占位（本分支无拖拽塔坞，靠抽卡卡牌放置）
+            attack: {
+                attackType: 'sweep',
+                rangeBand: 'short',
+                range: 100,
+                angle: 90,
+                radius: 100,
+                damage: 12,
+                attackInterval: 0.7,
+                maxHitsPerTarget: 1,
+                aimMode: 'first',
+                visualEffectId: 'sweep_brush',
+            },
+        },
+        {
+            id: 'powerbank',
+            name: '充电宝',
+            cost: 90,
+            color: new Color(255, 180, 60, 255),
+            rangeColor: new Color(255, 180, 60, 60),
+            buttonPos: ATTACK_BUTTON_POS,
+            support: true,          // 辅助塔：不攻击，提供攻速光环
+            auraSpeedBonus: 0.25,   // 范围内其他塔 +25% 攻速
+            attack: {
+                attackType: 'thrust',  // 占位：辅助塔不攻击，attack 仅保留光环半径(range)供 updateAuras 读取
+                rangeBand: 'short',
+                range: 140,            // 光环半径
+                damage: 0,
+                attackInterval: 1,
+                maxHitsPerTarget: 1,
+                aimMode: 'fixedDirection',
+                visualEffectId: 'none',
+            },
+        },
+        {
+            id: 'rubberband',
+            name: '橡皮筋',
+            cost: 100,
+            color: new Color(255, 130, 170, 255),
+            rangeColor: new Color(255, 130, 170, 60),
+            buttonPos: ATTACK_BUTTON_POS,
+            attack: {
+                attackType: 'chain',
+                rangeBand: 'short',
+                range: 130,
+                damage: 15,
+                attackInterval: 0.6,
+                maxTargets: 2,
+                maxHitsPerTarget: 1,
+                aimMode: 'first',
+                visualEffectId: 'rubber_shot',
+            },
+        },
+        {
+            id: 'bubble_tea_straw',
+            name: '珍珠奶茶吸管',
+            cost: 100,
+            color: new Color(235, 205, 160, 255),
+            rangeColor: new Color(235, 205, 160, 60),
+            buttonPos: ATTACK_BUTTON_POS,
+            attack: {
+                attackType: 'thrust',
+                rangeBand: 'contact',
+                range: 80,               // 贴身射程。必须 > 60（一格），否则够不到路径（原 55 永远无法攻击）
+                width: 14,
+                damage: 12,
+                attackInterval: 0.65,
+                attackDuration: 0.22,
+                maxTargets: 1,
+                maxHitsPerTarget: 1,
+                aimMode: 'first',
+                visualEffectId: 'bubble_tea_straw_thrust',
+            },
+        },
+        {
+            id: 'whisk',
+            name: '打蛋器',
+            cost: 120,
+            color: new Color(150, 200, 255, 255),
+            rangeColor: new Color(150, 200, 255, 60),
+            buttonPos: ATTACK_BUTTON_POS,
+            attack: {
+                attackType: 'spin',
+                rangeBand: 'short',
+                range: 90,
+                radius: 90,
+                damage: 8,
+                attackInterval: 1.2,
+                attackDuration: 1.0,
+                damageTick: 0.25,
+                maxTargets: 99,
+                maxHitsPerTarget: 99,
+                aimMode: 'mostEnemies',
+                visualEffectId: 'whisk_spin',
+            },
+        },
+        {
+            id: 'spatula',
+            name: '锅铲',
+            cost: 140,
+            color: new Color(200, 140, 90, 255),
+            rangeColor: new Color(200, 140, 90, 60),
+            buttonPos: ATTACK_BUTTON_POS,
+            attack: {
+                attackType: 'smash',
+                rangeBand: 'medium',
+                range: 150,
+                radius: 60,
+                damage: 30,
+                attackInterval: 1.5,
+                maxTargets: 99,
+                maxHitsPerTarget: 1,
+                aimMode: 'mostEnemies',
+                visualEffectId: 'spatula_smash',
+            },
+        },
+        {
+            id: 'needle',
+            name: '缝衣针',
+            cost: 130,
+            color: new Color(230, 230, 240, 255),
+            rangeColor: new Color(230, 230, 240, 60),
+            buttonPos: ATTACK_BUTTON_POS,
+            attack: {
+                attackType: 'pierce',
+                rangeBand: 'medium',
+                range: 180,
+                width: 10,
+                damage: 14,
+                attackInterval: 0.9,
+                maxTargets: 4,
+                canPierce: true,
+                maxHitsPerTarget: 1,
+                aimMode: 'first',
+                visualEffectId: 'needle_pierce',
+            },
+        },
+    ] as TowerDef[]).map(SceneInitializer.normalizeTowerDef);
 
     // ===== 敌人注册表（含闭包引用 this.towerStats/HEAL_*，保留在 SceneInitializer）=====
     private readonly ENEMY_REGISTRY: EnemyDef[] = [
         {
             id: 'normal',
             enemyType: EnemyType.NORMAL,
-            name: '普通兵',
+            name: '1级小兵',
             speedMultiplier: 1,
             hpMultiplier: 1,
             color: new Color(80, 200, 80, 255),
             radius: 14,
+        },
+        {
+            id: 'fast',
+            enemyType: EnemyType.FAST,
+            name: '2级小兵',          // 快速脆皮群：低血高速、成群冲锋 → 克：链击/横扫（橡皮筋/牙刷）
+            speedMultiplier: 1.5,
+            hpMultiplier: 0.6,
+            color: new Color(255, 215, 90, 255),
+            radius: 12,
+        },
+        {
+            id: 'tank',
+            enemyType: EnemyType.TANK,
+            name: '3级小兵',          // 慢速重甲：高血低速、稳步推进 → 克：单体高伤/戳击（珍珠奶茶吸管）
+            speedMultiplier: 0.55,
+            hpMultiplier: 2.0,
+            color: new Color(130, 140, 110, 255),
+            radius: 18,
         },
         {
             id: 'healer',
@@ -277,7 +497,7 @@ export class SceneInitializer extends Component {
             enemyType: EnemyType.BOSS,
             name: 'BOSS',
             speedMultiplier: 0.5,
-            hpMultiplier: 10,              // 血量是同波普通兵的 10 倍
+            hpMultiplier: 5,               // 血量是同波普通兵的 5 倍（满塔可在其抵达终点前击杀，原 10 过肉）
             color: new Color(255, 70, 70, 255),
             radius: 28,
             onUpdate: (enemy, dt) => {
@@ -330,7 +550,7 @@ export class SceneInitializer extends Component {
     private handCards: CardDef[] = [];             // 当前手牌
     private handCardNodes: Node[] = [];            // 当前激活的手牌卡 UI 节点（与 handCards 平行）
     /** 预创建的 5 个卡槽（setupScene 一次性建好并复用，避免运行时动态建 Graphics 不渲染） */
-    private handCardSlots: { node: Node; gfx: Graphics; nameLabel: Label; descLabel: Label; unusableNode: Node }[] = [];
+    private handCardSlots: { node: Node; gfx: Graphics; nameLabel: Label; descLabel: Label; kindLabel: Label; unusableNode: Node }[] = [];
     private usedCardCount = 0;                     // 本轮已使用卡数（上限 MAX_CARD_USES_PER_DRAW）
     private dragCardIndex = -1;                    // 正在拖动的卡索引（-1 无）
     private cardGhost: Node | null = null;         // 拖动手牌的幽灵
@@ -350,7 +570,12 @@ export class SceneInitializer extends Component {
     private enemies: EnemyRuntime[] = [];
     private towers: TowerRuntime[] = [];
     private towerTimers: number[] = [];
-    private bullets: { node: Node; vx: number; vy: number; target: Node; def: TowerDef; tower: TowerRuntime }[] = [];
+    private bullets: { node: Node; vx: number; vy: number; target: Node; def: TowerDef; tower: TowerRuntime; bounce: number; dmgMul?: number; noSplit?: boolean }[] = [];
+
+    // 地面减速区（胶带战术卡）：独立节点 + 计时器，到期自动清理
+    private groundZones: { node: Node; timer: number; radius: number; slowMultiplier: number }[] = [];
+    // 战术卡落点（胶带减速区中心等）
+    private lastCardDropPos: Vec3 = Vec3.ZERO;
 
     // === BOSS 锁定技能状态 ===
     private bossLockedTower: TowerRuntime | null = null;
@@ -968,6 +1193,17 @@ export class SceneInitializer extends Component {
      * unlockConditions/excludeConditions/weightRules 引用合法；minWave>=1；maxStacks>0；
      * 效果 effects 非空（waveBuff 必需）。
      */
+    /** 由 attack.attackType 派生过渡期运行时开关（attackKind/sweep/bounce），
+     *  使 attackType 成为攻击形态的唯一真相来源，避免与旧字段漂移。下一阶段战斗重构后移除。 */
+    private static normalizeTowerDef(def: TowerDef): TowerDef {
+        const t = def.attack.attackType;
+        const isBullet = t === 'projectile' || t === 'scatter' || t === 'lob' || t === 'pierce' || t === 'chain';
+        def.attackKind = isBullet ? 'bullet' : 'instant';
+        def.sweep = t === 'sweep';
+        def.bounce = t === 'chain' ? (def.attack.maxTargets ?? 0) : undefined;
+        return def;
+    }
+
     private static validateBuffConfigs(): void {
         const all: { id: string; where: string }[] = [];
         const check = (opts: { id: string; minWave: number; maxStacks: number; effects: unknown[]; where: string }[]) => {
@@ -1164,6 +1400,18 @@ export class SceneInitializer extends Component {
             unlockTile: () => {
                 const i = this.lockedSlots.findIndex(l => l);
                 if (i >= 0) { this.lockedSlots[i] = false; this.redrawSlot(i, false); }
+            },
+            // 家庭小物件：胶带地面减速区（落点由 handleCardDrop 写入 lastCardDropPos）
+            custom: (effectId: string, effect: EffectDefinition) => {
+                if (effectId === 'groundSlowZone') {
+                    const p = effect.parameters ?? {};
+                    const radius = Number(p.radius ?? 80);
+                    const duration = Number(p.duration ?? 8);
+                    const slowMul = Number(p.slowMultiplier ?? 0.6);
+                    this.createGroundZone(this.lastCardDropPos.clone(), radius, duration, slowMul);
+                } else {
+                    console.warn(`[effectContext] 未注册的 custom 效果: ${effectId}`);
+                }
             },
         };
     }
@@ -1389,11 +1637,19 @@ export class SceneInitializer extends Component {
         return this.gameTransform!.convertToNodeSpaceAR(v3(uiPos.x, uiPos.y, 0));
     }
 
+    // ===== 临时调试：索敌日志（选择结果变化时才输出，避免逐帧刷屏；验收后置 false）=====
+    private static readonly DEBUG_AIM = true;
+    private lastAimPick = new Map<string, number>();   // "towerId@x,y" → 上次选中的敌人索引
+
     /**
-     * 按塔类型索敌（每种塔不同优先级）
-     * 攻击塔：最靠近基地的敌人（x 坐标最大，靠近终点 x=400）
-     * 减速塔：尚未减速、移动最快的敌人（slowMultiplier 最大且 speedMultiplier 最大）
-     * 毒塔：尚未中毒、生命较高的敌人
+     * 统一索敌：按 TowerDef.attack.aimMode 选择目标。
+     *  - first（默认/未配置）：路径进度最靠前（pathIdx 大 → 距下一 waypoint 近 → 距塔近）
+     *  - nearest：距塔最近（并列按 first）
+     *  - highestHp：当前血量最高（并列按 first）
+     *  - unaffected：尚未受本塔首个 statusEffect 影响的敌人（软偏好：
+     *    有未受影响者在其内按 first；全部已受影响回退全体按 first）
+     * mostEnemies/fixedDirection 等专用模式经此处仅作"范围内有敌"开火闸门，按 first 处理，
+     * 实际目标由各自攻击执行器复选。
      * 返回范围内优先目标的索引，无目标返回 -1
      */
     private findTarget(def: TowerDef, towerPos: Vec3, range: number): number {
@@ -1411,71 +1667,96 @@ export class SceneInitializer extends Component {
         }
         if (inRange.length === 0) return -1;
 
-        if (def.id === 'attack') {
-            // 最靠近基地的敌人（沿路径进度最大；同段则离下个 waypoint 更近）
-            let best = inRange[0];
-            for (const c of inRange) {
-                const cur = c.enemy;
-                const bestE = best.enemy;
-                if (cur.pathIdx > bestE.pathIdx) {
-                    best = c;
-                } else if (cur.pathIdx === bestE.pathIdx) {
-                    const curTarget = PATH_WAYPOINTS[Math.min(cur.pathIdx, PATH_WAYPOINTS.length - 1)];
-                    const bestTarget = PATH_WAYPOINTS[Math.min(bestE.pathIdx, PATH_WAYPOINTS.length - 1)];
-                    const dCur = Vec3.distance(cur.node.position, curTarget);
-                    const dBest = Vec3.distance(bestE.node.position, bestTarget);
-                    if (dCur < dBest) best = c;
-                }
+        const aimMode = def.attack?.aimMode ?? 'first';   // 未配置默认 first
+
+        // unaffected：软偏好缩小候选池（不覆盖 first 主规则）
+        // 漏怪风险兜底：若范围内"最靠前(离终点最近)"的敌人已被本塔影响（如已减速/中毒），
+        // 不应为扩散 debuff 而忽略它——继续对它减速/中毒以拖延漏怪；
+        // 仅当最前方仍 fresh 时，才用 fresh 池优先向后排未受影响者扩散。
+        let pool = inRange;
+        if (aimMode === 'unaffected') {
+            const fresh = inRange.filter(c => !this.isAffectedByTower(def, c.enemy));
+            if (fresh.length > 0) {
+                const frontIdx = this.findFirstTarget(towerPos, range);
+                const frontFresh = frontIdx >= 0
+                    && inRange.some(c => c.idx === frontIdx)
+                    && !this.isAffectedByTower(def, this.enemies[frontIdx]);
+                if (frontFresh) pool = fresh;
             }
-            return best.idx;
         }
 
-        if (def.id === 'slow') {
-            // 尚未减速、移动最快的敌人
-            let best = inRange[0].idx;
-            let bestScore = -Infinity;
-            for (const c of inRange) {
-                const e = c.enemy;
-                const eDef = this.getEnemyDef(e.type);
-                const speedMult = eDef?.speedMultiplier ?? 1;
-                const slowMult = e.slowMultiplier;
-                const score = (slowMult >= 1.0 ? 1000 : 0) + speedMult * 100 + (1 - slowMult) * (-50);
-                if (score > bestScore) {
-                    bestScore = score;
-                    best = c.idx;
+        let best = pool[0].idx;
+        if (aimMode === 'nearest') {
+            let bestDist = Infinity;
+            for (const c of pool) {
+                const d = Vec3.distance(towerPos, c.enemy.node.position);
+                if (d < bestDist - 1e-6 ||
+                    (Math.abs(d - bestDist) <= 1e-6 && this.compareFirst(c.enemy, enemies[best], towerPos) < 0)) {
+                    bestDist = d; best = c.idx;
                 }
             }
-            return best;
-        }
-
-        if (def.id === 'poison') {
-            // 尚未中毒、生命较高的敌人
-            let best = -1;
-            let bestScore = -Infinity;
-            for (const c of inRange) {
-                const e = c.enemy;
-                const hasPoison = e.buffs['poison'] ? 1 : 0;
-                // 未中毒优先，再按 hp 排序
-                const score = (hasPoison === 0 ? 10000 : 0) + e.hp;
-                if (score > bestScore) {
-                    bestScore = score;
-                    best = c.idx;
+        } else if (aimMode === 'highestHp') {
+            let bestHp = -Infinity;
+            for (const c of pool) {
+                const hp = c.enemy.hp;
+                if (hp > bestHp + 1e-6 ||
+                    (Math.abs(hp - bestHp) <= 1e-6 && this.compareFirst(c.enemy, enemies[best], towerPos) < 0)) {
+                    bestHp = hp; best = c.idx;
                 }
             }
-            return best;
-        }
-
-        // 默认：最近的敌人
-        let nearestIdx = inRange[0].idx;
-        let nearestDist = Infinity;
-        for (const c of inRange) {
-            const dist = Vec3.distance(towerPos, c.enemy.node.position);
-            if (dist < nearestDist) {
-                nearestDist = dist;
-                nearestIdx = c.idx;
+        } else {
+            // first（默认）：路径进度最靠前
+            for (const c of pool) {
+                if (this.compareFirst(c.enemy, enemies[best], towerPos) < 0) best = c.idx;
             }
         }
-        return nearestIdx;
+
+        this.logAimDebug(def, towerPos, aimMode, pool, best);
+        return best;
+    }
+
+    /** 'first' 比较器：a 比 b 更靠近终点返回负值。pathIdx 大者优先 → 同段距下一 waypoint 近者优先 → 距塔近者优先 */
+    private compareFirst(a: EnemyRuntime, b: EnemyRuntime, towerPos: Vec3): number {
+        if (a.pathIdx !== b.pathIdx) return b.pathIdx - a.pathIdx;
+        const wa = PATH_WAYPOINTS[Math.min(a.pathIdx, PATH_WAYPOINTS.length - 1)];
+        const wb = PATH_WAYPOINTS[Math.min(b.pathIdx, PATH_WAYPOINTS.length - 1)];
+        const da = Vec3.distance(a.node.position, wa);
+        const db = Vec3.distance(b.node.position, wb);
+        if (Math.abs(da - db) > 1e-6) return da - db;
+        return Vec3.distance(a.node.position, towerPos) - Vec3.distance(b.node.position, towerPos);
+    }
+
+    /** 敌人是否已受本塔首个 statusEffect 影响（aimMode 'unaffected' 用；无效果配置/未跟踪类型视为未受影响） */
+    private isAffectedByTower(def: TowerDef, e: EnemyRuntime): boolean {
+        const eff = def.attack?.statusEffects?.[0];
+        if (!eff) return false;
+        switch (eff.type) {
+            case 'SLOW': return e.slowMultiplier < 1.0;
+            case 'POISON': return !!e.buffs['poison'];
+            case 'MARK': return e.vulnerableTimer > 0;
+            case 'BURN': return !!e.buffs['burn'];
+            case 'BLEED': return !!e.buffs['bleed'];
+            case 'FREEZE': return !!e.buffs['freeze'];
+            case 'STUN': return !!e.buffs['stun'];
+            case 'CURSE': return !!e.buffs['curse'];
+            default: return false;
+        }
+    }
+
+    /** 临时调试输出：每个候选敌人的 pathIdx、到下一 waypoint 距离、最终选择 */
+    private logAimDebug(def: TowerDef, towerPos: Vec3, aimMode: string,
+                        pool: { idx: number; enemy: EnemyRuntime }[], best: number): void {
+        if (!SceneInitializer.DEBUG_AIM) return;
+        const key = `${def.id}@${towerPos.x.toFixed(0)},${towerPos.y.toFixed(0)}`;
+        if (this.lastAimPick.get(key) === best) return;   // 选择未变化不重复输出
+        this.lastAimPick.set(key, best);
+        const desc = pool.map(c => {
+            const e = c.enemy;
+            const wp = PATH_WAYPOINTS[Math.min(e.pathIdx, PATH_WAYPOINTS.length - 1)];
+            const dNext = Vec3.distance(e.node.position, wp);
+            return `#${c.idx}[pathIdx=${e.pathIdx} dNext=${dNext.toFixed(1)}]`;
+        }).join(' ');
+        console.log(`[AIM] ${def.id} mode=${aimMode} | ${desc} | => #${best}`);
     }
 
     private eventToCanvasLocal(event: EventTouch): Vec3 {
@@ -1487,6 +1768,8 @@ export class SceneInitializer extends Component {
     private startMoveTower(towerIndex: number): void {
         if (towerIndex < 0 || towerIndex >= this.towers.length) return;
         const tower = this.towers[towerIndex];
+        this.resetThrust(tower);   // 移动前中止戳击动画，避免残留
+        this.resetSpin(tower);     // 同步复位旋斩通道
         const towerPos = tower.node.position.clone();
         // 记录原槽位
         for (let s = 0; s < this.slotPositions.length; s++) {
@@ -1518,7 +1801,7 @@ export class SceneInitializer extends Component {
             gfx.fill();
             gfx.strokeColor = new Color(tower.def.rangeColor.r, tower.def.rangeColor.g, tower.def.rangeColor.b, 30);
             gfx.lineWidth = 2;
-            gfx.circle(0, 0, tower.def.range);
+            gfx.circle(0, 0, tower.def.attack.range);
             gfx.stroke();
         }
     }
@@ -1549,8 +1832,24 @@ export class SceneInitializer extends Component {
         gfx.fill();
         gfx.strokeColor = def.rangeColor;
         gfx.lineWidth = 2;
-        gfx.circle(0, 0, def.range);
+        gfx.circle(0, 0, def.attack.range);
         gfx.stroke();
+
+        // 家庭小物件标识（与 createTower 保持一致）
+        if (def.support) {
+            gfx.strokeColor = new Color(255, 210, 80, 220);
+            gfx.lineWidth = 3;
+            gfx.circle(0, 0, 12);
+            gfx.stroke();
+        } else if (def.sweep) {
+            gfx.fillColor = new Color(255, 255, 255, 150);
+            gfx.rect(-14, -3, 28, 6);
+            gfx.fill();
+        } else if (def.bounce) {
+            gfx.fillColor = new Color(255, 255, 255, 210);
+            gfx.circle(0, 0, 4);
+            gfx.fill();
+        }
     }
 
 
@@ -1849,17 +2148,25 @@ export class SceneInitializer extends Component {
             // 到达终点检测
             const endPos = this.PATH_END;
             if (Vec3.distance(pos, endPos) < 5) {
-                // 到达终点 → 伤害友军
-                e.node.destroy();
-                this.enemies.splice(i, 1);
-                this.allyHp -= 1;
-                console.log(`漏怪！友军 HP: ${this.allyHp}/${this.ALLY_MAX_HP}`);
-                if (this.livesLabel) {
-                    this.livesLabel.string = `Base: ${this.allyHp}/${this.ALLY_MAX_HP}`;
-                }
-                if (this.allyHp <= 0) {
-                    console.log('友军被摧毁，游戏结束！');
+                if (e.type === EnemyType.BOSS) {
+                    // BOSS 突破终点 → 直接判负（无视剩余友军 HP）
+                    e.node.destroy();
+                    this.enemies.splice(i, 1);
+                    console.log('BOSS 突破终点，游戏结束！');
                     this.gameOver();
+                } else {
+                    // 到达终点 → 伤害友军
+                    e.node.destroy();
+                    this.enemies.splice(i, 1);
+                    this.allyHp -= 1;
+                    console.log(`漏怪！友军 HP: ${this.allyHp}/${this.ALLY_MAX_HP}`);
+                    if (this.livesLabel) {
+                        this.livesLabel.string = `Base: ${this.allyHp}/${this.ALLY_MAX_HP}`;
+                    }
+                    if (this.allyHp <= 0) {
+                        console.log('友军被摧毁，游戏结束！');
+                        this.gameOver();
+                    }
                 }
             } else {
                 // 沿 waypoints 逐段移动（pathIdx 跟踪目标；按本帧步长判定到达，避免掉帧时卡在折点）
@@ -1911,6 +2218,9 @@ export class SceneInitializer extends Component {
             }
         }
 
+        // === 充电宝光环（每帧重算攻速倍率）===
+        this.updateAuras();
+
         // === 塔攻击 ===
         for (let i = 0; i < this.towers.length; i++) {
             if (this.enemies.length === 0) continue;
@@ -1921,11 +2231,13 @@ export class SceneInitializer extends Component {
                 continue;
             }
             const def = tower.def;
+            // 辅助塔（充电宝）：不攻击，仅提供光环（光环在 updateAuras 每帧计算）
+            if (def.support) continue;
             const p = this.getTowerParams(tower);
 
-            // 按塔类型索敌（每种塔有不同优先级）
-            const nearestEnemy = this.findTarget(def, tower.node.position, p.range);
-            if (nearestEnemy < 0) continue;
+            // 统一索敌：按 attack.aimMode（默认 first = 兵线最靠近终点，见 findTarget）
+            const targetIdx = this.findTarget(def, tower.node.position, p.range);
+            if (targetIdx < 0) continue;
 
             this.towerTimers[i] += dt;
             if (this.towerTimers[i] >= p.interval) {
@@ -1933,22 +2245,51 @@ export class SceneInitializer extends Component {
                 tower.attackCount += 1;
 
                 // 只对主目标发射 1 颗子弹；分裂在主弹命中后触发（见子弹更新段）
-                const target = this.enemies[nearestEnemy];
+                const target = this.enemies[targetIdx];
                 if (!target || !target.node.isValid) continue;
 
-                if (def.attackKind === 'bullet') {
-                    this.fireBullet(tower.node.position, target.node.position, target.node, def, tower);
+                if (def.attack.attackType === 'thrust') {
+                    // 贴身戳击（珍珠奶茶吸管）：吸管伸出戳一下即收回，不生成子弹
+                    this.thrustAttack(tower);
+                } else if (def.attack.attackType === 'spin') {
+                    // 旋斩（打蛋器）：自身圆周范围持续伤害
+                    this.spinAttack(tower);
+                } else if (def.attack.attackType === 'smash') {
+                    // 砸击（锅铲）：敌群最密点范围爆发
+                    this.smashAttack(tower);
+                } else if (def.attack.attackType === 'pierce') {
+                    // 贯穿（缝衣针）：直线穿透多目标
+                    this.pierceAttack(tower);
+                } else if (def.attack.attackType === 'spray') {
+                    // 减速塔：按 attack.statusEffects 施减速/易伤（基础值来自 statusEffects）
+                    this.applyTowerEffect(tower, target, p);
+                    this.fireBullet(tower.node.position, target.node.position, target.node, def, tower, 0);
+                } else if (def.sweep) {
+                    // 横扫（牙刷）：对范围内所有敌人造成伤害
+                    this.sweepAttack(tower, p);
+                } else if (def.attackKind === 'bullet') {
+                    const bounce = def.bounce ?? 0;
+                    this.fireBullet(tower.node.position, target.node.position, target.node, def, tower, bounce);
                     // 连发词缀：每 4 次攻击追加一发
                     if (p.rapid && tower.attackCount % 4 === 0) {
-                        this.fireBullet(tower.node.position, target.node.position, target.node, def, tower);
+                        this.fireBullet(tower.node.position, target.node.position, target.node, def, tower, bounce);
                     }
                 } else {
                     // 瞬间效果型（减速塔）：逐塔施加减速/易伤
                     this.applyTowerEffect(tower, target, p);
-                    this.fireBullet(tower.node.position, target.node.position, target.node, def, tower);
+                    this.fireBullet(tower.node.position, target.node.position, target.node, def, tower, 0);
                 }
             }
         }
+
+        // === thrust 戳击动画推进 ===
+        this.updateThrusts(dt);
+
+        // === spin 旋斩通道推进 ===
+        this.updateSpins(dt);
+
+        // === 缝衣针弹体飞行与穿透命中 ===
+        this.updatePierceShots(dt);
 
         // === 敌人减速 / 易伤计时 ===
         for (const e of this.enemies) {
@@ -1991,6 +2332,23 @@ export class SceneInitializer extends Component {
         // === BOSS 锁定技能倒计时结算 ===
         this.updateBossLock(dt);
 
+        // === 地面减速区（胶带）：范围内敌人减速，到期清理节点 ===
+        for (let i = this.groundZones.length - 1; i >= 0; i--) {
+            const z = this.groundZones[i];
+            z.timer -= dt;
+            for (const e of this.enemies) {
+                if (!e.node.isValid) continue;
+                if (Vec3.distance(z.node.position, e.node.position) <= z.radius) {
+                    e.slowMultiplier = Math.min(e.slowMultiplier, z.slowMultiplier);
+                    e.slowTimer = Math.max(e.slowTimer, 0.2);  // 持续刷新，离开后自然恢复
+                }
+            }
+            if (z.timer <= 0) {
+                z.node.destroy();
+                this.groundZones.splice(i, 1);
+            }
+        }
+
         // === 子弹更新 ===
         for (let i = this.bullets.length - 1; i >= 0; i--) {
             const b = this.bullets[i];
@@ -2013,7 +2371,7 @@ export class SceneInitializer extends Component {
                 if (d < 16) {
                     // 逐塔解析有效属性（含二星强化 + 词缀）
                     const p = this.getTowerParams(b.tower);
-                    let dmg = p.damage;
+                    let dmg = p.damage * (b.dmgMul ?? 1);   // 分裂子弹按倍率减伤
                     // 处决词缀：对低血敌人增伤
                     if (p.executeBonus > 0 && e.hp / e.maxHp < 0.3) {
                         dmg *= (1 + p.executeBonus);
@@ -2058,6 +2416,29 @@ export class SceneInitializer extends Component {
                     // 治疗抑制卡：命中治疗兵后，使其进入治疗沉默（HEAL_SILENCE 秒内无法治疗）
                     if (this.towerStats.healSuppression > 0 && e.type === EnemyType.HEALER) {
                         e.healCd = Math.max(e.healCd, this.HEAL_SILENCE);
+                    }
+
+                    // 橡皮筋：命中后弹射到附近下一个敌人（不销毁，继续飞行）
+                    if (b.bounce > 0) {
+                        const next = this.findChainTarget(e.node, b.node.position, 130);
+                        if (next >= 0) {
+                            const nn = this.enemies[next].node.position;
+                            const dx = nn.x - b.node.position.x;
+                            const dy = nn.y - b.node.position.y;
+                            const dlen = Math.hypot(dx, dy) || 1;
+                            b.vx = (dx / dlen) * this.BULLET_SPEED;
+                            b.vy = (dy / dlen) * this.BULLET_SPEED;
+                            b.target = this.enemies[next].node;
+                            b.bounce -= 1;
+                            hit = true;
+                            continue;   // 继续飞行，下一帧命中新目标
+                        }
+                    }
+
+                    // 分裂弹道（改造卡 'split'）：终结命中（弹射耗尽/无弹射）时分裂，
+                    // 分裂弹带 noSplit 标记不再二次分裂
+                    if (!b.noSplit && b.tower.modifiers.includes('split')) {
+                        this.triggerSplit(b.node.position, e.node, b.def, b.tower);
                     }
 
                     b.node.destroy();
@@ -2160,8 +2541,9 @@ export class SceneInitializer extends Component {
         });
     }
 
-    /** 发射子弹 */
-    private fireBullet(from: Vec3, to: Vec3, target: Node, def: TowerDef, tower: TowerRuntime): void {
+    /** 发射子弹（dmgMul<1 的分裂子弹视觉更小；noSplit 标记的分裂弹命中不再触发分裂） */
+    private fireBullet(from: Vec3, to: Vec3, target: Node, def: TowerDef, tower: TowerRuntime, bounce: number = 0,
+                       dmgMul: number = 1, noSplit: boolean = false): void {
         if (!this.battleRoot) return;
 
         const bullet = new Node('Bullet');
@@ -2174,7 +2556,7 @@ export class SceneInitializer extends Component {
 
         const gfx = bullet.addComponent(Graphics);
         gfx.fillColor = new Color(def.color.r, def.color.g, def.color.b, 255);
-        gfx.circle(0, 0, 6);
+        gfx.circle(0, 0, dmgMul < 1 ? 4 : 6);
         gfx.fill();
 
         const dx = to.x - from.x;
@@ -2188,7 +2570,439 @@ export class SceneInitializer extends Component {
             target,
             def,
             tower,
+            bounce,
+            dmgMul,
+            noSplit,
         });
+    }
+
+    /** 分裂弹道（改造卡 'split'）：主弹终结命中时，向命中点附近最近的 2 个其他敌人各分裂 1 颗 50% 伤害子弹 */
+    private triggerSplit(pos: Vec3, exclude: Node, def: TowerDef, tower: TowerRuntime): void {
+        const cands: { e: EnemyRuntime; d: number }[] = [];
+        for (const e of this.enemies) {
+            if (!e.node.isValid || e.node === exclude) continue;
+            const d = Vec3.distance(pos, e.node.position);
+            if (d <= SceneInitializer.SPLIT_RADIUS) cands.push({ e, d });
+        }
+        cands.sort((a, b) => a.d - b.d);
+        for (let k = 0; k < Math.min(SceneInitializer.SPLIT_COUNT, cands.length); k++) {
+            const t = cands[k].e;
+            this.fireBullet(pos.clone(), t.node.position.clone(), t.node, def, tower,
+                0, SceneInitializer.SPLIT_DMG_MUL, true);
+        }
+    }
+
+    // ============================================================
+    //  家庭小物件机制：光环 / 横扫 / 弹射 / 地面减速区
+    // ============================================================
+
+    /** 重算所有塔的充电宝光环攻速倍率（每帧调用，天然支持增删，不污染基础属性） */
+    private updateAuras(): void {
+        for (const t of this.towers) t.auraSpeedMul = 1;
+        for (const bank of this.towers) {
+            if (!bank.def.support || !bank.def.auraSpeedBonus) continue;
+            const bonus = bank.def.auraSpeedBonus;
+            for (const t of this.towers) {
+                if (t === bank) continue;
+                if (Vec3.distance(bank.node.position, t.node.position) <= bank.def.attack.range) {
+                    t.auraSpeedMul *= (1 - bonus);
+                }
+            }
+        }
+    }
+
+    /** 牙刷横扫：对范围内所有敌人造成伤害 */
+    private sweepAttack(tower: TowerRuntime, p: TowerParams): void {
+        for (const e of this.enemies) {
+            if (!e.node.isValid) continue;
+            if (Vec3.distance(tower.node.position, e.node.position) <= p.range) {
+                this.damageEnemy(e, p.damage);
+                EffectManager.instance?.playHit(e.node);
+                EffectManager.instance?.playDamageNumber(e.node.position, p.damage, false);
+            }
+        }
+    }
+
+    // ===== thrust（吸管戳击）攻击 =====
+    // 贴身单体、吸管伸出戳一下即收回，不生成子弹；沿用统一伤害/死亡/金币/波次统计。
+
+    /** 触发一次戳击：锁定目标方向，启动伸出动画（伤害在伸出到最大长度时结算） */
+    private thrustAttack(tower: TowerRuntime): void {
+        if (tower.thrust && tower.thrust.active) return;     // 防重入（动画未结束不重复触发）
+        const p = this.getTowerParams(tower);
+        const tidx = this.findFirstTarget(tower.node.position, p.range);
+        if (tidx < 0) return;
+        const target = this.enemies[tidx];
+        if (!target || !target.node.isValid) return;
+
+        const tp = tower.node.position;
+        const dx = target.node.position.x - tp.x;
+        const dy = target.node.position.y - tp.y;
+        const len = Math.hypot(dx, dy) || 1;
+        const dirX = dx / len;
+        const dirY = dy / len;
+
+        // 吸管转向目标（根部固定在节点原点，仅旋转）
+        if (tower.straw) {
+            tower.straw.angle = Math.atan2(dirY, dirX) * 180 / Math.PI;
+        }
+        tower.thrust = { active: true, phase: 'extend', timer: 0, dirX, dirY, damaged: false };
+    }
+
+    /** 每帧推进所有 thrust 塔的戳击动画，并在伸出到最大长度时结算一次伤害 */
+    private updateThrusts(dt: number): void {
+        for (const tower of this.towers) {
+            const st = tower.thrust;
+            const straw = tower.straw;
+            if (!st || !st.active || !straw || !straw.isValid) {
+                if (DEBUG && tower.thrustDebug) this.drawThrustDebug(tower, false);
+                continue;
+            }
+            st.timer += dt;
+            if (st.phase === 'extend') {
+                const f = Math.min(1, st.timer / THRUST_EXTEND);
+                straw.setScale(THRUST_REST_SCALE + (1 - THRUST_REST_SCALE) * f, 1, 1);
+                if (f >= 1) {
+                    straw.setScale(1, 1, 1);
+                    st.phase = 'pause';
+                    st.timer = 0;
+                    this.applyThrustHit(tower);   // 触及目标瞬间结算
+                }
+            } else if (st.phase === 'pause') {
+                if (st.timer >= THRUST_PAUSE) { st.phase = 'retract'; st.timer = 0; }
+            } else if (st.phase === 'retract') {
+                const f = Math.min(1, st.timer / THRUST_RETRACT);
+                straw.setScale(1 - (1 - THRUST_REST_SCALE) * f, 1, 1);
+                if (f >= 1) {
+                    straw.setScale(THRUST_REST_SCALE, 1, 1);
+                    st.active = false;
+                    st.phase = 'idle';
+                }
+            }
+            if (DEBUG && tower.thrustDebug) this.drawThrustDebug(tower, true);
+        }
+    }
+
+    /** 戳击命中结算：细长矩形区域内只伤害一个最靠前的敌人一次（攻击距离=吸管伸出长度） */
+    private applyThrustHit(tower: TowerRuntime): void {
+        const p = this.getTowerParams(tower);
+        const a = tower.def.attack;
+        const root = tower.node.position;
+        const st = tower.thrust!;
+        const dirX = st.dirX, dirY = st.dirY;
+        const range = a.range;                  // 与吸管实际伸出长度一致
+        const halfW = (a.width ?? 14) / 2;
+        let best: EnemyRuntime | null = null;
+        let bestF = -Infinity;
+        for (const e of this.enemies) {
+            if (!e.node.isValid) continue;
+            const rE = this.getEnemyDef(e.type)?.radius ?? 14;
+            const vx = e.node.position.x - root.x;
+            const vy = e.node.position.y - root.y;
+            const f = vx * dirX + vy * dirY;              // 前向分量（沿戳击方向）
+            if (f < -rE || f > range + rE) continue;      // 塔后方 / 超出戳击范围（含敌半径）
+            const fC = Math.max(0, Math.min(range, f));   // 夹到线段[根→尖]上求最近点
+            const cx = root.x + dirX * fC;
+            const cy = root.y + dirY * fC;
+            const dist = Math.hypot(e.node.position.x - cx, e.node.position.y - cy); // 敌心到吸管线段的最近距离
+            if (dist > halfW + rE) continue;              // 胶囊(宽 halfW) 与敌圆(半径 rE) 不相交
+            if (f > bestF) { bestF = f; best = e; }       // 只取最靠前（最近戳尖）的一个
+        }
+        if (best) {
+            this.damageEnemy(best, p.damage);    // 统一伤害接口（含易伤、死亡/金币/波次统计）
+            EffectManager.instance?.playHit(best.node);
+            EffectManager.instance?.playDamageNumber(best.node.position, p.damage, false);
+            const ts2 = this.towerStats;
+            if (ts2.bleedLevel > 0 && Math.random() < ts2.bleedChance) {
+                best.buffs['bleed'] = { timer: ts2.bleedDuration, dps: 0 };
+            }
+        }
+        st.damaged = true;
+    }
+
+    /** 敌人"离终点进度"标量：pathIdx 大优先，同段离下个 waypoint 近优先（值越大越靠近终点） */
+    private enemyProgress(e: EnemyRuntime): number {
+        const wp = PATH_WAYPOINTS[Math.min(e.pathIdx, PATH_WAYPOINTS.length - 1)];
+        const d = Vec3.distance(e.node.position, wp);
+        return e.pathIdx * 10000 - d;
+    }
+
+    /** 索敌：范围内选路径进度最靠前（最靠近终点）的敌人（aimMode 'first'），与 findTarget 共用 compareFirst 比较器 */
+    private findFirstTarget(towerPos: Vec3, range: number): number {
+        let best = -1;
+        for (let j = 0; j < this.enemies.length; j++) {
+            const e = this.enemies[j];
+            if (!e.node.isValid) continue;
+            if (Vec3.distance(towerPos, e.node.position) > range) continue;
+            if (best < 0 || this.compareFirst(e, this.enemies[best], towerPos) < 0) best = j;
+        }
+        return best;
+    }
+
+    /** 调试模式：绘制戳击判定区域（攻击中）或最大贴身搜索范围（空闲） */
+    private drawThrustDebug(tower: TowerRuntime, attacking: boolean): void {
+        const g = tower.thrustDebug;
+        if (!g) return;
+        g.clear();
+        const a = tower.def.attack;
+        const st = tower.thrust;
+        if (attacking && st) {
+            const dirX = st.dirX, dirY = st.dirY;
+            const px = -dirY, py = dirX;          // 垂直方向
+            const range = a.range;
+            const hw = (a.width ?? 14) / 2;
+            const cx = dirX * range, cy = dirY * range;
+            const c1x = -px * hw, c1y = -py * hw;
+            const c2x = px * hw, c2y = py * hw;
+            const c3x = cx + px * hw, c3y = cy + py * hw;
+            const c4x = cx - px * hw, c4y = cy - py * hw;
+            g.fillColor = new Color(255, 90, 90, 70);
+            g.moveTo(c1x, c1y); g.lineTo(c2x, c2y); g.lineTo(c3x, c3y); g.lineTo(c4x, c4y); g.close(); g.fill();
+            g.strokeColor = new Color(255, 90, 90, 220); g.lineWidth = 1;
+            g.moveTo(0, 0); g.lineTo(cx, cy); g.stroke();
+        } else {
+            g.strokeColor = new Color(255, 90, 90, 120); g.lineWidth = 1;
+            g.circle(0, 0, a.range); g.stroke();
+        }
+    }
+
+    /** 中断/移动/融合/销毁时复位吸管动画与状态，避免残留 */
+    private resetThrust(tower: TowerRuntime): void {
+        if (tower.thrust) {
+            tower.thrust.active = false;
+            tower.thrust.phase = 'idle';
+            tower.thrust.timer = 0;
+            tower.thrust.damaged = false;
+        }
+        if (tower.straw && tower.straw.isValid) {
+            tower.straw.setScale(THRUST_REST_SCALE, 1, 1);
+            tower.straw.angle = 0;
+        }
+    }
+
+    /** thrust 塔的吸管子节点：根部在 (0,0)，沿 +x 伸出；缩放只改横向，根部固定不位移 */
+    private attachStraw(node: Node, def: TowerDef): Node | null {
+        if (def.attack.attackType !== 'thrust') return null;
+        const straw = VisualFactory.createThrustStraw(def, node);   // 表现层构建外观（Graphics 占位，美术阶段换皮）
+        straw.setScale(THRUST_REST_SCALE, 1, 1);                    // 初始收回缩放（时序逻辑保留在此）
+        return straw;
+    }
+
+    // ===== spin / smash / pierce 攻击（数值统一读 def.attack）=====
+    private pierceShots: PierceShot[] = [];   // 缝衣针飞行弹体（区别于戳击的即时直线）
+
+    /** spin 旋斩（打蛋器）：开启持续伤害通道，attackDuration 内每 damageTick 对半径内敌人结算 */
+    private spinAttack(tower: TowerRuntime): void {
+        if (tower.spin && tower.spin.active) return;   // 防重入
+        tower.spin = { active: true, timer: 0, tickTimer: 0 };
+        if (tower.spinRing) tower.spinRing.active = true;
+    }
+
+    /** 每帧推进 spin 通道：按 damageTick 对半径内所有敌人结算，attackDuration 后结束 */
+    private updateSpins(dt: number): void {
+        for (const tower of this.towers) {
+            const st = tower.spin;
+            if (!st || !st.active) continue;
+            const p = this.getTowerParams(tower);
+            const a = tower.def.attack;
+            const dur = a.attackDuration ?? 1.0;
+            const tick = a.damageTick ?? 0.25;
+            st.timer += dt;
+            st.tickTimer += dt;
+            while (st.tickTimer >= tick) {
+                st.tickTimer -= tick;
+                for (const e of this.enemies) {
+                    if (!e.node.isValid) continue;
+                    if (Vec3.distance(tower.node.position, e.node.position) <= p.range) {
+                        this.damageEnemy(e, p.damage);
+                        EffectManager.instance?.playHit(e.node);
+                    }
+                }
+            }
+            if (tower.spinRing && tower.spinRing.isValid) {
+                tower.spinRing.angle = (tower.spinRing.angle + dt * 540) % 360;  // 旋转表现
+            }
+            if (st.timer >= dur) {
+                st.active = false;
+                st.timer = 0;
+                if (tower.spinRing && tower.spinRing.isValid) tower.spinRing.active = false;
+            }
+        }
+    }
+
+    /** smash 砸击（锅铲）：选敌群最密点，半径范围爆发一次伤害 */
+    private smashAttack(tower: TowerRuntime): void {
+        const p = this.getTowerParams(tower);
+        const a = tower.def.attack;
+        const radius = a.radius ?? 60;
+        const tidx = this.findMostEnemiesTarget(tower.node.position, p.range, radius);
+        if (tidx < 0) return;
+        // 漏怪风险兜底：最密点爆发若覆盖不到范围内"最靠前(离终点最近)"的落单敌人，
+        // 且它比最密点更靠近终点，则改为砸它，避免门口落单敌人漏掉。
+        let centerIdx = tidx;
+        const fIdx = this.findFirstTarget(tower.node.position, p.range);
+        if (fIdx >= 0 && fIdx !== tidx) {
+            const densestE = this.enemies[tidx];
+            const frontE = this.enemies[fIdx];
+            if (Vec3.distance(densestE.node.position, frontE.node.position) > radius
+                && this.enemyProgress(frontE) > this.enemyProgress(densestE)) {
+                centerIdx = fIdx;
+            }
+        }
+        const center = this.enemies[centerIdx].node.position;
+        for (const e of this.enemies) {
+            if (!e.node.isValid) continue;
+            if (Vec3.distance(center, e.node.position) <= radius) {
+                this.damageEnemy(e, p.damage);
+                EffectManager.instance?.playHit(e.node);
+                EffectManager.instance?.playDamageNumber(e.node.position, p.damage, false);
+            }
+        }
+        EffectManager.instance?.playExplosion(center.clone(), radius);
+    }
+
+    /** pierce 贯穿（缝衣针）：投掷一枚缝衣针弹体，沿直线飞行并穿透多个目标（区别于戳击的即时直线） */
+    private pierceAttack(tower: TowerRuntime): void {
+        if (!this.battleRoot) return;
+        const p = this.getTowerParams(tower);
+        const a = tower.def.attack;
+        const tidx = this.findFirstTarget(tower.node.position, p.range);
+        if (tidx < 0) return;
+        const target = this.enemies[tidx];
+        const tp = tower.node.position;
+        const dx = target.node.position.x - tp.x;
+        const dy = target.node.position.y - tp.y;
+        const len = Math.hypot(dx, dy) || 1;
+        const dirX = dx / len, dirY = dy / len;
+        const range = a.range;
+        const halfW = (a.width ?? 10) / 2;
+        const maxTargets = a.maxTargets ?? 99;
+
+        // 预选中：针道内按"最靠近终点"优先，取前 maxTargets 个作为本针要结算的目标
+        const corridor: { e: EnemyRuntime; prog: number }[] = [];
+        for (const e of this.enemies) {
+            if (!e.node.isValid) continue;
+            const rE = this.getEnemyDef(e.type)?.radius ?? 14;
+            const fx = e.node.position.x - tp.x;
+            const fy = e.node.position.y - tp.y;
+            const f = fx * dirX + fy * dirY;
+            if (f < -rE || f > range + rE) continue;
+            const sx = fx - f * dirX, sy = fy - f * dirY;
+            if (Math.hypot(sx, sy) > halfW + rE) continue;
+            corridor.push({ e, prog: this.enemyProgress(e) });
+        }
+        corridor.sort((x, y) => y.prog - x.prog);   // 最靠近终点在前
+        const targetSet = new Set<EnemyRuntime>();
+        for (let i = 0; i < Math.min(maxTargets, corridor.length); i++) targetSet.add(corridor[i].e);
+
+        const node = VisualFactory.createPierceShot(tower.def);   // 表现层构建针体外观
+        node.setParent(this.battleRoot);
+        node.setPosition(tp);
+        node.angle = Math.atan2(dirY, dirX) * 180 / Math.PI;
+        this.pierceShots.push({
+            node, fromX: tp.x, fromY: tp.y, dirX, dirY,
+            speed: 720, traveled: 0, range,
+            halfW, damage: p.damage,
+            maxTargets, hitCount: 0, hitSet: new Set(),
+            targetSet,
+        });
+    }
+
+    /** 缝衣针弹体飞行与穿透命中：针尖到达敌人近缘即结算一次，最多 maxTargets 个 */
+    private updatePierceShots(dt: number): void {
+        for (let i = this.pierceShots.length - 1; i >= 0; i--) {
+            const s = this.pierceShots[i];
+            if (!s.node.isValid) { this.pierceShots.splice(i, 1); continue; }
+            s.traveled += s.speed * dt;
+            s.node.setPosition(s.fromX + s.dirX * s.traveled, s.fromY + s.dirY * s.traveled, 0);
+            for (const e of this.enemies) {
+                if (!e.node.isValid || s.hitSet.has(e)) continue;
+                if (!s.targetSet.has(e)) continue;               // 只结算预选中"最靠近终点"的目标
+                const fx = e.node.position.x - s.fromX;
+                const fy = e.node.position.y - s.fromY;
+                const f = fx * s.dirX + fy * s.dirY;        // 敌人沿针方向的前向距离
+                if (f < 0 || f > s.range) continue;
+                const sx = fx - f * s.dirX, sy = fy - f * s.dirY;
+                const rE = this.getEnemyDef(e.type)?.radius ?? 14;
+                if (Math.hypot(sx, sy) > s.halfW + rE) continue; // 针道外的敌人
+                if (s.traveled < f - rE) continue;               // 针尖尚未到达该敌人近缘
+                this.damageEnemy(e, s.damage);
+                EffectManager.instance?.playHit(e.node);
+                EffectManager.instance?.playDamageNumber(e.node.position, s.damage, false);
+                s.hitSet.add(e);
+                s.hitCount++;
+            }
+            if (s.traveled >= s.range || s.hitSet.size >= s.targetSet.size) {
+                s.node.destroy();
+                this.pierceShots.splice(i, 1);
+            }
+        }
+    }
+
+    /** 敌群最密目标：在 range 内统计每个敌人 radius 邻域敌人数，取最大（aimMode 'mostEnemies'） */
+    private findMostEnemiesTarget(towerPos: Vec3, range: number, radius: number): number {
+        let best = -1;
+        let bestCount = -1;
+        for (let j = 0; j < this.enemies.length; j++) {
+            const e = this.enemies[j];
+            if (!e.node.isValid) continue;
+            if (Vec3.distance(towerPos, e.node.position) > range) continue;
+            let count = 0;
+            for (const o of this.enemies) {
+                if (!o.node.isValid) continue;
+                if (Vec3.distance(e.node.position, o.node.position) <= radius) count++;
+            }
+            if (count > bestCount) { bestCount = count; best = j; }
+        }
+        return best;
+    }
+
+    /** spin 塔的旋斩光环子节点：攻击时显示并旋转，平时隐藏 */
+    private attachSpinRing(node: Node, def: TowerDef): Node | null {
+        if (def.attack.attackType !== 'spin') return null;
+        return VisualFactory.createSpinRing(def, node);   // 表现层构建外观（含初始隐藏）
+    }
+
+    /** 中断/移动/融合/销毁时复位 spin 通道与光环 */
+    private resetSpin(tower: TowerRuntime): void {
+        if (tower.spin) {
+            tower.spin.active = false;
+            tower.spin.timer = 0;
+            tower.spin.tickTimer = 0;
+        }
+        if (tower.spinRing && tower.spinRing.isValid) tower.spinRing.active = false;
+    }
+
+    /** 橡皮筋弹射：返回 fromPos 半径内、排除 exclude 的最近敌人索引 */
+    private findChainTarget(exclude: Node, fromPos: Vec3, radius: number): number {
+        let best = -1;
+        let bestDist = Infinity;
+        for (let k = 0; k < this.enemies.length; k++) {
+            const e = this.enemies[k];
+            if (!e.node.isValid || e.node === exclude) continue;
+            const d = Vec3.distance(fromPos, e.node.position);
+            if (d <= radius && d < bestDist) { bestDist = d; best = k; }
+        }
+        return best;
+    }
+
+    /** 胶带：在指定位置创建地面减速区（独立节点，到期自动清理） */
+    private createGroundZone(pos: Vec3, radius: number, duration: number, slowMultiplier: number): void {
+        if (!this.battleRoot) return;
+        const node = new Node('GroundZone');
+        node.layer = Layers.Enum.UI_2D;
+        node.setParent(this.battleRoot);
+        node.setPosition(pos);
+        const gfx = node.addComponent(Graphics);
+        gfx.fillColor = new Color(180, 160, 255, 50);
+        gfx.circle(0, 0, radius);
+        gfx.fill();
+        gfx.strokeColor = new Color(180, 160, 255, 170);
+        gfx.lineWidth = 2;
+        gfx.circle(0, 0, radius);
+        gfx.stroke();
+        this.groundZones.push({ node, timer: duration, radius, slowMultiplier });
+        console.log(`[胶带] 地面减速区 半径${radius} 持续${duration}s @(${pos.x.toFixed(0)},${pos.y.toFixed(0)})`);
     }
 
     private placeTower(slotIndex: number, def: TowerDef, cost: number = def.cost): void {
@@ -2207,16 +3021,23 @@ export class SceneInitializer extends Component {
 
         const node = this.createTower(this.slotPositions[slotIndex], def);
         node.setParent(this.battleRoot);
-        const tower: TowerRuntime = { node, def, star: 1, affix: null, attackCount: 0, disabledTimer: 0 };
+        const tower: TowerRuntime = { node, def, star: 1, affix: null, modifiers: [], attackCount: 0, disabledTimer: 0, auraSpeedMul: 1 };
+        tower.straw = this.attachStraw(node, def);
+        tower.thrust = { active: false, phase: 'idle', timer: 0, dirX: 1, dirY: 0, damaged: false };
+        tower.spinRing = this.attachSpinRing(node, def);
+        tower.spin = { active: false, timer: 0, tickTimer: 0 };
+        if (DEBUG && def.attack.attackType === 'thrust') {
+            const dbg = node.addComponent(Graphics);
+            tower.thrustDebug = dbg;
+        }
         this.setTowerBadge(tower);
 
         this.towers.push(tower);
-        this.towerTimers.push(def.interval);
+        this.towerTimers.push(def.attack.attackInterval);
         this.slotOccupied[slotIndex] = true;
         this.slotNodes[slotIndex].active = false;
 
         console.log(`${def.name}放置到位置 ${slotIndex + 1}，花费 ${def.cost}，当前 ${this.towers.length} 塔`);
-        if (def.id === 'attack' || def.id === 'poison') this.hasOutputTower = true;
         this.refreshHandCardUsability();   // 建塔后刷新手牌可用性（空格减少/同型塔增加）
     }
 
@@ -2324,6 +3145,9 @@ export class SceneInitializer extends Component {
         this.enemies.length = 0;
         for (const b of this.bullets) b.node.destroy();
         this.bullets.length = 0;
+        // 清除地面减速区节点
+        for (const z of this.groundZones) z.node.destroy();
+        this.groundZones.length = 0;
 
         // 创建弹窗
         const canvas = this.node;
@@ -2564,8 +3388,24 @@ export class SceneInitializer extends Component {
         gfx.fill();
         gfx.strokeColor = def.rangeColor;
         gfx.lineWidth = 2;
-        gfx.circle(0, 0, def.range);
+        gfx.circle(0, 0, def.attack.range);
         gfx.stroke();
+
+        // 家庭小物件标识（区分外观，便于验收）
+        if (def.support) {
+            gfx.strokeColor = new Color(255, 210, 80, 220);
+            gfx.lineWidth = 3;
+            gfx.circle(0, 0, 12);
+            gfx.stroke();
+        } else if (def.sweep) {
+            gfx.fillColor = new Color(255, 255, 255, 150);
+            gfx.rect(-14, -3, 28, 6);
+            gfx.fill();
+        } else if (def.bounce) {
+            gfx.fillColor = new Color(255, 255, 255, 210);
+            gfx.circle(0, 0, 4);
+            gfx.fill();
+        }
 
         // 星级/词缀徽章（文字显示，setTowerBadge 更新内容）
         const badge = new Node('Badge');
@@ -2620,7 +3460,7 @@ export class SceneInitializer extends Component {
             gfx.fill();
             gfx.lineWidth = 3;
             gfx.strokeColor = new Color(220, 220, 230, 220);
-            gfx.arc(0, -2, 7, Math.PI, 0);
+            gfx.arc(0, -2, 7, Math.PI, 0, false);   // false=顺时针，PI→PI/2→0 走上半圆
             gfx.stroke();
         } else {
             // 十字标记
@@ -2693,10 +3533,19 @@ export class SceneInitializer extends Component {
             if (this.statusLabel) this.statusLabel.string = `金币不足，需要 ${SceneInitializer.DRAW_COST}`;
             return;
         }
+
+        // 先生成手牌，确认候选池非空后再扣金币（避免牌池异常时白白扣 30 金并进入空手牌）
+        const nextHand = this.buildHandCards();
+        if (nextHand.length === 0) {
+            console.error('[drawCards] 候选牌池为空，已取消抽卡');
+            if (this.statusLabel) this.statusLabel.string = '牌池配置异常，本次未扣金币';
+            return;
+        }
+
         this.gold -= SceneInitializer.DRAW_COST;
+        this.handCards = nextHand;
         this.updateGoldLabel();
 
-        this.handCards = this.buildHandCards();
         this.usedCardCount = 0;
         this.cardMode = true;
         this.drawCount++;
@@ -2709,13 +3558,16 @@ export class SceneInitializer extends Component {
 
     /** 按规则构建 5 张手牌 */
     private buildHandCards(): CardDef[] {
+        // 开局 currentWave 为 0，但卡牌 minWave 最低为 1；用 evaluationWave 统一评估，避免开局全部被波次条件排除
+        const evaluationWave = Math.max(1, this.currentWave);
         const snap = this.buildSnapshot();
+        snap.currentWave = evaluationWave;
         const hasLocked = this.lockedSlots.some(l => l);
 
         // 候选卡：按新数据层条件过滤（波次/次数/前置/互斥/场景）
         const candidates = DRAW_CARDS.filter(c => {
-            if (this.currentWave < c.minWave) return false;
-            if (c.maxWave !== undefined && this.currentWave > c.maxWave) return false;
+            if (evaluationWave < c.minWave) return false;
+            if (c.maxWave !== undefined && evaluationWave > c.maxWave) return false;
             if (this.runBuild.stacksOf(c.id) >= c.maxStacks) return false;
             if (!meetsUnlock(c, snap)) return false;
             if (triggersExclude(c, snap)) return false;
@@ -2895,6 +3747,18 @@ export class SceneInitializer extends Component {
         descLabel.horizontalAlign = Label.HorizontalAlign.CENTER;
         descLabel.verticalAlign = Label.VerticalAlign.CENTER;
 
+        // 卡类型标签（顶部，区分 塔/战术/改造/工具）
+        const kindNode = new Node('Kind');
+        kindNode.layer = Layers.Enum.UI_2D;
+        kindNode.addComponent(UITransform);
+        kindNode.setParent(node);
+        kindNode.setPosition(0, 47, 0);
+        const kindLabel = kindNode.addComponent(Label);
+        kindLabel.fontSize = 11;
+        kindLabel.color = new Color(255, 255, 255, 255);
+        kindLabel.horizontalAlign = Label.HorizontalAlign.CENTER;
+        kindLabel.verticalAlign = Label.VerticalAlign.CENTER;
+
         const unusableNode = new Node('Unusable');
         unusableNode.layer = Layers.Enum.UI_2D;
         unusableNode.addComponent(UITransform);
@@ -2912,7 +3776,7 @@ export class SceneInitializer extends Component {
         const opacity = node.addComponent(UIOpacity);
         opacity.opacity = 255;
 
-        this.handCardSlots.push({ node, gfx, nameLabel, descLabel, unusableNode });
+        this.handCardSlots.push({ node, gfx, nameLabel, descLabel, kindLabel, unusableNode });
     }
 
     /** 把某张卡的数据刷到指定卡槽上（重绘 Graphics + 更新文字），供每次抽卡复用 */
@@ -2937,11 +3801,26 @@ export class SceneInitializer extends Component {
         }
         slot.nameLabel.string = card.name;
         slot.descLabel.string = card.desc;
+        // 卡类型标签（塔 / 战术(buff) / 改造 / 工具）
+        const kindInfo = this.handCardKindInfo(card.kind);
+        slot.kindLabel.string = kindInfo.text;
+        slot.kindLabel.color = kindInfo.color;
         slot.unusableNode.active = false;
         // 透明度通过 UIOpacity 恢复（直接写 node.opacity 在 3.8 无效）
         const opacity = slot.node.getComponent(UIOpacity);
         if (opacity) opacity.opacity = 255;
         slot.node.setScale(1, 1, 1);
+    }
+
+    /** 手牌类型标签（文字 + 颜色），用于前端区分 塔 / 战术(buff) / 改造 / 工具 */
+    private handCardKindInfo(kind: CardDef['kind']): { text: string; color: Color } {
+        switch (kind) {
+            case 'tower': return { text: '塔', color: new Color(120, 220, 130, 255) };
+            case 'tactic': return { text: '战术', color: new Color(170, 130, 255, 255) };
+            case 'modifier': return { text: '改造', color: new Color(255, 170, 80, 255) };
+            case 'hammer': return { text: '工具', color: new Color(200, 200, 210, 255) };
+            default: return { text: '', color: new Color(255, 255, 255, 255) };
+        }
     }
 
     /** 重排手牌位置（抽卡后 / 用掉一张后） */
@@ -3020,6 +3899,8 @@ export class SceneInitializer extends Component {
                 : null;
         }
         this.setTowerBadge(targetTower);
+        this.resetThrust(targetTower);   // 升星/融合后复位吸管
+        this.resetSpin(targetTower);     // 同步复位旋斩
         EffectManager.instance?.playExplosion(targetTower.node.position.clone(), 50);
         if (this.statusLabel) this.statusLabel.string = `${targetTower.def.name} 升级到 ${targetTower.star} 星！`;
         console.log(`塔升级合并: ${targetTower.def.id} → ${targetTower.star}星`);
@@ -3100,7 +3981,8 @@ export class SceneInitializer extends Component {
                 }
             }
         } else if (card.kind === 'tactic') {
-            // 战术卡：即时战场效果，落点任意 → 执行 effects
+            // 战术卡：即时战场效果（落点用于定位，如胶带减速区中心）
+            this.lastCardDropPos = local.clone();
             const def = DRAW_CARDS.find(c => c.id === card.sourceId);
             if (def) {
                 executeEffects(def.effects, this.effectContext());
@@ -3244,14 +4126,18 @@ export class SceneInitializer extends Component {
         const affix = tower.affix;
 
         // 基础（全局 roguelike 倍率）；各塔攻击力统一 +20%（Math.round 取整）
-        let damage = Math.round(def.damage * 1.2 * ts.damageMultiplier);
-        let interval = def.interval / ts.speedMultiplier;
-        let range = def.range * ts.rangeMultiplier;
+        let damage = Math.round(def.attack.damage * 1.2 * ts.damageMultiplier);
+        let interval = def.attack.attackInterval / (ts.speedMultiplier * (tower.auraSpeedMul ?? 1));
+        let range = def.attack.range * ts.rangeMultiplier;
         let poisonDps = 8;            // 毒塔基础毒伤（子弹命中）
         let poisonDuration = 6.0;
-        let slowMultiplier = 0.7;     // 减速塔基础减速倍率
-        let slowDuration = 1.0;
-        let vulnerable = 1.0;         // 易伤：目标承受伤害倍率
+        // 减速/易伤基础值改由 attack.statusEffects 提供（减速塔真正消费 statusEffects）
+        const se = def.attack.statusEffects ?? [];
+        const slowEff = se.find(s => s.type === 'SLOW');
+        const markEff = se.find(s => s.type === 'MARK');
+        let slowMultiplier = slowEff?.magnitude ?? 0.7;   // 减速塔基础减速倍率（SLOW.magnitude）
+        let slowDuration = slowEff?.duration ?? 1.0;      // SLOW.duration
+        let vulnerable = markEff?.magnitude ?? 1.0;       // 易伤：目标承受伤害倍率（MARK.magnitude）
         let executeBonus = 0;         // 处决：低血增伤
         let rapid = false;            // 连发
 
