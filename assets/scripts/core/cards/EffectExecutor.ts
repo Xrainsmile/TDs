@@ -23,6 +23,22 @@ function applyModifyStat(effect: EffectDefinition, ctx: EffectContext): void {
         case 'splash': stats.splashLevel += Math.round(v); break;
         case 'bleed': stats.bleedLevel += Math.round(v); break;
         case 'slow': stats.slowLevel += Math.round(v); break;
+        case 'strawDamage': stats.strawDamageBonus += v; break;
+        case 'strawRangePenalty': stats.strawRangePenalty += v; break;
+        case 'corePoweredDamage': stats.corePoweredDamageBonus += v; break;
+        case 'corePoweredCrit': stats.corePoweredCritBonus += v; break;
+        case 'corePoweredSecondStrikeCrit': stats.corePoweredSecondStrikeCrit = v > 0; break;
+        case 'poisonBurstDamage': stats.poisonBurstDamageBonus += v; break;
+        case 'poisonBurstRadius': stats.poisonBurstRadiusBonus += v; break;
+        case 'poisonResidue': stats.poisonResidueLevel += Math.round(v); break;
+        case 'smashSlowedDamage': stats.smashSlowedDamageBonus += v; break;
+        case 'smashRadius': stats.smashRadiusBonus += v; break;
+        case 'smashIntervalPenalty': stats.smashIntervalPenalty += v; break;
+        case 'brushSlowVulnerable': stats.brushSlowVulnerableBonus += v; break;
+        case 'smashBrushedBurst': stats.smashBrushedBurstLevel += Math.round(v); break;
+        case 'stitchChainTargets': stats.stitchChainTargetBonus += Math.round(v); break;
+        case 'stitchDuration': stats.stitchDurationBonus += v; break;
+        case 'stitchCutDamage': stats.stitchCutDamageBonus += v; break;
         default:
             console.warn(`[EffectExecutor] 未知 stat: ${stat}`);
     }

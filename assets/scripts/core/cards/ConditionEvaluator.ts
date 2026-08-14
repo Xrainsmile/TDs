@@ -11,10 +11,10 @@ import { Condition, GameSnapshot, GameTag } from './types';
 function countTag(tag: GameTag, snap: GameSnapshot): number {
     let n = 0;
     for (const t of snap.towers) {
-        if (t.tags.includes(tag)) n++;
+        if (t.tags.indexOf(tag) >= 0) n++;
     }
     // 若某已选 Buff 的 id 恰为该 tag（如分支 id='storm'），也计入
-    if (snap.selectedBuffIds.includes(tag)) n++;
+    if (snap.selectedBuffIds.indexOf(tag) >= 0) n++;
     return n;
 }
 
@@ -31,13 +31,17 @@ export function evaluateCondition(cond: Condition, snap: GameSnapshot): boolean 
             let count = 0;
             for (const t of snap.towers) {
                 if (cond.towerId && t.id !== cond.towerId) continue;
-                if (cond.tag && !t.tags.includes(cond.tag)) continue;
+                if (cond.tag && t.tags.indexOf(cond.tag) < 0) continue;
                 count++;
             }
             return cmp(count, cond.operator, cond.count);
         }
         case 'hasBuff': {
             const stacks = snap.buffStacks[cond.buffId] ?? 0;
+            return stacks >= cond.stacks;
+        }
+        case 'hasModifier': {
+            const stacks = snap.towerModifierStacks[cond.towerId]?.[cond.modifierId] ?? 0;
             return stacks >= cond.stacks;
         }
         case 'hasTag': {
@@ -47,7 +51,7 @@ export function evaluateCondition(cond: Condition, snap: GameSnapshot): boolean 
             return cmp(snap.currentWave, cond.operator, cond.value);
         }
         case 'buildPath': {
-            return snap.buildPaths.includes(cond.path);
+            return snap.buildPaths.indexOf(cond.path) >= 0;
         }
         case 'boardState': {
             if (cond.state === 'hasEmptyTile') return snap.board.hasEmptyTile;

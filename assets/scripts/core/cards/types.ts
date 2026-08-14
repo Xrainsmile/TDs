@@ -9,6 +9,8 @@
  * 作为后续大规模扩展（几十张卡）的基础。
  */
 
+import type { AttackDefinition } from '../GameBalance';
+
 /** 比较运算符 */
 export type CompareOp = '>=' | '=' | '<=';
 
@@ -31,6 +33,7 @@ export type Tier = 1 | 2 | 3;
 export type Condition =
     | { type: 'hasTower'; towerId?: string; tag?: GameTag; count: number; operator: CompareOp }
     | { type: 'hasBuff'; buffId: string; stacks: number }
+    | { type: 'hasModifier'; towerId: string; modifierId: string; stacks: number }
     | { type: 'hasTag'; tag: GameTag; count: number }
     | { type: 'wave'; value: number; operator: CompareOp }
     | { type: 'buildPath'; path: BuildPath }
@@ -165,12 +168,51 @@ export interface WaveBuffDefinition extends BaseOptionDefinition {
 }
 
 // ====================================================================
+// 六之补、塔改造定义 TowerModifierDefinition（本局同类型塔生效）
+// 与「波后强化 / 二星升级 / 合并词缀」职责分离：改造卡拖到某塔上确定对象，
+// 激活后本局所有同类型塔共享，持续到重开（restart 清空 RunBuildState）。
+// ====================================================================
+export interface TowerModifierChanges {
+    damageMultiplier?: number;      // 单次攻击伤害倍率（多戳时作用于每一戳）
+    intervalMultiplier?: number;    // 攻击间隔倍率
+    rangeMultiplier?: number;       // 射程倍率
+    repeatCount?: number;           // 单次攻击循环内的戳击/弹射次数（>1 启用连击）
+    repeatDelay?: number;           // 连击各次之间的等待时间（秒）
+    maxTargetsBonus?: number;       // 额外目标数（分裂/弹射）
+    radiusMultiplier?: number;      // 范围类半径倍率
+    angleBonus?: number;            // 横扫角度加成
+    auraBonus?: number;             // 光环增益加成
+    poisonDps?: number;             // 命中附加中毒：每秒伤害
+    poisonDuration?: number;        // 命中附加中毒：持续时间（秒）
+    poisonExplosionDamage?: number; // 中毒死亡爆炸：范围伤害
+    poisonExplosionRadius?: number; // 中毒死亡爆炸：半径
+    corePowerSpeedBonus?: number;   // 核心供电：额外攻速加成
+    corePowerCritChance?: number;   // 核心供电：暴击率
+    corePowerCritMultiplier?: number; // 核心供电：暴击倍率
+    stitchChainTargets?: number;    // 彩色线轴：同一次穿透最多缝合目标数
+    stitchDuration?: number;        // 彩色线轴：缝合持续时间（秒）
+    stitchCutDamageMultiplier?: number; // 彩色线轴：剪断时按缝衣针伤害折算的群伤倍率
+    maxStitchChains?: number;       // 彩色线轴：场上同时存在的缝合链上限
+}
+
+export interface TowerModifierDefinition {
+    id: string;
+    name: string;
+    description: string;
+    towerId?: string;                                   // 仅对单一塔类型生效（如双管吸管→奶茶吸管）
+    compatibleAttackTypes?: AttackDefinition['attackType'][]; // 或按攻击类型生效（如分裂弹道→子弹/弹射）
+    maxStacks: number;
+    changes: TowerModifierChanges;
+}
+
+// ====================================================================
 // 七、执行器上下文（由运行主流程实现并注入）
 // ====================================================================
 /** 条件/权重评估所需的对局快照（运行主流程在评估时提供） */
 export interface GameSnapshot {
     towers: { id: string; tags: GameTag[] }[];
     buffStacks: Record<string, number>;     // buffId -> 已选层数
+    towerModifierStacks: Record<string, Record<string, number>>;
     selectedBuffIds: string[];
     currentWave: number;
     buildPaths: BuildPath[];

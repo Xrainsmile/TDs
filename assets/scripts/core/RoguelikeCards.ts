@@ -18,6 +18,22 @@ export class TowerStats {
     splashLevel = 0;        // 溅射等级（0=未解锁，>0=主弹命中后爆炸 AOE）
     bleedLevel = 0;         // 出血等级（0=未解锁，>0=概率施加出血+暴击）
     slowLevel = 0;          // 减速等级（>0 时所有子弹附带减速）
+    strawDamageBonus = 0;   // 奶茶吸管专属伤害加成
+    strawRangePenalty = 0;  // 奶茶吸管射程代价（0.1 = -10%）
+    corePoweredDamageBonus = 0; // 被核心供电选中的奶茶吸管额外伤害
+    corePoweredCritBonus = 0;   // 被核心供电选中的奶茶吸管额外暴击率
+    corePoweredSecondStrikeCrit = false; // 过载双击：供电奶茶第二戳必定暴击
+    poisonBurstDamageBonus = 0; // 毒爆伤害加成
+    poisonBurstRadiusBonus = 0; // 毒爆半径加成
+    poisonResidueLevel = 0;     // 毒爆后残留施毒等级
+    smashSlowedDamageBonus = 0; // 锅铲攻击减速目标的额外伤害
+    smashRadiusBonus = 0;       // 锅铲砸击半径加成
+    smashIntervalPenalty = 0;   // 锅铲攻速代价（攻击间隔增加）
+    brushSlowVulnerableBonus = 0; // 牙刷命中减速目标时附加易伤
+    smashBrushedBurstLevel = 0;   // 锅铲命中刷洗目标时触发小爆破
+    stitchChainTargetBonus = 0;   // 加长线轴：每条缝合链额外连接目标数
+    stitchDurationBonus = 0;      // 加长线轴：缝合持续时间加成（秒）
+    stitchCutDamageBonus = 0;     // 锋利裁口：剪线伤害倍率加成
 
     // 最终倍率 = 1 + 累计加成（加法叠加）
     get damageMultiplier() { return 1 + this.damageBonus; }
@@ -48,6 +64,22 @@ export class TowerStats {
         this.splashLevel = 0;
         this.bleedLevel = 0;
         this.slowLevel = 0;
+        this.strawDamageBonus = 0;
+        this.strawRangePenalty = 0;
+        this.corePoweredDamageBonus = 0;
+        this.corePoweredCritBonus = 0;
+        this.corePoweredSecondStrikeCrit = false;
+        this.poisonBurstDamageBonus = 0;
+        this.poisonBurstRadiusBonus = 0;
+        this.poisonResidueLevel = 0;
+        this.smashSlowedDamageBonus = 0;
+        this.smashRadiusBonus = 0;
+        this.smashIntervalPenalty = 0;
+        this.brushSlowVulnerableBonus = 0;
+        this.smashBrushedBurstLevel = 0;
+        this.stitchChainTargetBonus = 0;
+        this.stitchDurationBonus = 0;
+        this.stitchCutDamageBonus = 0;
     }
 }
 

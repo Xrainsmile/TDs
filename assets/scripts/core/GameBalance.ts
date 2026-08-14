@@ -18,7 +18,7 @@ export const BULLET_SPEED = 500;
 
 // ===== 金币 =====
 export const INITIAL_GOLD = 30;   // 开局金币
-export const KILL_REWARD = 5;     // 每击杀一个敌人奖励
+export const KILL_REWARD = 4;     // 每击杀一个敌人奖励
 export const WAVE_BONUSES = [30, 30, 30, 30, 30, 30, 30];
 
 // ===== 倒计时 =====

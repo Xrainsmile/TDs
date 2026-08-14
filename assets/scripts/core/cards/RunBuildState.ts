@@ -5,7 +5,8 @@
  * 也作为存档/统计的数据源（配置化后可直接 JSON 序列化）。
  */
 
-import { BuildPath, DrawCardDefinition, GameTag, WaveBuffDefinition } from './types';
+import { BuildPath, DrawCardDefinition, GameTag, TowerModifierDefinition, WaveBuffDefinition } from './types';
+import { TOWER_MODIFIERS } from './TowerModifierRegistry';
 
 /**
  * 任意可选项定义（判别联合）。
@@ -18,6 +19,8 @@ export type AnyOptionDefinition = DrawCardDefinition | WaveBuffDefinition;
 export class RunBuildState {
     selectedBuffIds: string[] = [];
     buffStacks: Record<string, number> = {};   // buffId -> 已选层数
+    towerModifierStacks: Record<string, Record<string, number>> = {};  // towerId -> modifierId -> 层数（本局同类塔改造）
+    drawStacks: Record<string, number> = {};   // 抽卡 id -> 本局获得次数（用于 maxStacks 退出牌池）
     branchGroups: string[] = [];               // 已确定的流派分支（互斥）
     buildTags: Set<GameTag> = new Set();       // 累积的流派标签
     buildPaths: Set<BuildPath> = new Set();    // 累积的构筑路线
@@ -27,7 +30,7 @@ export class RunBuildState {
         if (def.systemType === 'waveBuff') {
             this.selectedBuffIds.push(def.id);
             this.buffStacks[def.id] = (this.buffStacks[def.id] ?? 0) + 1;
-            if (def.branchGroup && !this.branchGroups.includes(def.branchGroup)) {
+            if (def.branchGroup && this.branchGroups.indexOf(def.branchGroup) < 0) {
                 this.branchGroups.push(def.branchGroup);
             }
         }
@@ -36,7 +39,7 @@ export class RunBuildState {
     }
 
     hasBuff(buffId: string): boolean {
-        return this.selectedBuffIds.includes(buffId);
+        return this.selectedBuffIds.indexOf(buffId) >= 0;
     }
 
     stacksOf(buffId: string): number {
@@ -48,6 +51,7 @@ export class RunBuildState {
         return {
             towers,
             buffStacks: this.buffStacks,
+            towerModifierStacks: this.towerModifierStacks,
             selectedBuffIds: this.selectedBuffIds,
             currentWave,
             buildPaths: Array.from(this.buildPaths),
@@ -55,9 +59,42 @@ export class RunBuildState {
         };
     }
 
+    // —— 本局同类塔改造状态（改造卡，非单塔 modifiers）——
+    addTowerModifier(towerId: string, modifierId: string, maxStacks = 1): boolean {
+        const towerMods = this.towerModifierStacks[towerId] ??= {};
+        const current = towerMods[modifierId] ?? 0;
+        if (current >= maxStacks) return false;
+        towerMods[modifierId] = current + 1;
+        return true;
+    }
+
+    hasTowerModifier(towerId: string, modifierId: string): boolean {
+        return (this.towerModifierStacks[towerId]?.[modifierId] ?? 0) > 0;
+    }
+
+    modifierStacksOf(towerId: string, modifierId: string): number {
+        return this.towerModifierStacks[towerId]?.[modifierId] ?? 0;
+    }
+
+    towerModifiersOf(towerId: string): TowerModifierDefinition[] {
+        const ids = Object.keys(this.towerModifierStacks[towerId] ?? {});
+        return TOWER_MODIFIERS.filter(m => ids.indexOf(m.id) >= 0);
+    }
+
+    // —— 抽卡计数（用于牌池 maxStacks 退出）——
+    recordDrawCard(id: string): void {
+        this.drawStacks[id] = (this.drawStacks[id] ?? 0) + 1;
+    }
+
+    drawStacksOf(id: string): number {
+        return this.drawStacks[id] ?? 0;
+    }
+
     reset(): void {
         this.selectedBuffIds = [];
         this.buffStacks = {};
+        this.towerModifierStacks = {};
+        this.drawStacks = {};
         this.branchGroups = [];
         this.buildTags.clear();
         this.buildPaths.clear();

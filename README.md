@@ -34,42 +34,53 @@ Cocos Creator 3.8.8 打开 `/Users/rick/TD`
 ## 项目架构
 
 ```
-通用系统 (assets/scripts/systems/)
-├── GameStateManager    # 游戏状态总管理器（单例）
-├── CurrencySystem      # 货币（金币）系统
-├── DamageSystem        # 伤害结算系统
-├── EnemyController     # 敌人控制器（生成/回收/查询）
-├── TowerController     # 塔控制器（放置/升级/出售）
-├── ProjectileController# 子弹控制器（对象池/发射/命中）
-├── WaveManager         # 波次管理器
-├── PathManager         # 敌人移动路径
-├── GridManager         # 网格地图（塔放置位）
-└── InputManager        # 玩家输入处理
-
-实体 (assets/scripts/entities/)
-├── Enemy               # 敌人实体（移动/生命/减速）
-├── Tower               # 塔实体（攻击/升级/出售）
-└── Projectile          # 子弹实体（追踪/命中）
-
-关卡数据 (assets/data/levels/)
-├── level_01.json       # 第一关 · 草原小径（4波）
-├── level_02.json       # 第二关 · 蜿蜒峡谷（5波）
-└── level_03.json       # 第三关 · 迷宫要塞（6波）
+核心运行 (assets/scripts/core/)
+├── SceneInitializer.ts          # 场景协调者：初始化、输入、波次、UI、系统调度
+├── RuntimeTypes.ts              # 运行时共享类型：TowerRuntime / EnemyRuntime / TowerParams 等
+├── GameBalance.ts               # 静态数值：波次、金币、敌人速度、基础常量
+├── MapConfig.ts                 # 地图尺寸、路径、建造格布局
+├── RoguelikeCards.ts            # 本局全局强化状态 TowerStats
+├── systems/
+│   ├── TowerParamResolver.ts    # 单塔最终属性解析：星级、词缀、Buff、改造、光环
+│   └── ThrustSystem.ts          # 奶茶吸管戳击：索敌、动画、双管连戳、命中判定
+├── playtest/
+│   ├── PlaytestRecorder.ts      # 试玩事件、波次汇总、流派里程碑与 Markdown 报告
+│   └── PlaytestStorage.ts       # Web/微信小游戏本地保存与导出适配
+├── cards/
+│   ├── CardRegistry.ts          # 五选二/手牌卡配置
+│   ├── BuffRegistry.ts          # 波后三选一强化配置
+│   ├── TowerModifierRegistry.ts # 本局同类塔改造配置
+│   ├── RunBuildState.ts         # 本局构筑状态
+│   ├── EffectExecutor.ts        # 配置化效果执行器
+│   ├── ConditionEvaluator.ts    # 解锁/互斥/权重条件判断
+│   └── WeightCalculator.ts      # 动态权重计算
+└── visuals/
+    ├── VisualFactory.ts         # Graphics 占位美术节点创建
+    └── VisualSkins.ts           # 视觉皮肤配置
 
 UI (assets/scripts/ui/)
-├── UIManager           # UI 总管理（面板切换）
-├── HUD                 # 顶部信息栏
-└── TowerMenu           # 建塔/升级菜单
-
-工具 (assets/scripts/utils/)
-├── ObjectPool          # 通用对象池
-└── PrefabFactory       # 运行时节点工厂（Graphics 绘制）
-
-配置 (assets/data/)
-├── towers.json          # 塔属性
-├── enemies.json         # 敌人属性
-└── levels/             # 关卡数据
+└── HUD                          # 顶部信息栏与基础 HUD 引用
 ```
+
+### 架构拆分记录
+
+`SceneInitializer.ts` 仍是当前原型阶段的场景协调者，但不再继续承载所有细节逻辑。
+
+- 单塔最终属性统一走 `TowerParamResolver.resolve(...)`。
+  - 新增星级、词缀、全局 Buff、塔改造、核心供电等数值规则时，优先放在 `TowerParamResolver.ts`。
+  - `SceneInitializer.getTowerParams()` 只保留薄包装，方便旧调用点过渡。
+- 奶茶吸管的戳击逻辑统一走 `ThrustSystem`。
+  - 双管吸管的连戳、分叉视觉角度对齐、命中胶囊判定、戳击 debug 区域都在 `ThrustSystem.ts`。
+  - `SceneInitializer` 通过 `thrustSystemContext()` 提供索敌、伤害、特效等回调。
+- 运行时结构放在 `RuntimeTypes.ts`。
+  - 新系统之间共享 `TowerRuntime`、`EnemyRuntime`、`TowerParams` 时，从这里导入，避免在场景类里重复定义。
+- 试玩数据统一走 `PlaytestRecorder`。
+  - `SceneInitializer` 只在波次、抽牌、选牌、塔操作、统一伤害入口和结算入口上报事实。
+  - 伤害按实际扣血聚合到波次、塔、机制和 BOSS 来源；持续伤害记录生效秒数，不逐帧写事件。
+  - Web 使用 `localStorage`，微信小游戏使用 `wx.setStorageSync`；正式发布前可统一关闭入口。
+  - 使用方式与数据结构见 `doc/playtest-telemetry.md`。
+
+后续扩展原则：如果某段逻辑已经具备独立主题（例如毒爆、弹道、光环、波后三选一抽取），优先拆到 `assets/scripts/core/systems/` 或对应的 `cards/`、`visuals/` 模块；`SceneInitializer.ts` 只做调度和桥接。
 
 ## 游戏设计
 
@@ -103,5 +114,7 @@ UI (assets/scripts/ui/)
 - 主分支：`main`，使用 SSH 推送
 - 提交信息格式：`<type>: <描述>`
 - `.codebuddy/`、`library/`、`temp/`、`local/`、`build/` 不提交
-- 配置数据统一放在 `assets/data/` 下（JSON 格式）
-- 运行时资源放在 `assets/resources/` 下（可动态加载）
+- 玩法配置优先放在 `assets/scripts/core/cards/`、`GameBalance.ts`、`MapConfig.ts`
+- 视觉创建优先放在 `assets/scripts/core/visuals/`
+- 新增 Cocos 脚本文件时同步添加 `.meta` 文件
+- 类型检查命令：`/Applications/Cocos/Creator/3.8.8/CocosCreator.app/Contents/Resources/resources/3d/engine/node_modules/typescript/bin/tsc --noEmit --skipLibCheck`

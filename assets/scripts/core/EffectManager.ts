@@ -88,23 +88,99 @@ export class EffectManager extends Component {
             .start();
     }
 
+    /** 奶茶吸管命中点：小型白色圆环，第二击可略大。 */
+    public playThrustHitRing(pos: Vec3, scale = 1): void {
+        const { node, gfx } = this.createGfxNode('ThrustHitRing', pos, 48);
+        gfx.strokeColor = new Color(255, 255, 255, 220);
+        gfx.lineWidth = 2;
+        gfx.circle(0, 0, 8 * scale);
+        gfx.stroke();
+        tween(node)
+            .to(0.12, { scale: new Vec3(1.8 * scale, 1.8 * scale, 1) })
+            .call(() => node.destroy())
+            .start();
+        tween(gfx)
+            .to(0.12, { strokeColor: new Color(255, 255, 255, 0) })
+            .start();
+    }
+
+    /** 过载双击：黄蓝电环 + 短促震动，用于区分普通暴击。 */
+    public playOverloadThrustHit(pos: Vec3): void {
+        this.shakeGameLayer();
+
+        const { node, gfx } = this.createGfxNode('OverloadThrustHit', pos, 72);
+        gfx.strokeColor = new Color(255, 230, 90, 255);
+        gfx.lineWidth = 4;
+        gfx.circle(0, 0, 13);
+        gfx.stroke();
+
+        gfx.strokeColor = new Color(80, 230, 255, 230);
+        gfx.lineWidth = 2;
+        gfx.circle(0, 0, 22);
+        gfx.stroke();
+
+        gfx.strokeColor = new Color(255, 255, 255, 240);
+        gfx.lineWidth = 2;
+        for (let i = 0; i < 4; i++) {
+            const a = (i / 4) * Math.PI * 2 + 0.35;
+            const x1 = Math.cos(a) * 10;
+            const y1 = Math.sin(a) * 10;
+            const x2 = Math.cos(a) * 25;
+            const y2 = Math.sin(a) * 25;
+            const midX = (x1 + x2) * 0.5 - Math.sin(a) * 5;
+            const midY = (y1 + y2) * 0.5 + Math.cos(a) * 5;
+            gfx.moveTo(x1, y1);
+            gfx.lineTo(midX, midY);
+            gfx.lineTo(x2, y2);
+            gfx.stroke();
+        }
+
+        tween(node)
+            .to(0.16, { scale: new Vec3(1.65, 1.65, 1) })
+            .call(() => node.destroy())
+            .start();
+        tween(gfx)
+            .to(0.16, { strokeColor: new Color(255, 255, 255, 0) })
+            .start();
+    }
+
+    /** 奶茶吸管塔身：每次戳击轻微后坐，避免改变长期位置。 */
+    public playTowerRecoil(towerNode: Node, dirX: number, dirY: number, strength = 1): void {
+        if (!towerNode || !towerNode.isValid) return;
+        const base = towerNode.position.clone();
+        const recoil = 4 * strength;
+        tween(towerNode)
+            .to(0.04, { position: new Vec3(base.x - dirX * recoil, base.y - dirY * recoil, base.z) })
+            .to(0.06, { position: base })
+            .start();
+    }
+
     // ===== 2. 受伤数字：飘出 -20，0.5秒淡出 =====
-    public playDamageNumber(pos: Vec3, damage: number, isCrit: boolean = false): void {
+    public playDamageNumber(pos: Vec3, damage: number, isCrit: boolean = false, isOverload: boolean = false): void {
         const node = new Node('DmgNumber');
         node.layer = Layers.Enum.UI_2D;
         node.setParent(this.gameLayer);
-        node.setPosition(pos.x, pos.y + 20, 0);
+        node.setPosition(pos.x, pos.y + (isOverload ? 28 : 20), 0);
         node.addComponent(UITransform);
         const label = node.addComponent(Label);
-        label.string = isCrit ? `-${Math.round(damage)}!` : `-${Math.round(damage)}`;
-        label.fontSize = isCrit ? 20 : 14;
+        label.string = isOverload ? `过载 -${Math.round(damage)}!!` : (isCrit ? `-${Math.round(damage)}!` : `-${Math.round(damage)}`);
+        label.fontSize = isOverload ? 26 : (isCrit ? 20 : 14);
         const dmgSkin = getVisualSkin('fx.damage_number');
-        label.color = isCrit ? skinCol(dmgSkin.accent, new Color(255, 80, 80, 255)) : skinCol(dmgSkin.body, new Color(255, 255, 255, 255));
+        label.color = isOverload
+            ? new Color(255, 235, 80, 255)
+            : (isCrit ? skinCol(dmgSkin.accent, new Color(255, 80, 80, 255)) : skinCol(dmgSkin.body, new Color(255, 255, 255, 255)));
+        if (isOverload) {
+            node.setScale(0.85, 0.85, 1);
+            tween(node)
+                .to(0.08, { scale: new Vec3(1.2, 1.2, 1) })
+                .to(0.34, { scale: new Vec3(1, 1, 1) })
+                .start();
+        }
         tween(node)
-            .by(0.5, { position: new Vec3(0, 30, 0) })
+            .by(isOverload ? 0.6 : 0.5, { position: new Vec3(0, isOverload ? 42 : 30, 0) })
             .start();
         tween(label)
-            .to(0.4, { color: new Color(label.color.r, label.color.g, label.color.b, 0) })
+            .to(isOverload ? 0.55 : 0.4, { color: new Color(label.color.r, label.color.g, label.color.b, 0) })
             .call(() => node.destroy())
             .start();
     }
@@ -198,6 +274,40 @@ export class EffectManager extends Component {
             .start();
     }
 
+    /** 牙刷刷洗破绽：蓝黄短环，持续挂在敌人身上作为锅铲可引爆标识。 */
+    public playBrushWeakspot(enemyNode: Node, duration: number = 2.5): void {
+        if (!enemyNode || !enemyNode.isValid) return;
+        const existing = enemyNode.getChildByName('BrushWeakspot');
+        if (existing) existing.destroy();
+
+        const node = new Node('BrushWeakspot');
+        node.layer = Layers.Enum.UI_2D;
+        node.setParent(enemyNode);
+        node.setPosition(0, 0, 0);
+        const t = node.addComponent(UITransform);
+        t.setContentSize(44, 44);
+        t.setAnchorPoint(0.5, 0.5);
+        const gfx = node.addComponent(Graphics);
+        gfx.strokeColor = new Color(90, 230, 255, 230);
+        gfx.lineWidth = 3;
+        gfx.circle(0, 0, 18);
+        gfx.stroke();
+        gfx.strokeColor = new Color(255, 220, 80, 230);
+        gfx.lineWidth = 2;
+        gfx.moveTo(-12, -4); gfx.lineTo(12, -4);
+        gfx.moveTo(-10, 4); gfx.lineTo(10, 4);
+        gfx.stroke();
+
+        tween(node)
+            .by(Math.max(0.1, duration), { angle: 240 })
+            .start();
+        tween(node)
+            .delay(Math.max(0, duration - 0.2))
+            .to(0.2, { scale: new Vec3(0.35, 0.35, 1) })
+            .call(() => node.destroy())
+            .start();
+    }
+
     // ===== 6. 治疗效果：绿色脉冲光环＋+5数字 =====
     public playHeal(pos: Vec3, amount: number): void {
         // 脉冲光环
@@ -264,6 +374,49 @@ export class EffectManager extends Component {
         }, 0.08, totalFrames - 1, 0);
         // 屏幕震动（震动 gameLayer）——单一震动，回到稳定基准，避免高频爆炸叠加导致地图持续漂移
         this.shakeGameLayer();
+    }
+
+    /** 针线裁剪：整条彩线瞬间闪白断开，每个缝合点出现剪切十字。 */
+    public playStitchCut(points: Vec3[]): void {
+        if (points.length === 0) return;
+        this.shakeGameLayer();
+
+        const { node, gfx } = this.createGfxNode('StitchCutFlash', Vec3.ZERO, 2000);
+        if (points.length >= 2) {
+            gfx.strokeColor = new Color(255, 80, 190, 245);
+            gfx.lineWidth = 8;
+            gfx.moveTo(points[0].x, points[0].y);
+            for (let i = 1; i < points.length; i++) gfx.lineTo(points[i].x, points[i].y);
+            gfx.stroke();
+            gfx.strokeColor = new Color(255, 255, 255, 255);
+            gfx.lineWidth = 3;
+            gfx.moveTo(points[0].x, points[0].y);
+            for (let i = 1; i < points.length; i++) gfx.lineTo(points[i].x, points[i].y);
+            gfx.stroke();
+        }
+
+        for (const point of points) {
+            const cut = this.createGfxNode('StitchCutMark', point, 64);
+            cut.gfx.strokeColor = new Color(100, 235, 255, 255);
+            cut.gfx.lineWidth = 4;
+            cut.gfx.moveTo(-12, -12); cut.gfx.lineTo(12, 12);
+            cut.gfx.moveTo(-12, 12); cut.gfx.lineTo(12, -12);
+            cut.gfx.stroke();
+            cut.gfx.strokeColor = new Color(255, 235, 90, 245);
+            cut.gfx.lineWidth = 2;
+            cut.gfx.circle(0, 0, 15);
+            cut.gfx.stroke();
+            tween(cut.node)
+                .to(0.18, { scale: new Vec3(1.8, 1.8, 1) })
+                .call(() => cut.node.destroy())
+                .start();
+        }
+
+        tween(node)
+            .to(0.06, { scale: new Vec3(1.04, 1.04, 1) })
+            .delay(0.10)
+            .call(() => node.destroy())
+            .start();
     }
 
     // ===== 8. 选卡反馈：卡片放大、金色闪光、名称停留1秒 =====
