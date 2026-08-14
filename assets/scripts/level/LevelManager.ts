@@ -1,4 +1,4 @@
-import { _decorator, Component, Vec3, JsonAsset } from 'cc';
+import { _decorator, Component, Vec3, JsonAsset, Node } from 'cc';
 import { GameStateManager } from '../systems/GameStateManager';
 import { WaveManager } from '../systems/WaveManager';
 import { PathManager } from '../systems/PathManager';

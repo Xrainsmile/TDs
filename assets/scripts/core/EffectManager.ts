@@ -1,0 +1,448 @@
+import { _decorator, Component, Node, UITransform, Layers, Graphics, Color, Vec3, Label, tween } from 'cc';
+import { getVisualSkin } from './visuals/VisualSkins';
+import { skinCol } from './visuals/VisualFactory';
+
+const { ccclass } = _decorator;
+
+/**
+ * EffectManager — 集中提供所有战斗特效
+ *
+ * 使用 Cocos Graphics + Tween，不依赖外部图片。
+ * 挂在 gameLayer 节点上，所有特效在 gameLayer 下创建。
+ */
+@ccclass('EffectManager')
+export class EffectManager extends Component {
+    private static _instance: EffectManager | null = null;
+    public static get instance(): EffectManager {
+        return this._instance!;
+    }
+
+    onLoad() {
+        EffectManager._instance = this;
+    }
+
+    onDestroy() {
+        if (EffectManager._instance === this) {
+            EffectManager._instance = null;
+        }
+    }
+
+    /** 屏幕震动：同一时刻只跑一个震动，且始终回到「当前无震动时的基准位置」，
+     *  避免溅射 buff 等高频爆炸场景下多个 tween 互相抓取偏移位置造成地图持续右移漂移。 */
+    private _shakeTween: any = null;
+    private shakeGameLayer(): void {
+        if (this._shakeTween) return;            // 已在震动中，跳过（高频爆炸不再叠加）
+        const node = this.gameLayer;
+        const base = node.position.clone();      // 此刻无震动 → 即真实基准位置
+        this._shakeTween = tween(node)
+            .to(0.03, { position: new Vec3(base.x + 3, base.y + 2, 0) })
+            .to(0.03, { position: new Vec3(base.x - 2, base.y - 3, 0) })
+            .to(0.03, { position: base })
+            .call(() => { this._shakeTween = null; })
+            .start();
+    }
+
+    private get gameLayer(): Node {
+        return this.node;
+    }
+
+    /** 创建一个挂载 Graphics 的节点 */
+    private createGfxNode(name: string, pos: Vec3, size: number): { node: Node; gfx: Graphics } {
+        const node = new Node(name);
+        node.layer = Layers.Enum.UI_2D;
+        node.setParent(this.gameLayer);
+        node.setPosition(pos);
+        const t = node.addComponent(UITransform);
+        t.setContentSize(size, size);
+        t.setAnchorPoint(0.5, 0.5);
+        const gfx = node.addComponent(Graphics);
+        return { node, gfx };
+    }
+
+    // ===== 1. 命中反馈：敌人闪白0.08秒＋轻微放大 =====
+    public playHit(enemyNode: Node): void {
+        if (!enemyNode || !enemyNode.isValid) return;
+        // 回弹基准必须用固定值(1,1,1)，不能用当前 enemyNode.scale：
+        // 否则高频命中时每次以"放大中"的 scale 为基准再放大于是越打越大（BOSS 血厚最明显）
+        const baseScale = new Vec3(1, 1, 1);
+        // 叠加白色半透明圆作为子节点（不清除敌人原绘制）
+        const flash = new Node('HitFlash');
+        flash.layer = Layers.Enum.UI_2D;
+        flash.setParent(enemyNode);
+        flash.setPosition(0, 0, 0);
+        flash.addComponent(UITransform);
+        const skin = getVisualSkin('fx.hit');
+        const gfx = flash.addComponent(Graphics);
+        gfx.fillColor = skinCol(skin.body, new Color(255, 255, 255, 160));
+        gfx.circle(0, 0, 10);
+        gfx.fill();
+        // 放大（基于固定基准，避免累积放大；幅度调小避免过于夸张）
+        tween(enemyNode)
+            .to(0.04, { scale: new Vec3(baseScale.x * 1.12, baseScale.y * 1.12, 1) })
+            .to(0.04, { scale: baseScale })
+            .start();
+        // 闪白淡出后销毁
+        tween(gfx)
+            .to(0.08, { fillColor: new Color(255, 255, 255, 0) })
+            .call(() => flash.destroy())
+            .start();
+    }
+
+    /** 奶茶吸管命中点：小型白色圆环，第二击可略大。 */
+    public playThrustHitRing(pos: Vec3, scale = 1): void {
+        const { node, gfx } = this.createGfxNode('ThrustHitRing', pos, 48);
+        gfx.strokeColor = new Color(255, 255, 255, 220);
+        gfx.lineWidth = 2;
+        gfx.circle(0, 0, 8 * scale);
+        gfx.stroke();
+        tween(node)
+            .to(0.12, { scale: new Vec3(1.8 * scale, 1.8 * scale, 1) })
+            .call(() => node.destroy())
+            .start();
+        tween(gfx)
+            .to(0.12, { strokeColor: new Color(255, 255, 255, 0) })
+            .start();
+    }
+
+    /** 过载双击：黄蓝电环 + 短促震动，用于区分普通暴击。 */
+    public playOverloadThrustHit(pos: Vec3): void {
+        this.shakeGameLayer();
+
+        const { node, gfx } = this.createGfxNode('OverloadThrustHit', pos, 72);
+        gfx.strokeColor = new Color(255, 230, 90, 255);
+        gfx.lineWidth = 4;
+        gfx.circle(0, 0, 13);
+        gfx.stroke();
+
+        gfx.strokeColor = new Color(80, 230, 255, 230);
+        gfx.lineWidth = 2;
+        gfx.circle(0, 0, 22);
+        gfx.stroke();
+
+        gfx.strokeColor = new Color(255, 255, 255, 240);
+        gfx.lineWidth = 2;
+        for (let i = 0; i < 4; i++) {
+            const a = (i / 4) * Math.PI * 2 + 0.35;
+            const x1 = Math.cos(a) * 10;
+            const y1 = Math.sin(a) * 10;
+            const x2 = Math.cos(a) * 25;
+            const y2 = Math.sin(a) * 25;
+            const midX = (x1 + x2) * 0.5 - Math.sin(a) * 5;
+            const midY = (y1 + y2) * 0.5 + Math.cos(a) * 5;
+            gfx.moveTo(x1, y1);
+            gfx.lineTo(midX, midY);
+            gfx.lineTo(x2, y2);
+            gfx.stroke();
+        }
+
+        tween(node)
+            .to(0.16, { scale: new Vec3(1.65, 1.65, 1) })
+            .call(() => node.destroy())
+            .start();
+        tween(gfx)
+            .to(0.16, { strokeColor: new Color(255, 255, 255, 0) })
+            .start();
+    }
+
+    /** 奶茶吸管塔身：每次戳击轻微后坐，避免改变长期位置。 */
+    public playTowerRecoil(towerNode: Node, dirX: number, dirY: number, strength = 1): void {
+        if (!towerNode || !towerNode.isValid) return;
+        const base = towerNode.position.clone();
+        const recoil = 4 * strength;
+        tween(towerNode)
+            .to(0.04, { position: new Vec3(base.x - dirX * recoil, base.y - dirY * recoil, base.z) })
+            .to(0.06, { position: base })
+            .start();
+    }
+
+    // ===== 2. 受伤数字：飘出 -20，0.5秒淡出 =====
+    public playDamageNumber(pos: Vec3, damage: number, isCrit: boolean = false, isOverload: boolean = false): void {
+        const node = new Node('DmgNumber');
+        node.layer = Layers.Enum.UI_2D;
+        node.setParent(this.gameLayer);
+        node.setPosition(pos.x, pos.y + (isOverload ? 28 : 20), 0);
+        node.addComponent(UITransform);
+        const label = node.addComponent(Label);
+        label.string = isOverload ? `过载 -${Math.round(damage)}!!` : (isCrit ? `-${Math.round(damage)}!` : `-${Math.round(damage)}`);
+        label.fontSize = isOverload ? 26 : (isCrit ? 20 : 14);
+        const dmgSkin = getVisualSkin('fx.damage_number');
+        label.color = isOverload
+            ? new Color(255, 235, 80, 255)
+            : (isCrit ? skinCol(dmgSkin.accent, new Color(255, 80, 80, 255)) : skinCol(dmgSkin.body, new Color(255, 255, 255, 255)));
+        if (isOverload) {
+            node.setScale(0.85, 0.85, 1);
+            tween(node)
+                .to(0.08, { scale: new Vec3(1.2, 1.2, 1) })
+                .to(0.34, { scale: new Vec3(1, 1, 1) })
+                .start();
+        }
+        tween(node)
+            .by(isOverload ? 0.6 : 0.5, { position: new Vec3(0, isOverload ? 42 : 30, 0) })
+            .start();
+        tween(label)
+            .to(isOverload ? 0.55 : 0.4, { color: new Color(label.color.r, label.color.g, label.color.b, 0) })
+            .call(() => node.destroy())
+            .start();
+    }
+
+    // ===== 3. 死亡效果：缩小＋碎裂圆点＋淡出 =====
+    public playDeath(pos: Vec3, color: Color): void {
+        // 碎裂圆点（4个小圆向外飞散）
+        for (let i = 0; i < 4; i++) {
+            const angle = (i / 4) * Math.PI * 2;
+            const fragPos = pos.clone();
+            const { node, gfx } = this.createGfxNode('DeathFrag', fragPos, 16);
+            gfx.fillColor = color;
+            gfx.circle(0, 0, 4);
+            gfx.fill();
+            const dx = Math.cos(angle) * 25;
+            const dy = Math.sin(angle) * 25;
+            tween(node)
+                .by(0.3, { position: new Vec3(dx, dy, 0) })
+                .to(0.2, { scale: new Vec3(0.1, 0.1, 1) })
+                .call(() => node.destroy())
+                .start();
+        }
+    }
+
+    // ===== 4. 中毒状态：绿色外圈＋周期冒泡（挂在敌人节点上跟随移动）=====
+    // duration 与逻辑 buff timer 同步，外圈持续到 buff 结束才消失
+    public playPoison(enemyNode: Node, duration: number = 6): void {
+        if (!enemyNode || !enemyNode.isValid) return;
+        // 清除已有毒圈，避免重复命中时叠加多个
+        const existing = enemyNode.getChildByName('PoisonRing');
+        if (existing) existing.destroy();
+        // 绿色外圈作为敌人子节点，自动跟随移动
+        const node = new Node('PoisonRing');
+        node.layer = Layers.Enum.UI_2D;
+        node.setParent(enemyNode);
+        node.setPosition(0, 0, 0);
+        const t = node.addComponent(UITransform);
+        t.setContentSize(40, 40);
+        t.setAnchorPoint(0.5, 0.5);
+        const skin = getVisualSkin('fx.poison');
+        const gfx = node.addComponent(Graphics);
+        gfx.strokeColor = skinCol(skin.body, new Color(100, 200, 50, 180));
+        gfx.lineWidth = 3;
+        gfx.circle(0, 0, 14);
+        gfx.stroke();
+        // 冒泡（3个小绿点上升，命中瞬间反馈）
+        for (let i = 0; i < 3; i++) {
+            const bubble = new Node('PoisonBubble');
+            bubble.layer = Layers.Enum.UI_2D;
+            bubble.setParent(node);
+            bubble.setPosition((i - 1) * 6, 0, 0);
+            bubble.addComponent(UITransform);
+            const bg = bubble.addComponent(Graphics);
+            bg.fillColor = skinCol(skin.accent, new Color(100, 200, 50, 200));
+            bg.circle(0, 0, 3);
+            bg.fill();
+            tween(bubble)
+                .delay(i * 0.15)
+                .by(0.6, { position: new Vec3(0, 15, 0) })
+                .start();
+        }
+        // 外圈持续到 buff 结束（留 0.2s 缩小淡出）
+        tween(node)
+            .delay(Math.max(0, duration - 0.2))
+            .to(0.2, { scale: new Vec3(0.5, 0.5, 1) })
+            .call(() => node.destroy())
+            .start();
+    }
+
+    // ===== 5. 减速状态：蓝紫色圆环（挂在敌人节点上跟随移动）=====
+    public playSlow(enemyNode: Node): void {
+        if (!enemyNode || !enemyNode.isValid) return;
+        const node = new Node('SlowRing');
+        node.layer = Layers.Enum.UI_2D;
+        node.setParent(enemyNode);
+        node.setPosition(0, 0, 0);
+        const t = node.addComponent(UITransform);
+        t.setContentSize(40, 40);
+        t.setAnchorPoint(0.5, 0.5);
+        const skin = getVisualSkin('fx.slow');
+        const gfx = node.addComponent(Graphics);
+        gfx.strokeColor = skinCol(skin.body, new Color(180, 80, 220, 200));
+        gfx.lineWidth = 4;
+        gfx.circle(0, 0, 16);
+        gfx.stroke();
+        // 旋转残影
+        tween(node)
+            .by(0.5, { angle: 180 })
+            .to(0.3, { scale: new Vec3(1.5, 1.5, 1) })
+            .call(() => node.destroy())
+            .start();
+    }
+
+    /** 牙刷刷洗破绽：蓝黄短环，持续挂在敌人身上作为锅铲可引爆标识。 */
+    public playBrushWeakspot(enemyNode: Node, duration: number = 2.5): void {
+        if (!enemyNode || !enemyNode.isValid) return;
+        const existing = enemyNode.getChildByName('BrushWeakspot');
+        if (existing) existing.destroy();
+
+        const node = new Node('BrushWeakspot');
+        node.layer = Layers.Enum.UI_2D;
+        node.setParent(enemyNode);
+        node.setPosition(0, 0, 0);
+        const t = node.addComponent(UITransform);
+        t.setContentSize(44, 44);
+        t.setAnchorPoint(0.5, 0.5);
+        const gfx = node.addComponent(Graphics);
+        gfx.strokeColor = new Color(90, 230, 255, 230);
+        gfx.lineWidth = 3;
+        gfx.circle(0, 0, 18);
+        gfx.stroke();
+        gfx.strokeColor = new Color(255, 220, 80, 230);
+        gfx.lineWidth = 2;
+        gfx.moveTo(-12, -4); gfx.lineTo(12, -4);
+        gfx.moveTo(-10, 4); gfx.lineTo(10, 4);
+        gfx.stroke();
+
+        tween(node)
+            .by(Math.max(0.1, duration), { angle: 240 })
+            .start();
+        tween(node)
+            .delay(Math.max(0, duration - 0.2))
+            .to(0.2, { scale: new Vec3(0.35, 0.35, 1) })
+            .call(() => node.destroy())
+            .start();
+    }
+
+    // ===== 6. 治疗效果：绿色脉冲光环＋+5数字 =====
+    public playHeal(pos: Vec3, amount: number): void {
+        // 脉冲光环
+        const skin = getVisualSkin('fx.heal');
+        const { node, gfx } = this.createGfxNode('HealPulse', pos, 80);
+        gfx.strokeColor = skinCol(skin.body, new Color(100, 255, 100, 200));
+        gfx.lineWidth = 3;
+        gfx.circle(0, 0, 20);
+        gfx.stroke();
+        tween(node)
+            .to(0.3, { scale: new Vec3(2, 2, 1) })
+            .to(0.2, { scale: new Vec3(0.1, 0.1, 1) })
+            .call(() => node.destroy())
+            .start();
+        // +5 数字
+        const labelNode = new Node('HealNumber');
+        labelNode.layer = Layers.Enum.UI_2D;
+        labelNode.setParent(this.gameLayer);
+        labelNode.setPosition(pos.x, pos.y + 15, 0);
+        labelNode.addComponent(UITransform);
+        const label = labelNode.addComponent(Label);
+        label.string = `+${amount}`;
+        label.fontSize = 14;
+        label.color = skinCol(skin.accent, new Color(100, 255, 100, 255));
+        tween(labelNode)
+            .by(0.8, { position: new Vec3(0, 25, 0) })
+            .start();
+        tween(label)
+            .delay(0.5)
+            .to(0.3, { color: new Color(100, 255, 100, 0) })
+            .call(() => labelNode.destroy())
+            .start();
+    }
+
+    // ===== 7. 溅射爆炸：橙色扩散圆环＋短暂震动 =====
+    public playExplosion(pos: Vec3, radius: number): void {
+        const { node, gfx } = this.createGfxNode('ExplosionWave', pos, radius * 2);
+        const skin = getVisualSkin('fx.explosion');
+        const bodyC = skinCol(skin.body, new Color(255, 180, 80, 255));
+        const accentC = skinCol(skin.accent, new Color(255, 100, 50, 255));
+        const drawWave = (r: number, alpha: number) => {
+            gfx.clear();
+            gfx.strokeColor = new Color(bodyC.r, bodyC.g, bodyC.b, alpha);
+            gfx.lineWidth = 6;
+            gfx.circle(0, 0, r);
+            gfx.stroke();
+            gfx.fillColor = new Color(accentC.r, accentC.g, accentC.b, alpha * 0.4);
+            gfx.circle(0, 0, r * 0.7);
+            gfx.fill();
+        };
+        drawWave(10, 255);
+        let frame = 0;
+        const totalFrames = 5;
+        this.schedule(() => {
+            frame++;
+            const t = frame / totalFrames;
+            const r = 10 + (radius - 10) * t;
+            const alpha = Math.round(255 * (1 - t));
+            if (frame >= totalFrames) {
+                node.destroy();
+            } else {
+                drawWave(r, alpha);
+            }
+        }, 0.08, totalFrames - 1, 0);
+        // 屏幕震动（震动 gameLayer）——单一震动，回到稳定基准，避免高频爆炸叠加导致地图持续漂移
+        this.shakeGameLayer();
+    }
+
+    /** 针线裁剪：整条彩线瞬间闪白断开，每个缝合点出现剪切十字。 */
+    public playStitchCut(points: Vec3[]): void {
+        if (points.length === 0) return;
+        this.shakeGameLayer();
+
+        const { node, gfx } = this.createGfxNode('StitchCutFlash', Vec3.ZERO, 2000);
+        if (points.length >= 2) {
+            gfx.strokeColor = new Color(255, 80, 190, 245);
+            gfx.lineWidth = 8;
+            gfx.moveTo(points[0].x, points[0].y);
+            for (let i = 1; i < points.length; i++) gfx.lineTo(points[i].x, points[i].y);
+            gfx.stroke();
+            gfx.strokeColor = new Color(255, 255, 255, 255);
+            gfx.lineWidth = 3;
+            gfx.moveTo(points[0].x, points[0].y);
+            for (let i = 1; i < points.length; i++) gfx.lineTo(points[i].x, points[i].y);
+            gfx.stroke();
+        }
+
+        for (const point of points) {
+            const cut = this.createGfxNode('StitchCutMark', point, 64);
+            cut.gfx.strokeColor = new Color(100, 235, 255, 255);
+            cut.gfx.lineWidth = 4;
+            cut.gfx.moveTo(-12, -12); cut.gfx.lineTo(12, 12);
+            cut.gfx.moveTo(-12, 12); cut.gfx.lineTo(12, -12);
+            cut.gfx.stroke();
+            cut.gfx.strokeColor = new Color(255, 235, 90, 245);
+            cut.gfx.lineWidth = 2;
+            cut.gfx.circle(0, 0, 15);
+            cut.gfx.stroke();
+            tween(cut.node)
+                .to(0.18, { scale: new Vec3(1.8, 1.8, 1) })
+                .call(() => cut.node.destroy())
+                .start();
+        }
+
+        tween(node)
+            .to(0.06, { scale: new Vec3(1.04, 1.04, 1) })
+            .delay(0.10)
+            .call(() => node.destroy())
+            .start();
+    }
+
+    // ===== 8. 选卡反馈：卡片放大、金色闪光、名称停留1秒 =====
+    public playCardSelected(cardNode: Node, buffName: string): void {
+        if (!cardNode || !cardNode.isValid) return;
+        // 卡片放大
+        const originalScale = cardNode.scale.clone();
+        tween(cardNode)
+            .to(0.15, { scale: new Vec3(originalScale.x * 1.3, originalScale.y * 1.3, 1) })
+            .to(0.15, { scale: originalScale })
+            .start();
+        // 金色闪光（在卡片上叠加一个金色半透明矩形）
+        const flashNode = new Node('CardFlash');
+        flashNode.layer = Layers.Enum.UI_2D;
+        flashNode.setParent(cardNode);
+        flashNode.setPosition(0, 0, 0);
+        const t = flashNode.addComponent(UITransform);
+        t.setContentSize(140, 160);
+        const skin = getVisualSkin('fx.card_selected');
+        const gfx = flashNode.addComponent(Graphics);
+        gfx.fillColor = skinCol(skin.body, new Color(255, 215, 0, 180));
+        gfx.roundRect(-70, -80, 140, 160, 10);
+        gfx.fill();
+        tween(gfx)
+            .to(0.3, { fillColor: new Color(255, 215, 0, 0) })
+            .call(() => flashNode.destroy())
+            .start();
+    }
+}

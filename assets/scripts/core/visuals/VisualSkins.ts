@@ -1,0 +1,112 @@
+/**
+ * VisualSkins.ts — 表现层：visualEffectId → 视觉皮肤 注册表
+ *
+ * Demo 阶段：所有皮肤 kind='graphics'，由 VisualFactory 用 Graphics 程序绘制占位。
+ * 美术阶段：把对应条目改成 kind='sprite'/'spine'/'particle'/'prefab' 并填 asset/clip，
+ *           VisualFactory 按 kind 分支加载真资源，战斗逻辑零改动。
+ * sprite 贴图约定：asset = assets/resources 下相对路径（不含扩展名，如 'art/attacks/straw_thrust'）；
+ *           攻击视觉图一律"水平朝右"绘制——吸管根部在左缘、缝衣针针尖在右缘、
+ *           圆环/冲击波居中（锚点由 VisualFactory 各 create* 按此约定设置）；
+ *           贴图未加载完成时自动回退 Graphics 占位。
+ */
+
+export type VisualKind = 'graphics' | 'sprite' | 'spine' | 'particle' | 'prefab';
+
+export interface VisualSkin {
+    kind: VisualKind;
+    /** demo graphics 配色（[r,g,b,a]）；缺省时回退到塔色/默认 */
+    body?: [number, number, number, number];
+    accent?: [number, number, number, number];
+    outline?: [number, number, number, number];
+    /** 美术资源（美术阶段填）：预制体/帧动画/Spine/粒子 资源路径与片段名、缩放 */
+    asset?: string;
+    clip?: string;
+    scale?: number;
+}
+
+export interface TowerVisualSkin {
+    idle: string;
+    powered?: string;
+    /** 塔位中的正方形画布尺寸；素材自身透明边距仍会保留。 */
+    size: number;
+}
+
+/** 塔本体美术：与攻击特效分开注册，供运行时切换普通/供电状态。 */
+export const TOWER_VISUAL_SKINS: Record<string, TowerVisualSkin> = {
+    bubble_tea_straw: {
+        idle: 'art-bundle/art/towers/straw_idle',
+        powered: 'art-bundle/art/towers/straw_powered',
+        size: 62,
+    },
+    powerbank: {
+        idle: 'art-bundle/art/towers/powerbank_idle',
+        powered: 'art-bundle/art/towers/powerbank_powered',
+        size: 62,
+    },
+};
+
+/** 已完成正式图的卡牌；key 使用卡牌配置 id，便于两套选卡 UI 共用。 */
+export const CARD_VISUAL_ASSETS: Record<string, string> = {
+    card_tower_bubble_tea_straw: 'art-bundle/art/towers/straw_idle',
+    card_tower_powerbank: 'art-bundle/art/towers/powerbank_idle',
+    card_mod_core_power: 'art-bundle/art/cards/core_power',
+    card_mod_double_straw: 'art-bundle/art/cards/double_straw',
+    overload_double_tap: 'art-bundle/art/cards/overload_double_tap',
+};
+
+/** 兜底皮肤：visualEffectId 未注册时使用 */
+const DEFAULT_SKIN: VisualSkin = {
+    kind: 'graphics',
+    body: [250, 244, 230, 255],
+    outline: [120, 90, 60, 220],
+};
+
+/**
+ * 美术衔接注册表：visualEffectId → 皮肤。
+ * demo 全为 graphics；美术阶段在此把对应条目换成真资源（改 kind + 填 asset/clip）。
+ */
+export const VISUAL_SKINS: Record<string, VisualSkin> = {
+    // 奶茶吸管戳击：珍珠白主体，尖端缺省→塔色(奶茶)
+    bubble_tea_straw_thrust: {
+        kind: 'sprite',
+        asset: 'art-bundle/art/attacks/straw_thrust',
+        // 原图是正方形透明画布，可见吸管约占横向 80%；放大画布使可见长度贴合攻击距离。
+        scale: 1.25,
+        body: [250, 244, 230, 255],
+        outline: [120, 90, 60, 220],
+    },
+    // 打蛋器旋斩：塔色光环 + 白色弧段
+    whisk_spin: { kind: 'graphics', body: [150, 200, 255, 220], accent: [255, 255, 255, 220] },
+    // 锅铲砸击
+    spatula_smash: { kind: 'graphics', body: [200, 140, 90, 255] },
+    // 缝衣针穿透：亮针体 + 灰针尖
+    needle_pierce: { kind: 'graphics', body: [235, 235, 245, 255], accent: [150, 150, 165, 255] },
+    // 剪刀剪击：冷色金属 + 白色剪口
+    scissors_sweep: { kind: 'graphics', body: [190, 210, 230, 255], accent: [255, 255, 255, 230], outline: [90, 110, 140, 230] },
+
+    // ===== 共享特效皮肤（EffectManager 用，key 以 fx. 前缀）=====
+    // 美术阶段：把对应特效改成 kind:'particle'/'prefab' 并填 asset，EffectManager 按 kind 分支播放。
+    'fx.hit': { kind: 'graphics', body: [255, 255, 255, 160] },                 // 命中闪白
+    'fx.damage_number': { kind: 'graphics', body: [255, 255, 255, 255], accent: [255, 80, 80, 255] }, // 伤害数字(普通/暴击)
+    'fx.death': { kind: 'graphics' },                                           // 死亡碎裂（颜色取自敌人自身）
+    'fx.poison': { kind: 'graphics', body: [100, 200, 50, 180], accent: [100, 200, 50, 200] }, // 中毒外圈/冒泡
+    'fx.slow': { kind: 'graphics', body: [180, 80, 220, 200] },                 // 减速圆环
+    'fx.heal': { kind: 'graphics', body: [100, 255, 100, 200], accent: [100, 255, 100, 255] }, // 治疗脉冲/+数字
+    'fx.explosion': { kind: 'graphics', body: [255, 180, 80, 255], accent: [255, 100, 50, 255] }, // 爆炸波/填充
+    'fx.card_selected': { kind: 'graphics', body: [255, 215, 0, 180] },         // 选卡金色闪光
+    'fx.core_power': {
+        kind: 'sprite',
+        asset: 'art-bundle/art/fx/core_power_ring',
+        scale: 0.88,
+        body: [255, 235, 80, 230],
+        accent: [120, 220, 255, 230],
+        outline: [255, 255, 255, 210],
+    },
+    'fx.core_power_bolt': { kind: 'sprite', asset: 'art-bundle/art/fx/core_power_bolt_segment' },
+    'fx.stitch_chain': { kind: 'graphics', body: [255, 85, 170, 230], accent: [100, 235, 255, 230], outline: [255, 230, 80, 210] },
+};
+
+/** 按 visualEffectId 取皮肤；未注册返回兜底 */
+export function getVisualSkin(id: string | undefined): VisualSkin {
+    return (id && VISUAL_SKINS[id]) ? VISUAL_SKINS[id] : DEFAULT_SKIN;
+}
