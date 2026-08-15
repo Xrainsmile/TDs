@@ -80,7 +80,7 @@ export const WAVE_BUFFS: WaveBuffDefinition[] = [
         excludeConditions: [], weightRules: [
             { condition: { type: 'hasTower', towerId: 'bubble_tea_straw', count: 2, operator: '>=' }, multiplier: 1.35 },
         ],
-        minWave: 1, maxStacks: 3, baseWeight: 90,
+        minWave: 1, maxStacks: 1, baseWeight: 90,
         effects: [
             { effectType: 'modifyStat', target: { type: 'towerType', towerId: 'bubble_tea_straw' }, value: 0.25, valueType: 'percent', parameters: { stat: 'strawDamage' } },
             { effectType: 'modifyStat', target: { type: 'towerType', towerId: 'bubble_tea_straw' }, value: 0.08, valueType: 'percent', parameters: { stat: 'strawRangePenalty' } },
@@ -112,11 +112,12 @@ export const WAVE_BUFFS: WaveBuffDefinition[] = [
             { type: 'hasTower', towerId: 'powerbank', count: 1, operator: '>=' },
             { type: 'hasModifier', towerId: 'powerbank', modifierId: 'core_power', stacks: 1 },
             { type: 'hasModifier', towerId: 'bubble_tea_straw', modifierId: 'double_straw', stacks: 1 },
+            { type: 'hasCorePoweredTower', towerId: 'bubble_tea_straw', count: 2, operator: '>=' },
         ],
         excludeConditions: [], weightRules: [
             { condition: { type: 'hasTower', towerId: 'bubble_tea_straw', count: 2, operator: '>=' }, multiplier: 1.25 },
         ],
-        minWave: 3, maxStacks: 1, baseWeight: 95,
+        minWave: 5, maxStacks: 1, baseWeight: 78,
         effects: [
             { effectType: 'modifyStat', target: { type: 'towerType', towerId: 'bubble_tea_straw' }, value: 1, parameters: { stat: 'corePoweredSecondStrikeCrit' } },
         ],

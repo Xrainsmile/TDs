@@ -47,7 +47,7 @@ export class RunBuildState {
     }
 
     /** 生成条件/权重评估所需的快照（注入到 ConditionEvaluator / WeightCalculator） */
-    toSnapshot(board: { hasEmptyTile: boolean; hasLockedTile: boolean; boardFull: boolean }, towers: { id: string; tags: GameTag[] }[], currentWave: number) {
+    toSnapshot(board: { hasEmptyTile: boolean; hasLockedTile: boolean; boardFull: boolean }, towers: { id: string; tags: GameTag[]; corePowered?: boolean }[], currentWave: number) {
         return {
             towers,
             buffStacks: this.buffStacks,

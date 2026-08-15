@@ -34,6 +34,7 @@ export type Condition =
     | { type: 'hasTower'; towerId?: string; tag?: GameTag; count: number; operator: CompareOp }
     | { type: 'hasBuff'; buffId: string; stacks: number }
     | { type: 'hasModifier'; towerId: string; modifierId: string; stacks: number }
+    | { type: 'hasCorePoweredTower'; towerId: string; count: number; operator: CompareOp }
     | { type: 'hasTag'; tag: GameTag; count: number }
     | { type: 'wave'; value: number; operator: CompareOp }
     | { type: 'buildPath'; path: BuildPath }
@@ -210,7 +211,7 @@ export interface TowerModifierDefinition {
 // ====================================================================
 /** 条件/权重评估所需的对局快照（运行主流程在评估时提供） */
 export interface GameSnapshot {
-    towers: { id: string; tags: GameTag[] }[];
+    towers: { id: string; tags: GameTag[]; corePowered?: boolean }[];
     buffStacks: Record<string, number>;     // buffId -> 已选层数
     towerModifierStacks: Record<string, Record<string, number>>;
     selectedBuffIds: string[];

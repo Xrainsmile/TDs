@@ -579,8 +579,36 @@ export class SceneInitializer extends Component {
     private runBuild = new RunBuildState();
     private playtest = new PlaytestRecorder();
     private mainBuildPath: Exclude<BuildPath, 'general'> | null = null;  // 主构筑路线
+    /** P0-2: 每局随机激活的流派（2套），非激活流派的连接件不出现在牌池 */
+    private activeBuildPaths: Set<BuildPath> = new Set();
     /** 是否正在三选一选卡（波次间暂停且未选 buff） */
     private get isBuffSelecting(): boolean { return this.isWavePaused && !this.buffSelected; }
+
+    /**
+     * P0-2: 每局开始时随机激活 2 套流派。
+     * 只有激活流派的连接件（modifier + 流派 buff）出现在牌池，
+     * 其余流派只出入口牌（基础塔），不出连接件。
+     * 'general' 始终可用（通用牌不受限）。
+     */
+    private selectActiveBuildPaths(): void {
+        const allPaths: Exclude<BuildPath, 'general'>[] = ['firepower', 'poison', 'control'];
+        // Fisher-Yates 洗牌
+        for (let i = allPaths.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [allPaths[i], allPaths[j]] = [allPaths[j], allPaths[i]];
+        }
+        this.activeBuildPaths = new Set(allPaths.slice(0, 2));
+        console.log('[P0-2] 本局激活流派:', Array.from(this.activeBuildPaths).join(', '));
+    }
+
+    /**
+     * P0-2: 判断一张卡/buff 是否属于激活流派。
+     * general 牌不受限；非 general 牌需至少一条 buildPath 在激活集合中。
+     */
+    private isBuildPathActive(buildPaths: BuildPath[]): boolean {
+        if (buildPaths.every(p => p === 'general')) return true;  // 纯 general 牌不受限
+        return buildPaths.some(p => p === 'general' || this.activeBuildPaths.has(p));
+    }
 
     // 塔按钮位置已移入 TOWER_REGISTRY.buttonPos
     // 游戏暂停按钮：右侧（setupScene 中动态赋值）
@@ -624,6 +652,7 @@ export class SceneInitializer extends Component {
     protected start(): void {
         // 关闭左下角 Cocos 调试性能面板（FPS/DrawCall 等），排查性能时临时注释掉即可
         profiler.hideStats();
+        this.selectActiveBuildPaths();   // P0-2: 首局激活2套流派
         this.playtest.beginRun();
         this.selectWavePattern();
         // 美术阶段：预加载 kind='sprite' 的皮肤贴图（当前全为 graphics 时是 no-op）
@@ -1200,7 +1229,7 @@ export class SceneInitializer extends Component {
             hasLockedTile: this.lockedSlots.some(l => l),
             boardFull: this.slotPositions.every((_, i) => this.slotOccupied[i] || this.lockedSlots[i]),
         };
-        const towers = this.towers.map(t => ({ id: t.def.id, tags: [] as string[] }));
+        const towers = this.towers.map(t => ({ id: t.def.id, tags: [] as string[], corePowered: t.corePowered }));
         return this.runBuild.toSnapshot(board, towers, this.currentWave);
     }
 
@@ -1288,16 +1317,22 @@ export class SceneInitializer extends Component {
         for (const buff of WAVE_BUFFS) {
             // 资格判断（波次/次数/前置/互斥/场景条件），不通过则不进卡池
             if (!this.isBuffEligible(buff)) continue;
+            // P0-2: 只有激活流派的 buff 进入牌池（general 不受限）
+            if (!this.isBuildPathActive(buff.buildPaths)) continue;
 
             // 运行期特殊加权：下一波有治疗兵时，治疗抑制显著增权（近似旧 weight=5）
             let pity = 0;
             if (buff.id === 'healSuppress' && nextWaveHasHealer) pity += 400;
 
             // 动态权重 = baseWeight × 倍率 + 额外 + 保底补偿（由 ConditionEvaluator + WeightCalculator 统一计算）
-            const weight = computeWeight(
-                { baseWeight: buff.baseWeight, weightRules: buff.weightRules, pityBonus: pity },
+            const relatedSelections = this.countRelatedBuildSelections(buff);
+            // P0-1: 正反馈只帮助第一个连接件，不持续推送整条路线
+            const useWeightRules = relatedSelections === 0;
+            let weight = computeWeight(
+                { baseWeight: buff.baseWeight, weightRules: useWeightRules ? buff.weightRules : [], pityBonus: pity },
                 snap,
             );
+            if (relatedSelections >= 2) weight *= buff.contentType === 'capstone' ? 1.1 : 0.3;
             pool.push({ buff, weight });
         }
 
@@ -1306,6 +1341,15 @@ export class SceneInitializer extends Component {
 
     private buffHasTag(buff: WaveBuffDefinition, tag: string): boolean {
         return buff.tags.indexOf(tag) >= 0;
+    }
+
+    /** 按机制标签统计已选强化，避免不同火力流因共用 buildPath 被一并降权。 */
+    private countRelatedBuildSelections(candidate: WaveBuffDefinition): number {
+        const tags = candidate.tags.filter(tag => !tag.startsWith('role:'));
+        return this.runBuild.selectedBuffIds.reduce((count, id) => {
+            const selected = WAVE_BUFFS.find(buff => buff.id === id);
+            return selected?.tags.some(tag => tags.indexOf(tag) >= 0) ? count + 1 : count;
+        }, 0);
     }
 
     private pickWeightedBuff(
@@ -2302,7 +2346,13 @@ export class SceneInitializer extends Component {
                 // 沿 waypoints 逐段移动（pathIdx 跟踪目标；按本帧步长判定到达，避免掉帧时卡在折点）
                 const eDef = this.getEnemyDef(e.type);
                 const speedMult = eDef?.speedMultiplier ?? 1;
-                const speed = this.ENEMY_SPEED * speedMult * e.slowMultiplier;
+                if (e.type === EnemyType.BOSS && !e.bossEnraged && e.hp <= e.maxHp * 0.5) {
+                    e.bossEnraged = true;
+                    EffectManager.instance?.playExplosion(e.node.position.clone(), 52);
+                    console.log('BOSS 半血狂暴：移动速度提升35%');
+                }
+                const phaseSpeedMultiplier = e.bossEnraged ? 1.35 : 1;
+                const speed = this.ENEMY_SPEED * speedMult * phaseSpeedMultiplier * e.slowMultiplier;
                 if (e.pathIdx >= PATH_WAYPOINTS.length) e.pathIdx = PATH_WAYPOINTS.length - 1;
 
                 const target = PATH_WAYPOINTS[e.pathIdx];
@@ -2705,6 +2755,7 @@ export class SceneInitializer extends Component {
             slowTimer: 0, slowMultiplier: 1,
             type, healTimer: 0, healCd: 0, extraTimer: 0,
             pathIdx: 1,  // 从起点 waypoint[0] 出发，目标是 waypoint[1]
+            bossEnraged: false,
             buffs: {},
             vulnerable: 1,   // 易伤倍率（默认 1，易伤词缀目标承受额外伤害）
             vulnerableTimer: 0,  // 易伤剩余时间（归零恢复 1）
@@ -3806,6 +3857,7 @@ export class SceneInitializer extends Component {
         this.towerStats.reset();
         this.runBuild.reset();
         this.mainBuildPath = null;
+        this.selectActiveBuildPaths();   // P0-2: 每局重新随机激活2套流派
         this.hideBuffCards();
         this.updatePauseButton();
         this.hideGlobalBuffPanel();
@@ -4165,6 +4217,8 @@ export class SceneInitializer extends Component {
             if (!meetsUnlock(c, snap)) return false;
             if (triggersExclude(c, snap)) return false;
             if (c.contentType === 'modifier' && !this.hasCompatibleModifierTarget(c.id)) return false;
+            // P0-2: 非激活流派的 modifier（连接件）不进入牌池；tower/tool/tactic 不受限
+            if (c.contentType === 'modifier' && !this.isBuildPathActive(c.buildPaths)) return false;
             // 改造/战术卡的目标条件（如仅某类塔在场时入池）
             if (c.targetConditions.length > 0 && !meetsUnlock({ unlockConditions: c.targetConditions }, snap)) return false;
             return true;
@@ -4186,18 +4240,42 @@ export class SceneInitializer extends Component {
         const towerCount = 5 - hammerCount;
         const result: CardDef[] = [];
 
-        // 前两次刷新保证基础塔类型相对完整（从候选中挑 tower 类）
+        // P0-3: 前两次刷新保底1个流派入口+1个通用辅助，不再保证3条路线全开
         const towerCands = candidates.filter(c => c.contentType === 'tower');
         if (this.drawCount < 2 && towerCount >= 3) {
-            for (const id of ['bubble_tea_straw', 'slow', 'poison']) {
-                const c = towerCands.find(x => x.towerId === id);
+            // 保底1个：从激活流派中随机选1个入口塔
+            const entryTowers: { towerId: string; buildPath: BuildPath }[] = [
+                { towerId: 'bubble_tea_straw', buildPath: 'firepower' },
+                { towerId: 'poison', buildPath: 'poison' },
+                { towerId: 'slow', buildPath: 'control' },
+            ];
+            const activeEntries = entryTowers.filter(e => this.activeBuildPaths.has(e.buildPath));
+            // Fisher-Yates 随机选1个激活流派入口
+            for (let i = activeEntries.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [activeEntries[i], activeEntries[j]] = [activeEntries[j], activeEntries[i]];
+            }
+            if (activeEntries.length > 0) {
+                const chosen = activeEntries[0];
+                const c = towerCands.find(x => x.towerId === chosen.towerId);
                 if (c) result.push(this.makeCardFromDef(c));
             }
+            // 保底1个通用辅助塔（充电宝），让玩家有基础工具
+            const powerbank = towerCands.find(x => x.towerId === 'powerbank');
+            if (powerbank) result.push(this.makeCardFromDef(powerbank));
         }
         // 补足剩余：从候选加权随机（含 tower/tool/modifier/tactic）
         while (result.length < towerCount) {
             if (candidates.length === 0) break;
-            const pool = candidates.map(c => ({ c, w: computeWeight({ baseWeight: c.baseWeight, weightRules: c.weightRules }, snap) }));
+            const pool = candidates.map(c => {
+                // P0-1: 改造卡正反馈只帮助第一个连接件——已有改造后不再加权
+                let rules = c.weightRules;
+                if (c.contentType === 'modifier') {
+                    const hasAnyMod = Object.values(this.runBuild.towerModifierStacks).some(mods => Object.keys(mods).length > 0);
+                    if (hasAnyMod) rules = [];
+                }
+                return { c, w: computeWeight({ baseWeight: c.baseWeight, weightRules: rules }, snap) };
+            });
             const total = pool.reduce((s, x) => s + Math.max(0, x.w), 0);
             let r = Math.random() * total;
             let pick = pool[0].c;
@@ -5419,7 +5497,8 @@ export class SceneInitializer extends Component {
         addSection('通用', general);
 
         const milkTea: string[] = [];
-        if (ts.strawDamageBonus > 0) milkTea.push(`短管猛戳 +${Math.round(ts.strawDamageBonus * 100)}%伤害`);
+        const strawStacks = this.runBuild.stacksOf('straw_close_combat');
+        if (ts.strawDamageBonus > 0) milkTea.push(`短管猛戳 ${strawStacks}层 / +${Math.round(ts.strawDamageBonus * 100)}%伤害`);
         if (ts.corePoweredDamageBonus > 0 || ts.corePoweredCritBonus > 0) {
             milkTea.push(`供电 +${Math.round(ts.corePoweredDamageBonus * 100)}%伤害 / +${Math.round(ts.corePoweredCritBonus * 100)}%暴击`);
         }
@@ -5436,7 +5515,8 @@ export class SceneInitializer extends Component {
         const control: string[] = [];
         if (ts.smashSlowedDamageBonus > 0) control.push(`锅铲砸减速 +${Math.round(ts.smashSlowedDamageBonus * 100)}%伤害`);
         if (ts.smashRadiusBonus > 0) control.push(`锅铲半径 +${Math.round(ts.smashRadiusBonus * 100)}% / 变慢${Math.round(ts.smashIntervalPenalty * 100)}%`);
-        if (ts.brushSlowVulnerableBonus > 0) control.push(`刷洗破绽 +${Math.round(ts.brushSlowVulnerableBonus * 100)}%易伤`);
+        const weakspotStacks = this.runBuild.stacksOf('brush_weakspot');
+        if (ts.brushSlowVulnerableBonus > 0) control.push(`刷洗破绽 ${weakspotStacks}层 / 减速目标+${Math.round(ts.brushSlowVulnerableBonus * 100)}%易伤（2.5秒）`);
         if (ts.smashBrushedBurstLevel > 0) control.push(`碎裂爆破 Lv${ts.smashBrushedBurstLevel}`);
         addSection('控制爆破', control);
 

@@ -44,6 +44,10 @@ export function evaluateCondition(cond: Condition, snap: GameSnapshot): boolean 
             const stacks = snap.towerModifierStacks[cond.towerId]?.[cond.modifierId] ?? 0;
             return stacks >= cond.stacks;
         }
+        case 'hasCorePoweredTower': {
+            const count = snap.towers.filter(t => t.id === cond.towerId && t.corePowered).length;
+            return cmp(count, cond.operator, cond.count);
+        }
         case 'hasTag': {
             return countTag(cond.tag, snap) >= cond.count;
         }

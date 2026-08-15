@@ -111,6 +111,7 @@ export interface EnemyRuntime {
     healCd: number;
     extraTimer: number;
     pathIdx: number;
+    bossEnraged: boolean;
     buffs: Record<string, EnemyBuffRuntime>;
 }
 
