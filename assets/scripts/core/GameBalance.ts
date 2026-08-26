@@ -18,8 +18,8 @@ export const BULLET_SPEED = 500;
 
 // ===== 金币 =====
 export const INITIAL_GOLD = 30;   // 开局金币
-export const KILL_REWARD = 4;     // 每击杀一个敌人奖励
-export const WAVE_BONUSES = [30, 30, 30, 30, 30, 30, 30];
+export const KILL_REWARD = 3;     // 每击杀一个敌人奖励
+export const WAVE_BONUSES = [20, 20, 25, 25, 30, 30, 30];
 
 // ===== 倒计时 =====
 // 关卡开头倒计时（秒）：给玩家时间建塔布防
@@ -28,7 +28,7 @@ export const LEVEL_START_COUNTDOWN = 5;
 // ===== 治疗兵参数 =====
 export const HEAL_RADIUS = 120;
 export const HEAL_INTERVAL = 3.0;
-export const HEAL_AMOUNT = 5;
+export const HEAL_AMOUNT = 10;
 // 治疗抑制卡：命中治疗兵后使其进入沉默的持续时间（秒），期间无法治疗
 export const HEAL_SILENCE = 2.0;
 
@@ -225,11 +225,11 @@ export const WAVES: WaveConfig[] = [
         { time: 0.0,  type: EnemyType.NORMAL, hp: 600 },  { time: 0.7,  type: EnemyType.FAST,   hp: 600 },
         { time: 1.4,  type: EnemyType.NORMAL, hp: 600 },  { time: 2.1,  type: EnemyType.HEALER, hp: 200 },
         { time: 2.8,  type: EnemyType.TANK,   hp: 600 },  { time: 3.5,  type: EnemyType.FAST,   hp: 600 },
-        { time: 4.2,  type: EnemyType.ELITE,  hp: 400 },  { time: 4.9,  type: EnemyType.NORMAL, hp: 600 },
+        { time: 4.2,  type: EnemyType.ELITE,  hp: 600 },  { time: 4.9,  type: EnemyType.NORMAL, hp: 600 },
         { time: 5.6,  type: EnemyType.FAST,   hp: 600 },  { time: 6.3,  type: EnemyType.TANK,   hp: 600 },
         { time: 7.0,  type: EnemyType.NORMAL, hp: 600 },  { time: 7.7,  type: EnemyType.HEALER, hp: 200 },
-        { time: 8.4,  type: EnemyType.BOSS,   hp: 540 },  { time: 9.1,  type: EnemyType.FAST,   hp: 600 },
-        { time: 9.8,  type: EnemyType.TANK,   hp: 600 },  { time: 10.5, type: EnemyType.ELITE,  hp: 400 },
+        { time: 8.4,  type: EnemyType.BOSS,   hp: 800 },  { time: 9.1,  type: EnemyType.FAST,   hp: 600 },
+        { time: 9.8,  type: EnemyType.TANK,   hp: 600 },  { time: 10.5, type: EnemyType.ELITE,  hp: 600 },
         { time: 11.2, type: EnemyType.NORMAL, hp: 600 },  { time: 11.9, type: EnemyType.FAST,   hp: 600 },
         { time: 12.6, type: EnemyType.TANK,   hp: 600 },  { time: 13.3, type: EnemyType.NORMAL, hp: 600 },
         { time: 14.0, type: EnemyType.FAST,   hp: 600 },  { time: 14.7, type: EnemyType.TANK,   hp: 600 },

@@ -166,6 +166,7 @@ export interface WaveBuffDefinition extends BaseOptionDefinition {
     scope: WaveBuffScope;
     branchGroup?: string;       // contentType='branch' 时确定流派分支（互斥）
     permanent: true;            // 三选一选中后直接加入本局构筑，恒为 true
+    buildId?: string;           // 精确流派标识：milk_tea_power / poison_burst / control_burst / stitch_cut
 }
 
 // ====================================================================

@@ -1,4 +1,4 @@
-import { _decorator, Component, Node, view, UITransform, Layers, Vec3, Graphics, Color, Label, EventTouch, v3, UIOpacity, profiler } from 'cc';
+import { _decorator, Component, Node, view, UITransform, Layers, Vec3, Graphics, Color, Label, EventTouch, v3, UIOpacity } from 'cc';
 import { HUD } from '../ui/HUD';
 import { EffectManager } from './EffectManager';
 import { EnemyType } from './Constants';
@@ -14,7 +14,7 @@ import { TOWER_MODIFIERS } from './cards/TowerModifierRegistry';
 import { WaveBuffDefinition, GameSnapshot, EffectDefinition, DrawCardDefinition } from './cards/types';
 import { TowerParamResolver } from './systems/TowerParamResolver';
 import { ThrustSystem, ThrustSystemContext } from './systems/ThrustSystem';
-import { PlaytestRecorder, PlaytestSnapshot } from './playtest/PlaytestRecorder';
+import { PlaytestMetadata, PlaytestRecorder, PlaytestSnapshot } from './playtest/PlaytestRecorder';
 import {
     ENEMY_SPEED, BULLET_SPEED,
     INITIAL_GOLD, KILL_REWARD, WAVE_BONUSES,
@@ -578,37 +578,10 @@ export class SceneInitializer extends Component {
     // 本局构筑状态（统一数据层：RunBuildState 记录 Buff/分支/层数/流派标签）
     private runBuild = new RunBuildState();
     private playtest = new PlaytestRecorder();
+    private readonly playtestMetadata = this.readPlaytestMetadata();
     private mainBuildPath: Exclude<BuildPath, 'general'> | null = null;  // 主构筑路线
-    /** P0-2: 每局随机激活的流派（2套），非激活流派的连接件不出现在牌池 */
-    private activeBuildPaths: Set<BuildPath> = new Set();
     /** 是否正在三选一选卡（波次间暂停且未选 buff） */
     private get isBuffSelecting(): boolean { return this.isWavePaused && !this.buffSelected; }
-
-    /**
-     * P0-2: 每局开始时随机激活 2 套流派。
-     * 只有激活流派的连接件（modifier + 流派 buff）出现在牌池，
-     * 其余流派只出入口牌（基础塔），不出连接件。
-     * 'general' 始终可用（通用牌不受限）。
-     */
-    private selectActiveBuildPaths(): void {
-        const allPaths: Exclude<BuildPath, 'general'>[] = ['firepower', 'poison', 'control'];
-        // Fisher-Yates 洗牌
-        for (let i = allPaths.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [allPaths[i], allPaths[j]] = [allPaths[j], allPaths[i]];
-        }
-        this.activeBuildPaths = new Set(allPaths.slice(0, 2));
-        console.log('[P0-2] 本局激活流派:', Array.from(this.activeBuildPaths).join(', '));
-    }
-
-    /**
-     * P0-2: 判断一张卡/buff 是否属于激活流派。
-     * general 牌不受限；非 general 牌需至少一条 buildPath 在激活集合中。
-     */
-    private isBuildPathActive(buildPaths: BuildPath[]): boolean {
-        if (buildPaths.every(p => p === 'general')) return true;  // 纯 general 牌不受限
-        return buildPaths.some(p => p === 'general' || this.activeBuildPaths.has(p));
-    }
 
     // 塔按钮位置已移入 TOWER_REGISTRY.buttonPos
     // 游戏暂停按钮：右侧（setupScene 中动态赋值）
@@ -648,21 +621,44 @@ export class SceneInitializer extends Component {
     private static readonly LONG_PRESS_TIME = 0.4;
     private static readonly MAX_STAR = 2;
 
+    /** 从 Web URL 或微信小游戏启动参数读取本轮测试配置；缺失或非法值由记录器统一警告并回退。 */
+    private readPlaytestMetadata(): Partial<PlaytestMetadata> {
+        const root = globalThis as unknown as Record<string, any>;
+        const values: Record<string, string | undefined> = {};
+        const search = typeof root.location?.search === 'string' ? root.location.search.replace(/^\?/, '') : '';
+        for (const pair of search.split('&')) {
+            if (!pair) continue;
+            const separator = pair.indexOf('=');
+            const rawKey = separator >= 0 ? pair.slice(0, separator) : pair;
+            const rawValue = separator >= 0 ? pair.slice(separator + 1) : '';
+            try {
+                values[decodeURIComponent(rawKey)] = decodeURIComponent(rawValue.replace(/\+/g, ' '));
+            } catch {
+                console.warn(`[PlaytestMetadata] 无法解析 URL 参数: ${pair} / Unable to decode URL parameter.`);
+            }
+        }
+
+        const launchQuery = root.wx?.getLaunchOptionsSync?.()?.query as Record<string, string> | undefined;
+        const read = (key: string): string | undefined => launchQuery?.[key] ?? values[key];
+        return {
+            balanceVersion: read('balanceVersion'),
+            testGroup: read('testGroup') as PlaytestMetadata['testGroup'] | undefined,
+            playStrategy: read('playStrategy') as PlaytestMetadata['playStrategy'] | undefined,
+            buildCommit: read('buildCommit'),
+        };
+    }
 
     protected start(): void {
-        // 关闭左下角 Cocos 调试性能面板（FPS/DrawCall 等），排查性能时临时注释掉即可
-        profiler.hideStats();
-        this.selectActiveBuildPaths();   // P0-2: 首局激活2套流派
-        this.playtest.beginRun();
+        // 设计分辨率 640x960，策略 3 = ResolutionPolicy.FIXED_HEIGHT（注意：3 不是 FIXED_WIDTH）：
+        // 高度固定 960，可见宽度 = 屏幕宽×960/屏高，窄屏手机（如 19.5:9）可见宽度仅约 443 < 640，
+        // 因此所有横向固定排布的 UI（如手牌）必须按 _visibleSize.width 自适应缩放
+        view.setDesignResolutionSize(640, 960, 3);
+        this.playtest.beginRun(this.playtestMetadata);
         this.selectWavePattern();
         // 美术阶段：预加载 kind='sprite' 的皮肤贴图（当前全为 graphics 时是 no-op）
         VisualFactory.preloadVisualSprites();
         // 启动时校验卡牌配置（仅 console.error 报告，不修改数据）
         SceneInitializer.validateBuffConfigs();
-        // 设计分辨率 640x960，策略 3 = ResolutionPolicy.FIXED_HEIGHT（注意：3 不是 FIXED_WIDTH）：
-        // 高度固定 960，可见宽度 = 屏幕宽×960/屏高，窄屏手机（如 19.5:9）可见宽度仅约 443 < 640，
-        // 因此所有横向固定排布的 UI（如手牌）必须按 _visibleSize.width 自适应缩放
-        view.setDesignResolutionSize(640, 960, 3);
         this.setupScene();
     }
 
@@ -1317,8 +1313,6 @@ export class SceneInitializer extends Component {
         for (const buff of WAVE_BUFFS) {
             // 资格判断（波次/次数/前置/互斥/场景条件），不通过则不进卡池
             if (!this.isBuffEligible(buff)) continue;
-            // P0-2: 只有激活流派的 buff 进入牌池（general 不受限）
-            if (!this.isBuildPathActive(buff.buildPaths)) continue;
 
             // 运行期特殊加权：下一波有治疗兵时，治疗抑制显著增权（近似旧 weight=5）
             let pity = 0;
@@ -1326,13 +1320,13 @@ export class SceneInitializer extends Component {
 
             // 动态权重 = baseWeight × 倍率 + 额外 + 保底补偿（由 ConditionEvaluator + WeightCalculator 统一计算）
             const relatedSelections = this.countRelatedBuildSelections(buff);
-            // P0-1: 正反馈只帮助第一个连接件，不持续推送整条路线
+            // 正反馈只帮助第一个连接件，不持续推送整条路线
             const useWeightRules = relatedSelections === 0;
             let weight = computeWeight(
                 { baseWeight: buff.baseWeight, weightRules: useWeightRules ? buff.weightRules : [], pityBonus: pity },
                 snap,
             );
-            if (relatedSelections >= 2) weight *= buff.contentType === 'capstone' ? 1.1 : 0.3;
+            if (relatedSelections >= 2) weight *= buff.contentType === 'capstone' ? 1.1 : 0.45;
             pool.push({ buff, weight });
         }
 
@@ -1343,12 +1337,12 @@ export class SceneInitializer extends Component {
         return buff.tags.indexOf(tag) >= 0;
     }
 
-    /** 按机制标签统计已选强化，避免不同火力流因共用 buildPath 被一并降权。 */
+    /** 按 buildId 精确统计已选强化，避免不同流派因共用标签被误降权。 */
     private countRelatedBuildSelections(candidate: WaveBuffDefinition): number {
-        const tags = candidate.tags.filter(tag => !tag.startsWith('role:'));
+        if (!candidate.buildId) return 0;
         return this.runBuild.selectedBuffIds.reduce((count, id) => {
             const selected = WAVE_BUFFS.find(buff => buff.id === id);
-            return selected?.tags.some(tag => tags.indexOf(tag) >= 0) ? count + 1 : count;
+            return selected?.buildId === candidate.buildId ? count + 1 : count;
         }, 0);
     }
 
@@ -2686,13 +2680,13 @@ export class SceneInitializer extends Component {
 
         // === 波次完成检测（在 cleanup 之后，确保本帧所有死亡已移除）===
         if (this.waveActive) {
-            // 波次进行到一半（已生成过半）时一次性发放 10 金币
+            // 波次进行到一半（已生成过半）时一次性发放 5 金币
             if (!this.midWaveRewardGiven && this.waveTotalCount > 0 &&
                 this.spawnedInWave >= Math.ceil(this.waveTotalCount / 2)) {
-                this.gold += 10;
+                this.gold += 5;
                 this.midWaveRewardGiven = true;
                 this.updateGoldLabel();
-                console.log(`波次中间奖励 +10 金币，当前 ${this.gold}`);
+                console.log(`波次中间奖励 +5 金币，当前 ${this.gold}`);
             }
             // 全部生成且全部死亡 → 自动暂停，等用户选 buff + 点"开始下一波"
             if (this.spawnedInWave >= this.waveTotalCount && this.enemies.length === 0) {
@@ -3857,7 +3851,6 @@ export class SceneInitializer extends Component {
         this.towerStats.reset();
         this.runBuild.reset();
         this.mainBuildPath = null;
-        this.selectActiveBuildPaths();   // P0-2: 每局重新随机激活2套流派
         this.hideBuffCards();
         this.updatePauseButton();
         this.hideGlobalBuffPanel();
@@ -3869,7 +3862,7 @@ export class SceneInitializer extends Component {
         if (this.statusLabel) this.statusLabel.string = `点击「${this.currentDrawCost()}金抽卡」，5张牌最多使用2张`;
 
         // 关卡开始倒计时
-        this.playtest.beginRun();
+        this.playtest.beginRun(this.playtestMetadata);
         this.selectWavePattern();
         this.startLevelCountdown();
         console.log('游戏重新开始');
@@ -4217,8 +4210,6 @@ export class SceneInitializer extends Component {
             if (!meetsUnlock(c, snap)) return false;
             if (triggersExclude(c, snap)) return false;
             if (c.contentType === 'modifier' && !this.hasCompatibleModifierTarget(c.id)) return false;
-            // P0-2: 非激活流派的 modifier（连接件）不进入牌池；tower/tool/tactic 不受限
-            if (c.contentType === 'modifier' && !this.isBuildPathActive(c.buildPaths)) return false;
             // 改造/战术卡的目标条件（如仅某类塔在场时入池）
             if (c.targetConditions.length > 0 && !meetsUnlock({ unlockConditions: c.targetConditions }, snap)) return false;
             return true;
@@ -4239,48 +4230,48 @@ export class SceneInitializer extends Component {
 
         const towerCount = 5 - hammerCount;
         const result: CardDef[] = [];
+        const usedSourceIds = new Set<string>();  // 同手牌去重
 
-        // P0-3: 前两次刷新保底1个流派入口+1个通用辅助，不再保证3条路线全开
+        // 开局保底：仅第一次抽牌给1个入口塔+1个充电宝
         const towerCands = candidates.filter(c => c.contentType === 'tower');
-        if (this.drawCount < 2 && towerCount >= 3) {
-            // 保底1个：从激活流派中随机选1个入口塔
-            const entryTowers: { towerId: string; buildPath: BuildPath }[] = [
-                { towerId: 'bubble_tea_straw', buildPath: 'firepower' },
-                { towerId: 'poison', buildPath: 'poison' },
-                { towerId: 'slow', buildPath: 'control' },
-            ];
-            const activeEntries = entryTowers.filter(e => this.activeBuildPaths.has(e.buildPath));
-            // Fisher-Yates 随机选1个激活流派入口
-            for (let i = activeEntries.length - 1; i > 0; i--) {
-                const j = Math.floor(Math.random() * (i + 1));
-                [activeEntries[i], activeEntries[j]] = [activeEntries[j], activeEntries[i]];
+        if (this.drawCount < 1 && towerCount >= 3) {
+            // 从3个流派入口中随机选1个
+            const entryTowers = ['bubble_tea_straw', 'poison', 'slow'];
+            const chosenId = entryTowers[Math.floor(Math.random() * entryTowers.length)];
+            const c = towerCands.find(x => x.towerId === chosenId);
+            if (c) {
+                result.push(this.makeCardFromDef(c));
+                usedSourceIds.add(c.id);
             }
-            if (activeEntries.length > 0) {
-                const chosen = activeEntries[0];
-                const c = towerCands.find(x => x.towerId === chosen.towerId);
-                if (c) result.push(this.makeCardFromDef(c));
-            }
-            // 保底1个通用辅助塔（充电宝），让玩家有基础工具
+            // 保底1个通用辅助塔（充电宝）
             const powerbank = towerCands.find(x => x.towerId === 'powerbank');
-            if (powerbank) result.push(this.makeCardFromDef(powerbank));
+            if (powerbank) {
+                result.push(this.makeCardFromDef(powerbank));
+                usedSourceIds.add(powerbank.id);
+            }
         }
-        // 补足剩余：从候选加权随机（含 tower/tool/modifier/tactic）
+        // 补足剩余：从候选加权随机（含 tower/tool/modifier/tactic），同手牌禁止重复 sourceId
         while (result.length < towerCount) {
             if (candidates.length === 0) break;
-            const pool = candidates.map(c => {
-                // P0-1: 改造卡正反馈只帮助第一个连接件——已有改造后不再加权
-                let rules = c.weightRules;
-                if (c.contentType === 'modifier') {
-                    const hasAnyMod = Object.values(this.runBuild.towerModifierStacks).some(mods => Object.keys(mods).length > 0);
-                    if (hasAnyMod) rules = [];
-                }
-                return { c, w: computeWeight({ baseWeight: c.baseWeight, weightRules: rules }, snap) };
-            });
+            const pool = candidates
+                .filter(c => !usedSourceIds.has(c.id))
+                .map(c => {
+                    // 改造卡权重：仅当本流派尚无任何改造时才启用 weightRules
+                    let rules = c.weightRules;
+                    if (c.contentType === 'modifier' && c.towerId) {
+                        const towerMods = this.runBuild.towerModifierStacks[c.towerId];
+                        const hasModForThisTower = towerMods && Object.keys(towerMods).length > 0;
+                        if (hasModForThisTower) rules = [];
+                    }
+                    return { c, w: computeWeight({ baseWeight: c.baseWeight, weightRules: rules }, snap) };
+                });
             const total = pool.reduce((s, x) => s + Math.max(0, x.w), 0);
+            if (total <= 0) break;
             let r = Math.random() * total;
             let pick = pool[0].c;
             for (const x of pool) { r -= Math.max(0, x.w); if (r <= 0) { pick = x.c; break; } }
             result.push(this.makeCardFromDef(pick));
+            usedSourceIds.add(pick.id);
         }
 
         if (hammerCount > 0) {
@@ -5183,58 +5174,61 @@ export class SceneInitializer extends Component {
     private ensureTowerInfoPanel(): void {
         if (this.towerInfoPanel) return;
         const canvas = this.node;
+        const panelWidth = 420;
+        const panelHeight = 430;
         const panel = new Node('TowerInfoPanel');
         panel.layer = Layers.Enum.UI_2D;
         panel.setParent(canvas);
         const t = panel.addComponent(UITransform);
-        t.setContentSize(300, 260);
+        t.setContentSize(panelWidth, panelHeight);
         t.setAnchorPoint(0.5, 0.5);
         const g = panel.addComponent(Graphics);
-        g.fillColor = new Color(18, 20, 32, 230);
-        g.roundRect(-150, -130, 300, 260, 12);
+        g.fillColor = new Color(18, 20, 32, 242);
+        g.roundRect(-panelWidth / 2, -panelHeight / 2, panelWidth, panelHeight, 12);
         g.fill();
         g.strokeColor = new Color(120, 200, 255, 255);
         g.lineWidth = 2;
-        g.roundRect(-150, -130, 300, 260, 12);
+        g.roundRect(-panelWidth / 2, -panelHeight / 2, panelWidth, panelHeight, 12);
         g.stroke();
 
         const label = new Node('InfoText');
         label.layer = Layers.Enum.UI_2D;
         label.setParent(panel);
         const lt = label.addComponent(UITransform);
-        lt.setContentSize(280, 180);
+        lt.setContentSize(388, 330);
         lt.setAnchorPoint(0.5, 0.5);
-        label.setPosition(0, 28, 0);
+        label.setPosition(0, 34, 0);
         const ll = label.addComponent(Label);
         ll.string = '';
-        ll.fontSize = 15;
+        ll.fontSize = 14;
         ll.color = new Color(255, 255, 255, 255);
-        ll.lineHeight = 21;
+        ll.lineHeight = 20;
         ll.horizontalAlign = Label.HorizontalAlign.LEFT;
         ll.verticalAlign = Label.VerticalAlign.TOP;
+        ll.overflow = Label.Overflow.SHRINK;
         ll.enableWrapText = true;
 
         const btn = new Node('DismantleButton');
         btn.layer = Layers.Enum.UI_2D;
         btn.setParent(panel);
-        btn.setPosition(0, -100, 0);
+        btn.setPosition(0, -181, 0);
         const bt = btn.addComponent(UITransform);
-        bt.setContentSize(180, 42);
+        bt.setContentSize(220, 48);
         bt.setAnchorPoint(0.5, 0.5);
         const bg = btn.addComponent(Graphics);
         bg.fillColor = new Color(95, 45, 45, 255);
-        bg.roundRect(-90, -21, 180, 42, 8);
+        bg.roundRect(-110, -24, 220, 48, 8);
         bg.fill();
         bg.strokeColor = new Color(255, 140, 120, 255);
         bg.lineWidth = 2;
-        bg.roundRect(-90, -21, 180, 42, 8);
+        bg.roundRect(-110, -24, 220, 48, 8);
         bg.stroke();
 
         const btnText = new Node('Text');
         btnText.layer = Layers.Enum.UI_2D;
         btnText.setParent(btn);
         btnText.setPosition(0, 0, 0);
-        btnText.addComponent(UITransform).setContentSize(170, 34);
+        btnText.addComponent(UITransform).setContentSize(210, 38);
         const bl = btnText.addComponent(Label);
         bl.string = '';
         bl.fontSize = 18;

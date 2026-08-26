@@ -81,6 +81,7 @@ export const WAVE_BUFFS: WaveBuffDefinition[] = [
             { condition: { type: 'hasTower', towerId: 'bubble_tea_straw', count: 2, operator: '>=' }, multiplier: 1.35 },
         ],
         minWave: 1, maxStacks: 1, baseWeight: 90,
+        buildId: 'milk_tea_power',
         effects: [
             { effectType: 'modifyStat', target: { type: 'towerType', towerId: 'bubble_tea_straw' }, value: 0.25, valueType: 'percent', parameters: { stat: 'strawDamage' } },
             { effectType: 'modifyStat', target: { type: 'towerType', towerId: 'bubble_tea_straw' }, value: 0.08, valueType: 'percent', parameters: { stat: 'strawRangePenalty' } },
@@ -98,6 +99,7 @@ export const WAVE_BUFFS: WaveBuffDefinition[] = [
             { condition: { type: 'hasTower', towerId: 'bubble_tea_straw', count: 2, operator: '>=' }, multiplier: 1.25 },
         ],
         minWave: 2, maxStacks: 2, baseWeight: 85,
+        buildId: 'milk_tea_power',
         effects: [
             { effectType: 'modifyStat', target: { type: 'towerType', towerId: 'bubble_tea_straw' }, value: 0.25, valueType: 'percent', parameters: { stat: 'corePoweredDamage' } },
             { effectType: 'modifyStat', target: { type: 'towerType', towerId: 'bubble_tea_straw' }, value: 0.10, valueType: 'percent', parameters: { stat: 'corePoweredCrit' } },
@@ -118,6 +120,7 @@ export const WAVE_BUFFS: WaveBuffDefinition[] = [
             { condition: { type: 'hasTower', towerId: 'bubble_tea_straw', count: 2, operator: '>=' }, multiplier: 1.25 },
         ],
         minWave: 5, maxStacks: 1, baseWeight: 78,
+        buildId: 'milk_tea_power',
         effects: [
             { effectType: 'modifyStat', target: { type: 'towerType', towerId: 'bubble_tea_straw' }, value: 1, parameters: { stat: 'corePoweredSecondStrikeCrit' } },
         ],
@@ -134,6 +137,7 @@ export const WAVE_BUFFS: WaveBuffDefinition[] = [
             { condition: { type: 'hasTower', towerId: 'scissors', count: 1, operator: '>=' }, multiplier: 1.35 },
         ],
         minWave: 2, maxStacks: 1, baseWeight: 88,
+        buildId: 'stitch_cut',
         effects: [
             { effectType: 'modifyStat', target: { type: 'towerType', towerId: 'needle' }, value: 2, parameters: { stat: 'stitchChainTargets' } },
             { effectType: 'modifyStat', target: { type: 'towerType', towerId: 'needle' }, value: 1.5, parameters: { stat: 'stitchDuration' } },
@@ -152,6 +156,7 @@ export const WAVE_BUFFS: WaveBuffDefinition[] = [
             { condition: { type: 'hasBuff', buffId: 'extended_thread', stacks: 1 }, multiplier: 1.35 },
         ],
         minWave: 3, maxStacks: 2, baseWeight: 94,
+        buildId: 'stitch_cut',
         effects: [
             { effectType: 'modifyStat', target: { type: 'towerType', towerId: 'needle' }, value: 0.5, valueType: 'percent', parameters: { stat: 'stitchCutDamage' } },
         ],
@@ -168,6 +173,7 @@ export const WAVE_BUFFS: WaveBuffDefinition[] = [
             { condition: { type: 'hasBuff', buffId: 'toxic_residue', stacks: 1 }, multiplier: 1.25 },
         ],
         minWave: 2, maxStacks: 3, baseWeight: 90,
+        buildId: 'poison_burst',
         effects: [{ effectType: 'modifyStat', target: { type: 'allTowers' }, value: 1, parameters: { stat: 'poisonResidue' } }],
     },
     {
@@ -180,6 +186,7 @@ export const WAVE_BUFFS: WaveBuffDefinition[] = [
         ],
         excludeConditions: [], weightRules: [],
         minWave: 3, maxStacks: 3, baseWeight: 78,
+        buildId: 'poison_burst',
         effects: [
             { effectType: 'modifyStat', target: { type: 'allTowers' }, value: 0.35, valueType: 'percent', parameters: { stat: 'poisonBurstDamage' } },
             { effectType: 'modifyStat', target: { type: 'allTowers' }, value: 0.10, valueType: 'percent', parameters: { stat: 'poisonBurstRadius' } },
@@ -195,6 +202,7 @@ export const WAVE_BUFFS: WaveBuffDefinition[] = [
         ],
         excludeConditions: [], weightRules: [],
         minWave: 2, maxStacks: 3, baseWeight: 88,
+        buildId: 'control_burst',
         effects: [{ effectType: 'modifyStat', target: { type: 'towerType', towerId: 'spatula' }, value: 0.40, valueType: 'percent', parameters: { stat: 'smashSlowedDamage' } }],
     },
     {
@@ -209,6 +217,7 @@ export const WAVE_BUFFS: WaveBuffDefinition[] = [
             { condition: { type: 'hasTower', towerId: 'spatula', count: 1, operator: '>=' }, multiplier: 1.25 },
         ],
         minWave: 2, maxStacks: 3, baseWeight: 86,
+        buildId: 'control_burst',
         effects: [{ effectType: 'modifyStat', target: { type: 'towerType', towerId: 'toothbrush' }, value: 0.20, valueType: 'percent', parameters: { stat: 'brushSlowVulnerable' } }],
     },
     {
@@ -218,6 +227,7 @@ export const WAVE_BUFFS: WaveBuffDefinition[] = [
         unlockConditions: [{ type: 'hasTower', towerId: 'spatula', count: 1, operator: '>=' }],
         excludeConditions: [], weightRules: [],
         minWave: 2, maxStacks: 2, baseWeight: 70,
+        buildId: 'control_burst',
         effects: [
             { effectType: 'modifyStat', target: { type: 'towerType', towerId: 'spatula' }, value: 0.25, valueType: 'percent', parameters: { stat: 'smashRadius' } },
             { effectType: 'modifyStat', target: { type: 'towerType', towerId: 'spatula' }, value: 0.15, valueType: 'percent', parameters: { stat: 'smashIntervalPenalty' } },
@@ -237,6 +247,7 @@ export const WAVE_BUFFS: WaveBuffDefinition[] = [
             { condition: { type: 'hasBuff', buffId: 'shatter_slow', stacks: 1 }, multiplier: 1.25 },
         ],
         minWave: 3, maxStacks: 2, baseWeight: 92,
+        buildId: 'control_burst',
         effects: [{ effectType: 'modifyStat', target: { type: 'allTowers' }, value: 1, parameters: { stat: 'smashBrushedBurst' } }],
     },
     {
@@ -247,6 +258,7 @@ export const WAVE_BUFFS: WaveBuffDefinition[] = [
         excludeConditions: [],
         weightRules: [{ condition: { type: 'hasBuff', buffId: 'splash', stacks: 1 }, multiplier: 1.2 }],
         minWave: 1, maxStacks: 3, baseWeight: 62,
+        buildId: 'poison_burst',
         effects: [{ effectType: 'modifyStat', target: { type: 'allTowers' }, value: 1, parameters: { stat: 'splash' } }],
     },
     {
@@ -257,6 +269,7 @@ export const WAVE_BUFFS: WaveBuffDefinition[] = [
         excludeConditions: [],
         weightRules: [{ condition: { type: 'hasBuff', buffId: 'bleed', stacks: 1 }, multiplier: 1.2 }],
         minWave: 1, maxStacks: 3, baseWeight: 58,
+        buildId: 'poison_burst',
         effects: [{ effectType: 'modifyStat', target: { type: 'allTowers' }, value: 1, parameters: { stat: 'bleed' } }],
     },
 

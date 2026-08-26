@@ -1,10 +1,16 @@
 {
-  "name": "td-game",
-  "uuid": "752ef2cb-30da-4c06-ad38-42f30b8d4ddd",
-  "creator": {
-    "version": "3.8.8"
-  },
-  "scripts": {
-    "build:wechat": "/Applications/Cocos/Creator/3.8.8/CocosCreator.app/Contents/MacOS/CocosCreator --project . --build \"platform=wechatgame;debug=true;md5Cache=false\""
-  }
+    "name": "td-game",
+    "type": "3d",
+    "version": "unknow",
+    "uuid": "752ef2cb-30da-4c06-ad38-42f30b8d4ddd",
+    "creator": {
+        "version": "3.8.8"
+    },
+    "scripts": {
+        "build:wechat": "/Applications/Cocos/Creator/3.8.8/CocosCreator.app/Contents/MacOS/CocosCreator --project . --build \"platform=wechatgame;debug=true;md5Cache=false\""
+    },
+    "pink": {
+        "uuid": "87c5af07-a5f2-456c-b673-355769bc48f5",
+        "version": "1.127.0"
+    }
 }
