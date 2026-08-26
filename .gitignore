@@ -56,3 +56,8 @@ build/
 # --- 日志 ---
 *.log
 logs/
+
+# --- 本地工具临时目录 ---
+.debug/
+.pink/
+.weixin-minigame-helper/
