@@ -307,6 +307,29 @@ export const WAVE_BUFFS: WaveBuffDefinition[] = [
             { effectType: 'modifyStat', target: { type: 'allTowers' }, value: -0.08, valueType: 'percent', parameters: { stat: 'damage' } },
         ],
     },
+
+    // —— 高风险高回报：代价真实可感、回报有质变感、结果有波动 ——
+    {
+        id: 'caffeine_overdrive', name: '咖啡因过载', description: 'BOSS波塔伤害+60%，非BOSS波塔伤害-25%', icon: 'caf',
+        systemType: 'waveBuff', contentType: 'mechanic', scope: 'global', permanent: true,
+        rarity: 'epic', tier: 2, buildPaths: ['firepower'], tags: ['role:greed', 'boss', 'damage'],
+        unlockConditions: [], excludeConditions: [], weightRules: [],
+        minWave: 3, maxStacks: 1, baseWeight: 76,
+        effects: [
+            { effectType: 'modifyStat', target: { type: 'allTowers' }, value: 0.6, valueType: 'percent', parameters: { stat: 'bossWaveDamage' } },
+            { effectType: 'modifyStat', target: { type: 'allTowers' }, value: -0.25, valueType: 'percent', parameters: { stat: 'nonBossWaveDamage' } },
+        ],
+    },
+    {
+        id: 'double_or_nothing', name: '双倍或全无', description: '下一波零漏怪+150金币；每漏1只额外-1命', icon: 'dbl',
+        systemType: 'waveBuff', contentType: 'mechanic', scope: 'global', permanent: true,
+        rarity: 'rare', tier: 1, buildPaths: ['general'], tags: ['role:greed', 'economy', 'gamble'],
+        unlockConditions: [], excludeConditions: [], weightRules: [],
+        minWave: 2, maxStacks: 3, baseWeight: 80,
+        effects: [
+            { effectType: 'custom', target: { type: 'self' }, value: 150, effectId: 'doubleOrNothing' },
+        ],
+    },
 ];
 
 /** 按 id 取 Buff 定义 */

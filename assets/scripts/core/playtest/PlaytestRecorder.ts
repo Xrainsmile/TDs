@@ -116,7 +116,7 @@ interface WaveDamageSummary {
 }
 
 export type PlaytestGroup = 'A' | 'B' | 'C';
-export type PlayStrategy = '认真构筑' | '乱选' | '强追流派';
+export type PlayStrategy = '认真构筑' | '乱选' | '强追流派' | '自动试玩';
 
 export interface PlaytestMetadata {
     balanceVersion: string;
@@ -500,7 +500,7 @@ export class PlaytestRecorder {
         const testGroup = metadata.testGroup;
         const playStrategy = metadata.playStrategy;
         const validGroup = testGroup === 'A' || testGroup === 'B' || testGroup === 'C';
-        const validStrategy = playStrategy === '认真构筑' || playStrategy === '乱选' || playStrategy === '强追流派';
+        const validStrategy = playStrategy === '认真构筑' || playStrategy === '乱选' || playStrategy === '强追流派' || playStrategy === '自动试玩';
         const validCommit = /^[0-9a-f]{7,40}$/i.test(buildCommit);
 
         if (!balanceVersion) {
@@ -519,7 +519,7 @@ export class PlaytestRecorder {
         return {
             balanceVersion: balanceVersion || defaults.balanceVersion,
             testGroup: testGroup === 'A' || testGroup === 'B' || testGroup === 'C' ? testGroup : defaults.testGroup,
-            playStrategy: playStrategy === '认真构筑' || playStrategy === '乱选' || playStrategy === '强追流派'
+            playStrategy: playStrategy === '认真构筑' || playStrategy === '乱选' || playStrategy === '强追流派' || playStrategy === '自动试玩'
                 ? playStrategy
                 : defaults.playStrategy,
             buildCommit: validCommit ? buildCommit : defaults.buildCommit,

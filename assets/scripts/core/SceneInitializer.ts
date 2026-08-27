@@ -436,7 +436,7 @@ export class SceneInitializer extends Component {
             enemyType: EnemyType.BOSS,
             name: 'BOSS',
             speedMultiplier: 0.5,
-            hpMultiplier: 5,               // 血量是同波普通兵的 5 倍（满塔可在其抵达终点前击杀，原 10 过肉）
+            hpMultiplier: 4,               // 血量是同波普通兵的 4 倍（0.3.1：从 5 降到 4，败局平均只打出 70% BOSS 血量）
             color: new Color(255, 70, 70, 255),
             radius: 28,
             onUpdate: (enemy, dt) => {
@@ -533,9 +533,15 @@ export class SceneInitializer extends Component {
     private hud: HUD | null = null;
     private gold = 0;
 
-    // 友军（基地）
-    private readonly ALLY_MAX_HP = 6;
+    // 友军（基地）：ALLY_MAX_HP_BASE 为初始上限
+    private readonly ALLY_MAX_HP_BASE = 6;
+    private allyMaxHp = this.ALLY_MAX_HP_BASE;
     private allyHp = 6;
+
+    // === 风险卡状态（咖啡因过载 / 双倍或全无）===
+    private waveHasBoss = false;                   // 当前波是否含 BOSS（咖啡因过载 加成/惩罚 的切换条件）
+    private gambleWaveIndex: number | null = null; // 双倍或全无：赌约绑定的波次（1-based）
+    private gambleWaveLeaks = 0;                   // 双倍或全无：赌约波内漏怪数（零漏怪才发奖金）
 
     // 波次运行时
     private currentWave = 0;
@@ -1048,7 +1054,7 @@ export class SceneInitializer extends Component {
         // 统一同步 HUD 顶部金币与按钮上方常驻金币（避免开局按钮上方显示 0）
         this.updateGoldLabel();
         this.hud.setWave(0, this.WAVES.length);
-        this.hud.setLives(this.allyHp, this.ALLY_MAX_HP);
+        this.hud.setLives(this.allyHp, this.allyMaxHp);
         this.hud.setStatus(`点击「${this.currentDrawCost()}金抽卡」，5张牌最多使用2张`);
 
         // === 终点友军建筑（城堡）===
@@ -1505,12 +1511,16 @@ export class SceneInitializer extends Component {
                     this.createGroundZone(this.lastCardDropPos.clone(), radius, duration, slowMul);
                 } else if (effectId === 'repairBase') {
                     const amount = Math.max(0, Math.round(effect.value ?? 1));
-                    this.allyHp = Math.min(this.ALLY_MAX_HP, this.allyHp + amount);
-                    if (this.livesLabel) this.livesLabel.string = `Base: ${this.allyHp}/${this.ALLY_MAX_HP}`;
+                    this.allyHp = Math.min(this.allyMaxHp, this.allyHp + amount);
+                    if (this.livesLabel) this.livesLabel.string = `Base: ${this.allyHp}/${this.allyMaxHp}`;
                 } else if (effectId === 'hurtBase') {
                     const amount = Math.max(0, Math.round(effect.value ?? 1));
                     this.allyHp = Math.max(1, this.allyHp - amount);
-                    if (this.livesLabel) this.livesLabel.string = `Base: ${this.allyHp}/${this.ALLY_MAX_HP}`;
+                    if (this.livesLabel) this.livesLabel.string = `Base: ${this.allyHp}/${this.allyMaxHp}`;
+                } else if (effectId === 'doubleOrNothing') {
+                    // 双倍或全无：绑定下一波（选卡发生在波间，currentWave 为刚结束波，下一波为 +1）
+                    this.gambleWaveIndex = this.currentWave + 1;
+                    this.gambleWaveLeaks = 0;
                 } else {
                     console.warn(`[effectContext] 未注册的 custom 效果: ${effectId}`);
                 }
@@ -1635,6 +1645,12 @@ export class SceneInitializer extends Component {
 
         this.activeWaveEntries = this.waveEntriesForRun(this.currentWave);
         this.currentWave++;
+        // 咖啡因过载：判定本波是否含 BOSS（决定 BOSS 波伤害加成是否生效）
+        this.waveHasBoss = this.activeWaveEntries.some(entry => entry.type === EnemyType.BOSS);
+        // 双倍或全无：赌约波开始，提示本波赌注
+        if (this.gambleWaveIndex === this.currentWave && this.statusLabel) {
+            this.statusLabel.string = `双倍或全无生效：本波零漏怪 +150 金币，每漏 1 只额外 -1 命`;
+        }
         this.spawnedInWave = 0;
         this.waveActive = true;
         this.waveElapsed = 0;
@@ -1666,6 +1682,7 @@ export class SceneInitializer extends Component {
         this.updatePauseButton();
         this.hideGlobalBuffPanel();
         this.resetCardSystem();   // 胜利清除手牌，避免结算弹窗下残留
+        this.hideTowerInfo();     // 0.3.1：隐藏塔信息面板，防止遮挡结算弹窗导出按钮
 
         const canvas = this.node;
         const panel = new Node('VictoryPanel');
@@ -2326,10 +2343,16 @@ export class SceneInitializer extends Component {
                     e.node.destroy();
                     this.enemies.splice(i, 1);
                     this.allyHp -= 1;
+                    // 双倍或全无：赌约波内每漏 1 只额外 -1 命（逐只叠加，漏 2 只共 -4）
+                    if (this.gambleWaveIndex === this.currentWave && this.waveActive) {
+                        this.allyHp -= 1;
+                        this.gambleWaveLeaks++;
+                        console.log('双倍或全无：漏怪额外 -1 命');
+                    }
                     this.playtest.recordLeak(String(e.type), this.allyHp);
-                    console.log(`漏怪！友军 HP: ${this.allyHp}/${this.ALLY_MAX_HP}`);
+                    console.log(`漏怪！友军 HP: ${this.allyHp}/${this.allyMaxHp}`);
                     if (this.livesLabel) {
-                        this.livesLabel.string = `Base: ${this.allyHp}/${this.ALLY_MAX_HP}`;
+                        this.livesLabel.string = `Base: ${this.allyHp}/${this.allyMaxHp}`;
                     }
                     if (this.allyHp <= 0) {
                         console.log('友军被摧毁，游戏结束！');
@@ -2555,7 +2578,7 @@ export class SceneInitializer extends Component {
                 if (d < 16) {
                     // 逐塔解析有效属性（含二星强化 + 词缀）
                     const p = this.getTowerParams(b.tower);
-                    const bounceMul = b.bounceStep === 1 ? 0.7 : (b.bounceStep ?? 0) >= 2 ? 0.5 : 1;
+                    const bounceMul = b.bounceStep === 1 ? 0.6 : (b.bounceStep ?? 0) >= 2 ? 0.4 : 1;
                     let dmg = p.damage * (b.dmgMul ?? 1) * bounceMul;
                     // 处决词缀：对低血敌人增伤
                     if (p.executeBonus > 0 && e.hp / e.maxHp < 0.3) {
@@ -2696,6 +2719,19 @@ export class SceneInitializer extends Component {
                     this.gold += waveBonus;
                     this.updateGoldLabel();
                     console.log(`波次奖励 +${waveBonus} 金币，当前 ${this.gold}`);
+                }
+                // 双倍或全无：赌约波结算（零漏怪 +150 金币，否则赌注失败）
+                if (this.gambleWaveIndex === this.currentWave) {
+                    if (this.gambleWaveLeaks === 0) {
+                        this.gold += 150;
+                        this.updateGoldLabel();
+                        console.log('双倍或全无达成：本波零漏怪，+150 金币');
+                        if (this.statusLabel) this.statusLabel.string = '双倍或全无达成：+150 金币！';
+                    } else {
+                        console.log(`双倍或全无失败：本波漏怪 ${this.gambleWaveLeaks} 只`);
+                    }
+                    this.gambleWaveIndex = null;
+                    this.gambleWaveLeaks = 0;
                 }
                 this.refreshPlaytestBuildMilestones();
                 this.playtest.endWave(this.buildPlaytestSnapshot());
@@ -3046,7 +3082,10 @@ export class SceneInitializer extends Component {
                     ? '过载第二戳'
                     : tower.corePowered ? '供电戳击' : '吸管戳击';
                 if (result.isOverload) this.playtest.recordMechanismTrigger(mechanismId, mechanismName, 1);
-                this.damageEnemy(enemy, amount, this.towerDamageSource(
+                // 0.3.1：供电/过载戳击对 BOSS 额外 +50% 伤害（修复奶茶供电流打 BOSS 刮痧）
+                const bossMul = (mechanismId === 'core_powered_thrust' || mechanismId === 'overload_double_tap')
+                    && enemy.type === EnemyType.BOSS ? 1.5 : 1;
+                this.damageEnemy(enemy, amount * bossMul, this.towerDamageSource(
                     tower,
                     mechanismId,
                     mechanismName,
@@ -3336,25 +3375,27 @@ export class SceneInitializer extends Component {
 
     private tryCreateStitchChainFromPierceShot(shot: PierceShot): void {
         const mod = this.threadSpoolModifier();
-        if (!mod || !this.battleRoot) return;
+        if (!this.battleRoot) return;
 
-        const ch = mod.changes;
-        const maxTargets = (ch.stitchChainTargets ?? 4) + this.towerStats.stitchChainTargetBonus;
+        // 0.3.1：无 thread_spool 改造卡时也创建基础缝合链（2目标、3秒、0.5倍伤害），
+        //       让剪刀+缝衣针联动不锁死在稀有卡牌后面；有改造卡时使用增强数值。
+        const ch = mod?.changes;
+        const maxTargets = (ch?.stitchChainTargets ?? 2) + this.towerStats.stitchChainTargetBonus;
         const candidates = Array.from(shot.hitSet)
             .filter(e => e.node.isValid && e.hp > 0 && !e.buffs['stitch'])
             .slice(0, maxTargets);
         if (candidates.length < 2) return;
 
-        const maxChains = ch.maxStitchChains ?? 3;
+        const maxChains = ch?.maxStitchChains ?? 1;
         while (this.stitchChains.length >= maxChains) {
             this.removeStitchChain(this.stitchChains[0]);
         }
 
         const line = VisualFactory.createStitchChainLine(this.battleRoot);
         const id = this.nextStitchChainId++;
-        const duration = (ch.stitchDuration ?? 4) + this.towerStats.stitchDurationBonus;
+        const duration = (ch?.stitchDuration ?? 3) + this.towerStats.stitchDurationBonus;
         const damage = shot.damage
-            * (ch.stitchCutDamageMultiplier ?? 0.8)
+            * (ch?.stitchCutDamageMultiplier ?? 0.5)
             * (1 + this.towerStats.stitchCutDamageBonus);
         const chain: StitchChainRuntime = {
             id,
@@ -3695,6 +3736,7 @@ export class SceneInitializer extends Component {
         this.updatePauseButton();
         this.hideGlobalBuffPanel();
         this.resetCardSystem();   // 失败清除手牌，避免结算弹窗下残留
+        this.hideTowerInfo();     // 0.3.1：隐藏塔信息面板，防止遮挡结算弹窗导出按钮
 
         // 清除所有敌人和子弹
         for (const en of this.enemies) en.node.destroy();
@@ -3834,7 +3876,11 @@ export class SceneInitializer extends Component {
         // 重置状态
         this.isGameOver = false;
         this.gold = this.INITIAL_GOLD;
-        this.allyHp = this.ALLY_MAX_HP;
+        this.allyMaxHp = this.ALLY_MAX_HP_BASE;
+        this.allyHp = this.allyMaxHp;
+        this.waveHasBoss = false;
+        this.gambleWaveIndex = null;
+        this.gambleWaveLeaks = 0;
         this.currentWave = 0;
         this.spawnedInWave = 0;
         this.spawnTimer = 0;
@@ -3857,7 +3903,7 @@ export class SceneInitializer extends Component {
 
         // 更新 HUD
         this.updateGoldLabel();
-        if (this.livesLabel) this.livesLabel.string = `Base: ${this.allyHp}/${this.ALLY_MAX_HP}`;
+        if (this.livesLabel) this.livesLabel.string = `Base: ${this.allyHp}/${this.allyMaxHp}`;
         if (this.waveLabel) this.waveLabel.string = `Wave: 0/${this.WAVES.length}`;
         if (this.statusLabel) this.statusLabel.string = `点击「${this.currentDrawCost()}金抽卡」，5张牌最多使用2张`;
 
@@ -4893,7 +4939,15 @@ export class SceneInitializer extends Component {
     /** 统一扣血入口：应用易伤后，仅记录真正扣掉的生命值，排除溢出伤害。 */
     private damageEnemy(e: EnemyRuntime, amount: number, source?: DamageAttribution, activeSeconds = 0): void {
         const beforeHp = Math.max(0, e.hp);
-        const applied = Math.max(0, amount) * (e.vulnerable > 0 ? e.vulnerable : 1);
+        // 咖啡因过载：BOSS 波塔伤害提升 / 非 BOSS 波塔伤害惩罚（归因记录含此倍率）
+        const isTowerSrc = source?.sourceType === 'tower';
+        const bossWaveMul = (this.waveHasBoss && this.towerStats.bossWaveDamageBonus > 0 && isTowerSrc)
+            ? 1 + this.towerStats.bossWaveDamageBonus
+            : 1;
+        const nonBossWaveMul = (!this.waveHasBoss && this.towerStats.nonBossWaveDamagePenalty > 0 && isTowerSrc)
+            ? Math.max(0, 1 - this.towerStats.nonBossWaveDamagePenalty)
+            : 1;
+        const applied = Math.max(0, amount) * bossWaveMul * nonBossWaveMul * (e.vulnerable > 0 ? e.vulnerable : 1);
         e.hp -= applied;
         const effectiveDamage = Math.min(beforeHp, applied);
         const isBoss = e.type === EnemyType.BOSS;
@@ -5364,6 +5418,8 @@ export class SceneInitializer extends Component {
         if (ts.bleedLevel > 0) globals.push(`出血Lv${ts.bleedLevel}`);
         if (ts.slowLevel > 0) globals.push(`减速Lv${ts.slowLevel}`);
         if (ts.healSuppression > 0) globals.push(`治疗抑制${Math.round(ts.healSuppression * 100)}%`);
+        if (ts.bossWaveDamageBonus > 0) globals.push(`BOSS波伤害+${Math.round(ts.bossWaveDamageBonus * 100)}%`);
+        if (ts.nonBossWaveDamagePenalty > 0) globals.push(`非BOSS波伤害-${Math.round(ts.nonBossWaveDamagePenalty * 100)}%`);
         if (ts.strawDamageBonus > 0) globals.push(`奶茶伤害+${Math.round(ts.strawDamageBonus * 100)}%`);
         if (ts.corePoweredDamageBonus > 0 || ts.corePoweredCritBonus > 0) {
             globals.push(`供电强化+${Math.round(ts.corePoweredDamageBonus * 100)}%伤害/${Math.round(ts.corePoweredCritBonus * 100)}%暴击`);
@@ -5485,6 +5541,8 @@ export class SceneInitializer extends Component {
         if (ts.speedBonus !== 0) general.push(`攻速 ${ts.speedBonus > 0 ? '+' : ''}${Math.round(ts.speedBonus * 100)}%`);
         if (ts.rangeBonus !== 0) general.push(`范围 ${ts.rangeBonus > 0 ? '+' : ''}${Math.round(ts.rangeBonus * 100)}%`);
         if (ts.healSuppression > 0) general.push(`治疗抑制 ${Math.round(ts.healSuppression * 100)}%`);
+        if (ts.bossWaveDamageBonus > 0) general.push(`BOSS波伤害 +${Math.round(ts.bossWaveDamageBonus * 100)}%`);
+        if (ts.nonBossWaveDamagePenalty > 0) general.push(`非BOSS波伤害 -${Math.round(ts.nonBossWaveDamagePenalty * 100)}%`);
         if (ts.splashLevel > 0) general.push(`溅射 Lv${ts.splashLevel} / ${Math.round(ts.splashDamage * 100)}%`);
         if (ts.bleedLevel > 0) general.push(`出血 Lv${ts.bleedLevel} / 暴击${Math.round(ts.critChance * 100)}%`);
         if (ts.slowLevel > 0) general.push(`缓速弹幕 Lv${ts.slowLevel} / ${Math.round((1 - ts.slowMultiplier) * 100)}%`);

@@ -39,6 +39,8 @@ function applyModifyStat(effect: EffectDefinition, ctx: EffectContext): void {
         case 'stitchChainTargets': stats.stitchChainTargetBonus += Math.round(v); break;
         case 'stitchDuration': stats.stitchDurationBonus += v; break;
         case 'stitchCutDamage': stats.stitchCutDamageBonus += v; break;
+        case 'bossWaveDamage': stats.bossWaveDamageBonus += v; break;
+        case 'nonBossWaveDamage': stats.nonBossWaveDamagePenalty -= v; break; // v 为伤害变化量（-0.25 → 惩罚 0.25）
         default:
             console.warn(`[EffectExecutor] 未知 stat: ${stat}`);
     }

@@ -34,6 +34,8 @@ export class TowerStats {
     stitchChainTargetBonus = 0;   // 加长线轴：每条缝合链额外连接目标数
     stitchDurationBonus = 0;      // 加长线轴：缝合持续时间加成（秒）
     stitchCutDamageBonus = 0;     // 锋利裁口：剪线伤害倍率加成
+    bossWaveDamageBonus = 0;      // 咖啡因过载：BOSS 波期间塔来源伤害加成（0.6 = +60%）
+    nonBossWaveDamagePenalty = 0; // 咖啡因过载：非 BOSS 波塔来源伤害惩罚（0.25 = -25%，平时清怪变慢）
 
     // 最终倍率 = 1 + 累计加成（加法叠加）
     get damageMultiplier() { return 1 + this.damageBonus; }
@@ -80,6 +82,8 @@ export class TowerStats {
         this.stitchChainTargetBonus = 0;
         this.stitchDurationBonus = 0;
         this.stitchCutDamageBonus = 0;
+        this.bossWaveDamageBonus = 0;
+        this.nonBossWaveDamagePenalty = 0;
     }
 }
 
