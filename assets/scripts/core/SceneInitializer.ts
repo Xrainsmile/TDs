@@ -27,9 +27,11 @@ import {
 } from './GameBalance';
 import {
     MAP_DESIGN_WIDTH, MAP_DESIGN_HEIGHT, PATH_WAYPOINTS,
+    PATH_BRANCHES, PATH_BRANCH_WAYPOINTS, BRANCH_COUNT,
     BUILD_CELLS, LOCKED_BUILD_CELL_KEYS,
     gridToLocal, CELL_SIZE, ROAD_WIDTH_RATIO, SLOT_SIZE_RATIO, GRID_COLS, GRID_ROWS,
 } from './MapConfig';
+import { buildMapArt, drawSlotMat, drawTowerBase } from './visuals/MapArt';
 import * as VisualFactory from './visuals/VisualFactory';   // 表现层：按 visualEffectId 构建攻击视觉
 import type { AffixId, DamageAttribution, EnemyRuntime, PierceShot, TowerParams, TowerRuntime } from './RuntimeTypes';
 
@@ -111,6 +113,11 @@ export class SceneInitializer extends Component {
     // 路径（直接从 GameBalance 引用，固定逻辑坐标）
     private get PATH_START() { return PATH_WAYPOINTS[0]; }
     private get PATH_END() { return PATH_WAYPOINTS[PATH_WAYPOINTS.length - 1]; }
+
+    /** 取敌人在其所属分支上的 waypoints 数组（双路分叉） */
+    private waypointsOf(e: EnemyRuntime): Vec3[] {
+        return PATH_BRANCH_WAYPOINTS[e.branch] ?? PATH_WAYPOINTS;
+    }
 
     // 基础数值（从 GameBalance 引用）
     private get ENEMY_SPEED() { return ENEMY_SPEED; }
@@ -475,15 +482,19 @@ export class SceneInitializer extends Component {
     private slotPositions: Vec3[] = [];
     private slotOccupied: boolean[] = [];
     private lockedSlots: boolean[] = [];    // 第二类锁定格：初始灰色，需锤子敲开才能放塔（坐标由 MapConfig 配置）
+    /** 甜品台地图美术层节点（桌布/糖渍/装饰/虫洞/蛋糕） */
+    private mapArt: ReturnType<typeof buildMapArt> | null = null;
+    /** 双路分叉：出怪时的分支轮换游标（交替分配，保证两路压力均衡） */
+    private spawnBranchToggle = 0;
 
     // ===== 卡牌系统（支付金币抽卡，拖动卡牌放置/敲开）=====
     private static readonly DRAW_COSTS = [
-        30, 30, 30,
+        25, 25, 25,
         35, 35, 35,
         40, 40, 40,
         45, 45, 45,
         50, 55, 60, 65, 70, 75,
-    ];                                                   // 抽卡花费曲线，之后按最后一档封顶
+    ];                                                   // 抽卡花费曲线（0.3.2：前3档 30→25），之后按最后一档封顶
     private static readonly MAX_CARD_USES_PER_DRAW = 2;  // 每轮发牌最多使用卡数
     private drawCount = 0;                         // 刷新次数（前两次保证基础塔完整）
     private drawsWithoutShovel = 0;                // 有灰格且连续未出锤子的轮数（第三轮强制出）
@@ -691,14 +702,13 @@ export class SceneInitializer extends Component {
         // 倒计时圆环位置：与抽卡按钮水平对齐（同高，置于按钮左侧，不遮挡卡牌）
         this.countdownPos = new Vec3(-220, -halfH + 48, 0);
 
-        // 屏幕适配：地图以逻辑像素尺寸（MAP_DESIGN = 360×480）显示，居中于战场；
-        // 仅当超出战场区域时才缩小，不再拉伸填满战场，保证棋盘视觉尺寸 = MAP_DESIGN。
-        // scale = min(1, 战场宽/地图宽, 战场高/地图高)
+        // 屏幕适配：地图等比缩放填满战场（新地图 576×640 已按战场比例设计，
+        // 允许放大不再限制 scale<=1，避免地图周围留大片空白）。
+        // scale = min(战场宽/地图宽, 战场高/地图高) × 安全系数
         const mapScale = Math.min(
-            1,
             battleWidth / MAP_DESIGN_WIDTH,
             battleHeight / MAP_DESIGN_HEIGHT
-        );
+        ) * 0.98;
 
         this._visibleSize = visible;
 
@@ -713,13 +723,10 @@ export class SceneInitializer extends Component {
         this.battleRoot.setScale(mapScale, mapScale, 1);
         // 挂载特效管理器
         this.battleRoot.addComponent(EffectManager);
-        // 地图调试框（黄色边框，随 BattleRoot 整体缩放；验收：调试框与地图同步缩放）
-        this.drawMapDebugFrame(this.battleRoot);
+        // === 甜品台地图美术（桌布 → 糖霜点缀 → 糖渍双路 → 虫洞入口 → 奶油蛋糕基地）===
+        this.mapArt = buildMapArt(this.battleRoot);
         // 6×8 调试网格（可开关，随 BattleRoot 整体缩放）
         if (SHOW_GRID) this.drawGridDebug(this.battleRoot);
-
-        // === 路径 ===
-        this.drawPath(this.battleRoot);
 
         // === 塔位（仅 GridCell，由 gridToLocal 计算位置；与手机尺寸无关，仅供适配缩放）===
         this.slotCells = BUILD_CELLS.map(c => ({ col: c.col, row: c.row }));
@@ -1937,8 +1944,8 @@ export class SceneInitializer extends Component {
     /** 'first' 比较器：a 比 b 更靠近终点返回负值。pathIdx 大者优先 → 同段距下一 waypoint 近者优先 → 距塔近者优先 */
     private compareFirst(a: EnemyRuntime, b: EnemyRuntime, towerPos: Vec3): number {
         if (a.pathIdx !== b.pathIdx) return b.pathIdx - a.pathIdx;
-        const wa = PATH_WAYPOINTS[Math.min(a.pathIdx, PATH_WAYPOINTS.length - 1)];
-        const wb = PATH_WAYPOINTS[Math.min(b.pathIdx, PATH_WAYPOINTS.length - 1)];
+        const wa = this.waypointsOf(a)[Math.min(a.pathIdx, this.waypointsOf(a).length - 1)];
+        const wb = this.waypointsOf(b)[Math.min(b.pathIdx, this.waypointsOf(b).length - 1)];
         const da = Vec3.distance(a.node.position, wa);
         const db = Vec3.distance(b.node.position, wb);
         if (Math.abs(da - db) > 1e-6) return da - db;
@@ -1971,7 +1978,7 @@ export class SceneInitializer extends Component {
         this.lastAimPick.set(key, best);
         const desc = pool.map(c => {
             const e = c.enemy;
-            const wp = PATH_WAYPOINTS[Math.min(e.pathIdx, PATH_WAYPOINTS.length - 1)];
+            const wp = this.waypointsOf(e)[Math.min(e.pathIdx, this.waypointsOf(e).length - 1)];
             const dNext = Vec3.distance(e.node.position, wp);
             return `#${c.idx}[pathIdx=${e.pathIdx} dNext=${dNext.toFixed(1)}]`;
         }).join(' ');
@@ -2027,9 +2034,7 @@ export class SceneInitializer extends Component {
         const gfx = towerNode.getComponent(Graphics);
         if (!gfx) return;
         gfx.clear();
-        gfx.fillColor = new Color(60, 60, 70, 255);
-        gfx.rect(-28, -28, 56, 56);
-        gfx.fill();
+        drawTowerBase(gfx, def.color);
         gfx.strokeColor = def.rangeColor;
         gfx.lineWidth = 2;
         gfx.circle(0, 0, def.attack.range);
@@ -2382,9 +2387,10 @@ export class SceneInitializer extends Component {
                 }
                 const phaseSpeedMultiplier = e.bossEnraged ? 1.35 : 1;
                 const speed = this.ENEMY_SPEED * speedMult * phaseSpeedMultiplier * e.slowMultiplier;
-                if (e.pathIdx >= PATH_WAYPOINTS.length) e.pathIdx = PATH_WAYPOINTS.length - 1;
+                const wps = this.waypointsOf(e);
+                if (e.pathIdx >= wps.length) e.pathIdx = wps.length - 1;
 
-                const target = PATH_WAYPOINTS[e.pathIdx];
+                const target = wps[e.pathIdx];
                 const toX = target.x - pos.x;
                 const toY = target.y - pos.y;
                 const distToTarget = Math.hypot(toX, toY);
@@ -2393,7 +2399,7 @@ export class SceneInitializer extends Component {
                 // 用 step 作为到达阈值：掉帧时单帧移动很大也不会在折点反复横跳卡死。
                 if (distToTarget <= step || distToTarget <= 1) {
                     e.node.setPosition(target.x, target.y, 0);
-                    if (e.pathIdx < PATH_WAYPOINTS.length - 1) e.pathIdx++;
+                    if (e.pathIdx < wps.length - 1) e.pathIdx++;
                 } else {
                     e.node.setPosition(
                         pos.x + (toX / distToTarget) * step,
@@ -2773,10 +2779,15 @@ export class SceneInitializer extends Component {
         // 实际血量 = 配置 hp × 注册表 hpMultiplier
         const actualHp = Math.floor(hp * def.hpMultiplier);
 
+        // 双路分叉：交替分配左右两路，保证两路压力均衡（不随机，避免某路运气性过载）
+        const branch = this.spawnBranchToggle;
+        this.spawnBranchToggle = (this.spawnBranchToggle + 1) % BRANCH_COUNT;
+        const waypoints = PATH_BRANCH_WAYPOINTS[branch];
+
         const enemy = new Node(def.name);
         enemy.layer = Layers.Enum.UI_2D;
         enemy.setParent(this.battleRoot);
-        enemy.setPosition(this.PATH_START);
+        enemy.setPosition(waypoints[0]);
 
         const transform = enemy.addComponent(UITransform);
         transform.setContentSize(def.radius * 2, def.radius * 2);
@@ -2797,6 +2808,7 @@ export class SceneInitializer extends Component {
             slowTimer: 0, slowMultiplier: 1,
             type, healTimer: 0, healCd: 0, extraTimer: 0,
             pathIdx: 1,  // 从起点 waypoint[0] 出发，目标是 waypoint[1]
+            branch,     // 双路分叉：本敌人所走的分支
             bossEnraged: false,
             buffs: {},
             vulnerable: 1,   // 易伤倍率（默认 1，易伤词缀目标承受额外伤害）
@@ -2810,13 +2822,14 @@ export class SceneInitializer extends Component {
     /** 将敌人在折线路径上的位置换算为 0..1 进度，供试玩统计最远推进使用。 */
     private enemyPathProgress(enemy: EnemyRuntime): number {
         let total = 0;
-        for (let i = 1; i < PATH_WAYPOINTS.length; i++) total += Vec3.distance(PATH_WAYPOINTS[i - 1], PATH_WAYPOINTS[i]);
+        const wps = this.waypointsOf(enemy);
+        for (let i = 1; i < wps.length; i++) total += Vec3.distance(wps[i - 1], wps[i]);
         if (total <= 0) return 0;
-        const targetIndex = Math.max(1, Math.min(enemy.pathIdx, PATH_WAYPOINTS.length - 1));
+        const targetIndex = Math.max(1, Math.min(enemy.pathIdx, wps.length - 1));
         let completed = 0;
-        for (let i = 1; i < targetIndex; i++) completed += Vec3.distance(PATH_WAYPOINTS[i - 1], PATH_WAYPOINTS[i]);
-        const segmentStart = PATH_WAYPOINTS[targetIndex - 1];
-        const segmentLength = Vec3.distance(segmentStart, PATH_WAYPOINTS[targetIndex]);
+        for (let i = 1; i < targetIndex; i++) completed += Vec3.distance(wps[i - 1], wps[i]);
+        const segmentStart = wps[targetIndex - 1];
+        const segmentLength = Vec3.distance(segmentStart, wps[targetIndex]);
         completed += Math.min(segmentLength, Vec3.distance(segmentStart, enemy.node.position));
         return completed / total;
     }
@@ -3121,7 +3134,8 @@ export class SceneInitializer extends Component {
 
     /** 敌人"离终点进度"标量：pathIdx 大优先，同段离下个 waypoint 近优先（值越大越靠近终点） */
     private enemyProgress(e: EnemyRuntime): number {
-        const wp = PATH_WAYPOINTS[Math.min(e.pathIdx, PATH_WAYPOINTS.length - 1)];
+        const wps = this.waypointsOf(e);
+        const wp = wps[Math.min(e.pathIdx, wps.length - 1)];
         const d = Vec3.distance(e.node.position, wp);
         return e.pathIdx * 10000 - d;
     }
@@ -4123,9 +4137,7 @@ export class SceneInitializer extends Component {
         node.addComponent(UIOpacity);
 
         const gfx = node.addComponent(Graphics);
-        gfx.fillColor = new Color(60, 60, 70, 255);
-        gfx.rect(-28, -28, 56, 56);
-        gfx.fill();
+        drawTowerBase(gfx, def.color);
         gfx.strokeColor = def.rangeColor;
         gfx.lineWidth = 2;
         gfx.circle(0, 0, def.attack.range);

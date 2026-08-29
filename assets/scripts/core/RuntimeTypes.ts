@@ -111,11 +111,13 @@ export interface EnemyRuntime {
     healCd: number;
     extraTimer: number;
     pathIdx: number;
+    /** 敌人所走的路径分支索引（双路分叉地图用，0=左路 1=右路） */
+    branch: number;
     bossEnraged: boolean;
     buffs: Record<string, EnemyBuffRuntime>;
 }
 
-/** pierce 缝衣针飞行弹体 */
+/** pierce 筷子飞行弹体 */
 export interface PierceShot {
     node: Node;
     fromX: number;
