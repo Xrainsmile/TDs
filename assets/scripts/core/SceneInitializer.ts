@@ -545,7 +545,7 @@ export class SceneInitializer extends Component {
     private gold = 0;
 
     // 友军（基地）：ALLY_MAX_HP_BASE 为初始上限
-    private readonly ALLY_MAX_HP_BASE = 6;
+    private readonly ALLY_MAX_HP_BASE = 7;
     private allyMaxHp = this.ALLY_MAX_HP_BASE;
     private allyHp = 6;
 
@@ -841,7 +841,7 @@ export class SceneInitializer extends Component {
                     const cardPos = card.getPosition();
                     const ct = card.getComponent(UITransform);
                     const halfW = (ct ? ct.width : 160) / 2;
-                    const halfH = (ct ? ct.height : 96) / 2;
+                    const halfH = (ct ? ct.height : 104) / 2;
                     if (Math.abs(buttonLocal.x - cardPos.x) <= halfW && Math.abs(buttonLocal.y - cardPos.y) <= halfH) {
                         this.selectBuff(i);
                         return;
@@ -876,17 +876,30 @@ export class SceneInitializer extends Component {
                     this.finishCardSelection();
                     return;
                 }
-                // 命中手牌 → 开始拖牌
-                const ci = this.findHandCardAt(buttonLocal);
-                if (ci >= 0) {
-                    this.dragCardIndex = ci;
-                    this.isDragging = true;
-                    this.cardGhost!.active = true;
-                    this.cardGhost!.setPosition(buttonLocal);
-                    this.drawCardGhost(this.handCards[ci]);
+            }
+
+            // 命中手牌 → 开始拖牌（选牌阶段外也允许：用满额度后残留的改造卡仍需可用，
+            // 否则卡面可见却拖不动，玩家会误判为「卡坏了」）
+            const ci = this.findHandCardAt(buttonLocal);
+            if (ci >= 0) {
+                const card = this.handCards[ci];
+                // 非选牌阶段仅放行即时改造卡；塔卡/锤子涉及建塔与格子，仍需在选牌阶段使用
+                if (this.cardMode || card.kind === 'modifier' || card.kind === 'tactic') {
+                    if (this.isHandCardUsable(card)) {
+                        this.dragCardIndex = ci;
+                        this.isDragging = true;
+                        this.cardGhost!.active = true;
+                        this.cardGhost!.setPosition(buttonLocal);
+                        this.drawCardGhost(card);
+                        return;
+                    }
+                    if (this.statusLabel) this.statusLabel.string = '该卡当前不可用';
                     return;
                 }
-                // 未命中手牌/按钮 → 继续往下走棋盘塔判定
+                if (!this.cardMode) {
+                    if (this.statusLabel) this.statusLabel.string = '该卡需在抽卡后使用';
+                    return;
+                }
             }
 
             // 1.5 判断是否点中了底部抽卡按钮（用卡阶段已在上面处理为「结束选牌」）
@@ -918,7 +931,8 @@ export class SceneInitializer extends Component {
             if (this.isUserPaused) return;  // 全局暂停时禁止拖动
             if (!this.isDragging) return;
             const local = this.eventToGameLocal(event);
-            if (this.cardMode && this.dragCardIndex >= 0) {
+            // 不再要求 cardMode：用满额度后残留的改造卡/战术卡拖动时 ghost 也需跟随手指
+            if (this.dragCardIndex >= 0) {
                 this.cardGhost!.setPosition(this.eventToCanvasLocal(event));
                 return;
             }
@@ -929,7 +943,9 @@ export class SceneInitializer extends Component {
         canvas.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
             if (this.isUserPaused) return;  // 全局暂停时禁止松手合并/弹信息
             // 卡牌拖动松手：判定落点使用（无效则取消）
-            if (this.cardMode && this.isDragging && this.dragCardIndex >= 0) {
+            // 注意：不再要求 cardMode——用满额度后残留的改造卡/战术卡仍可拖放使用，
+            // 否则卡面可见却拖不动，玩家会误判为「卡坏了」
+            if (this.isDragging && this.dragCardIndex >= 0) {
                 this.handleCardDrop(event);
                 return;
             }
@@ -1063,9 +1079,6 @@ export class SceneInitializer extends Component {
         this.hud.setWave(0, this.WAVES.length);
         this.hud.setLives(this.allyHp, this.allyMaxHp);
         this.hud.setStatus(`点击「${this.currentDrawCost()}金抽卡」，5张牌最多使用2张`);
-
-        // === 终点友军建筑（城堡）===
-        this.drawAlly(this.battleRoot);
 
         // === 关卡开始倒计时 ===
         this.startLevelCountdown();

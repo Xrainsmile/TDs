@@ -17,9 +17,10 @@ export const ENEMY_SPEED = 80;
 export const BULLET_SPEED = 500;
 
 // ===== 金币 =====
-export const INITIAL_GOLD = 30;   // 开局金币
+export const INITIAL_GOLD = 50;   // 开局金币（0.3.2：30→50，缓解前期只能抽1轮导致W1必崩）
 export const KILL_REWARD = 3;     // 每击杀一个敌人奖励
-export const WAVE_BONUSES = [20, 20, 25, 25, 30, 30, 30];
+// 波末奖励（0.3.2：末尾三档 +10，从 [20,20,25,25,30,30,30] 提升，后期有资本补强）
+export const WAVE_BONUSES = [20, 20, 25, 25, 40, 40, 40];
 
 // ===== 倒计时 =====
 // 关卡开头倒计时（秒）：给玩家时间建塔布防
