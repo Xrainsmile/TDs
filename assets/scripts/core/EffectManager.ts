@@ -376,12 +376,12 @@ export class EffectManager extends Component {
         this.shakeGameLayer();
     }
 
-    /** 针线裁剪：整条彩线瞬间闪白断开，每个缝合点出现剪切十字。 */
-    public playStitchCut(points: Vec3[]): void {
+    /** 串线裁剪：整条彩线瞬间闪白断开，每个串联点出现剪切十字。 */
+    public playSkewerCut(points: Vec3[]): void {
         if (points.length === 0) return;
         this.shakeGameLayer();
 
-        const { node, gfx } = this.createGfxNode('StitchCutFlash', Vec3.ZERO, 2000);
+        const { node, gfx } = this.createGfxNode('SkewerCutFlash', Vec3.ZERO, 2000);
         if (points.length >= 2) {
             gfx.strokeColor = new Color(255, 80, 190, 245);
             gfx.lineWidth = 8;
@@ -396,7 +396,7 @@ export class EffectManager extends Component {
         }
 
         for (const point of points) {
-            const cut = this.createGfxNode('StitchCutMark', point, 64);
+            const cut = this.createGfxNode('SkewerCutMark', point, 64);
             cut.gfx.strokeColor = new Color(100, 235, 255, 255);
             cut.gfx.lineWidth = 4;
             cut.gfx.moveTo(-12, -12); cut.gfx.lineTo(12, 12);

@@ -166,7 +166,7 @@ export interface WaveBuffDefinition extends BaseOptionDefinition {
     scope: WaveBuffScope;
     branchGroup?: string;       // contentType='branch' 时确定流派分支（互斥）
     permanent: true;            // 三选一选中后直接加入本局构筑，恒为 true
-    buildId?: string;           // 精确流派标识：milk_tea_power / poison_burst / control_burst / stitch_cut
+    buildId?: string;           // 精确流派标识：milk_tea_power / poison_burst / control_burst / skewer_cut
 }
 
 // ====================================================================
@@ -191,10 +191,10 @@ export interface TowerModifierChanges {
     corePowerSpeedBonus?: number;   // 核心供电：额外攻速加成
     corePowerCritChance?: number;   // 核心供电：暴击率
     corePowerCritMultiplier?: number; // 核心供电：暴击倍率
-    stitchChainTargets?: number;    // 彩色线轴：同一次穿透最多缝合目标数
-    stitchDuration?: number;        // 彩色线轴：缝合持续时间（秒）
-    stitchCutDamageMultiplier?: number; // 彩色线轴：剪断时按缝衣针伤害折算的群伤倍率
-    maxStitchChains?: number;       // 彩色线轴：场上同时存在的缝合链上限
+    skewerChainTargets?: number;    // 彩色线轴：同一次穿透最多串联目标数
+    skewerDuration?: number;        // 彩色线轴：串联持续时间（秒）
+    skewerCutDamageMultiplier?: number; // 彩色线轴：剪断时按筷子伤害折算的群伤倍率
+    maxSkewerChains?: number;       // 彩色线轴：场上同时存在的串联链上限
 }
 
 export interface TowerModifierDefinition {

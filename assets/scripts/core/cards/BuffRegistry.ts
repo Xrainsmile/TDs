@@ -126,39 +126,39 @@ export const WAVE_BUFFS: WaveBuffDefinition[] = [
         ],
     },
     {
-        id: 'extended_thread', name: '加长线轴', description: '彩线额外连接2个敌人，缝合持续时间+1.5秒', icon: 'thr',
+        id: 'extended_thread', name: '加长线轴', description: '彩线额外连接2个敌人，串联持续时间+1.5秒', icon: 'thr',
         systemType: 'waveBuff', contentType: 'fusion', scope: 'towerType', permanent: true,
-        rarity: 'rare', tier: 2, buildPaths: ['firepower'], tags: ['role:build', 'needle', 'scissors', 'stitch', 'thread_spool'],
+        rarity: 'rare', tier: 2, buildPaths: ['firepower'], tags: ['role:build', 'chopsticks', 'scissors', 'skewer', 'thread_spool'],
         unlockConditions: [
-            { type: 'hasTower', towerId: 'needle', count: 1, operator: '>=' },
-            { type: 'hasModifier', towerId: 'needle', modifierId: 'thread_spool', stacks: 1 },
+            { type: 'hasTower', towerId: 'chopsticks', count: 1, operator: '>=' },
+            { type: 'hasModifier', towerId: 'chopsticks', modifierId: 'thread_spool', stacks: 1 },
         ],
         excludeConditions: [], weightRules: [
             { condition: { type: 'hasTower', towerId: 'scissors', count: 1, operator: '>=' }, multiplier: 1.35 },
         ],
         minWave: 2, maxStacks: 1, baseWeight: 88,
-        buildId: 'stitch_cut',
+        buildId: 'skewer_cut',
         effects: [
-            { effectType: 'modifyStat', target: { type: 'towerType', towerId: 'needle' }, value: 2, parameters: { stat: 'stitchChainTargets' } },
-            { effectType: 'modifyStat', target: { type: 'towerType', towerId: 'needle' }, value: 1.5, parameters: { stat: 'stitchDuration' } },
+            { effectType: 'modifyStat', target: { type: 'towerType', towerId: 'chopsticks' }, value: 2, parameters: { stat: 'skewerChainTargets' } },
+            { effectType: 'modifyStat', target: { type: 'towerType', towerId: 'chopsticks' }, value: 1.5, parameters: { stat: 'skewerDuration' } },
         ],
     },
     {
-        id: 'decisive_cut', name: '利落裁口', description: '剪线引爆伤害+50%，让剪刀成为缝合链的爆点', icon: 'cut',
+        id: 'decisive_cut', name: '利落裁口', description: '剪串引爆伤害+50%，让剪刀成为串联链的爆点', icon: 'cut',
         systemType: 'waveBuff', contentType: 'capstone', scope: 'towerType', permanent: true,
-        rarity: 'epic', tier: 3, buildPaths: ['firepower'], tags: ['role:build', 'needle', 'scissors', 'stitch', 'burst'],
+        rarity: 'epic', tier: 3, buildPaths: ['firepower'], tags: ['role:build', 'chopsticks', 'scissors', 'skewer', 'burst'],
         unlockConditions: [
-            { type: 'hasTower', towerId: 'needle', count: 1, operator: '>=' },
+            { type: 'hasTower', towerId: 'chopsticks', count: 1, operator: '>=' },
             { type: 'hasTower', towerId: 'scissors', count: 1, operator: '>=' },
-            { type: 'hasModifier', towerId: 'needle', modifierId: 'thread_spool', stacks: 1 },
+            { type: 'hasModifier', towerId: 'chopsticks', modifierId: 'thread_spool', stacks: 1 },
         ],
         excludeConditions: [], weightRules: [
             { condition: { type: 'hasBuff', buffId: 'extended_thread', stacks: 1 }, multiplier: 1.35 },
         ],
         minWave: 3, maxStacks: 2, baseWeight: 94,
-        buildId: 'stitch_cut',
+        buildId: 'skewer_cut',
         effects: [
-            { effectType: 'modifyStat', target: { type: 'towerType', towerId: 'needle' }, value: 0.5, valueType: 'percent', parameters: { stat: 'stitchCutDamage' } },
+            { effectType: 'modifyStat', target: { type: 'towerType', towerId: 'chopsticks' }, value: 0.5, valueType: 'percent', parameters: { stat: 'skewerCutDamage' } },
         ],
     },
     {

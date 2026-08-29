@@ -344,22 +344,38 @@ export function createSpinRing(def: TowerDef, parent: Node): Node {
     return ring;
 }
 
-/** 缝衣针弹体（pierce）：细长针体 + 针尖；位移由 executor 驱动 */
+/** 筷子弹体（pierce）：细长签体 + 签尖；位移由 executor 驱动 */
 export function createPierceShot(def: TowerDef): Node {
     const skin = getVisualSkin(def.attack.visualEffectId);
-    const node = new Node('NeedleShot');
+    const node = new Node('ChopstickShot');
     node.layer = Layers.Enum.UI_2D;
-    // sprite 分支：贴图"水平朝右、针尖在右缘"，锚点 (1, 0.5) 使针尖对齐节点原点（命中点），针体长 48
+    // sprite 分支：贴图"水平朝右、签尖在右缘"，锚点 (1, 0.5) 使签尖对齐节点原点（命中点），签体长 48
     if (skin.kind === 'sprite' && attachSprite(node, skin, 48, 1, 0.5)) {
         return node;
     }
     const g = node.addComponent(Graphics);
-    // 针尖位于节点原点（命中判定以原点为针尖，伤害在针尖触敌瞬间结算），针体向后延伸；长度 24→48 加倍
-    g.fillColor = skinCol(skin.body, new Color(235, 235, 245, 255));
-    g.rect(-48, -2, 48, 4);        // 针体
+    // 签尖位于节点原点（命中判定以原点为签尖，伤害在签尖触敌瞬间结算），签体向后延伸；长度 24→48 加倍。
+    // 改为"一双筷子"：上下两根并行，视觉比单根签更厚实，也贴合筷子成双的形态。
+    // 判定几何（原点=签尖、长度 48）保持不变，纯外观替换，不影响穿透结算。
+    const body = skinCol(skin.body, new Color(222, 184, 122, 255));
+    const tip = skinCol(skin.accent, new Color(150, 105, 58, 255));
+    const gap = 3.5;              // 两筷中心间距的一半
+    const half = 2.2;             // 单根筷子半宽
+
+    // 上筷：签体 + 深色签尖
+    g.fillColor = body;
+    g.rect(-48, gap - half, 48, half * 2);
     g.fill();
-    g.fillColor = skinCol(skin.accent, new Color(150, 150, 165, 255));
-    g.rect(-12, -2, 12, 4);        // 针尖（最前 12px，对齐命中点）
+    g.fillColor = tip;
+    g.rect(-12, gap - half, 12, half * 2);
+    g.fill();
+
+    // 下筷：签体 + 深色签尖
+    g.fillColor = body;
+    g.rect(-48, -gap - half, 48, half * 2);
+    g.fill();
+    g.fillColor = tip;
+    g.rect(-12, -gap - half, 12, half * 2);
     g.fill();
     return node;
 }
@@ -443,9 +459,9 @@ export function updateCorePowerLinkSprites(node: Node, from: Vec3Like, targets: 
 
 interface Vec3Like { x: number; y: number; }
 
-/** 彩色线轴：同一条缝合链的连线节点。具体折线由运行逻辑每帧重绘。 */
-export function createStitchChainLine(parent: Node): { node: Node; gfx: Graphics } {
-    const node = new Node('StitchChainLine');
+/** 彩色线轴：同一条串联链的连线节点。具体折线由运行逻辑每帧重绘。 */
+export function createSkewerChainLine(parent: Node): { node: Node; gfx: Graphics } {
+    const node = new Node('SkewerChainLine');
     node.layer = Layers.Enum.UI_2D;
     node.setParent(parent);
     node.setPosition(0, 0, 0);

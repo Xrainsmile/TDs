@@ -69,17 +69,18 @@ export const TOWER_MODIFIERS: TowerModifierDefinition[] = [
     {
         id: 'thread_spool',
         name: '彩色线轴',
-        description: '缝衣针同一次穿透命中的敌人会被彩线缝合，剪刀命中其中一个时剪断整条线',
-        towerId: 'needle',
+        description: '筷子同一次穿透命中的敌人会被彩线串联，剪刀命中其中一个时剪断整条线',
+        towerId: 'chopsticks',
         compatibleAttackTypes: ['pierce'],
         maxStacks: 1,
         changes: {
-            stitchChainTargets: 4,
-            stitchDuration: 4,
-            stitchCutDamageMultiplier: 0.8,
-            maxStitchChains: 3,
+            skewerChainTargets: 4,
+            skewerDuration: 4,
+            skewerCutDamageMultiplier: 0.8,
+            maxSkewerChains: 3,
         },
     },
+
 ];
 
 export function getTowerModifier(id: string): TowerModifierDefinition | undefined {

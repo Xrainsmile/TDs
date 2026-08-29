@@ -43,7 +43,7 @@ interface CardDef {
     color: Color;
 }
 
-interface StitchChainRuntime {
+interface SkewerChainRuntime {
     id: number;
     enemies: EnemyRuntime[];
     timer: number;
@@ -304,11 +304,11 @@ export class SceneInitializer extends Component {
             },
         },
         {
-            id: 'needle',
-            name: '缝衣针',
+            id: 'chopsticks',
+            name: '筷子',
             cost: 130,
-            color: new Color(230, 230, 240, 255),
-            rangeColor: new Color(230, 230, 240, 60),
+            color: new Color(216, 176, 116, 255),
+            rangeColor: new Color(206, 168, 110, 60),
             buttonPos: ATTACK_BUTTON_POS,
             attack: {
                 attackType: 'pierce',
@@ -321,7 +321,7 @@ export class SceneInitializer extends Component {
                 canPierce: true,
                 maxHitsPerTarget: 1,
                 aimMode: 'first',
-                visualEffectId: 'needle_pierce',
+                visualEffectId: 'chopsticks_pierce',
             },
         },
         {
@@ -514,8 +514,8 @@ export class SceneInitializer extends Component {
     private towers: TowerRuntime[] = [];
     private towerTimers: number[] = [];
     private bullets: { node: Node; vx: number; vy: number; target: Node; def: TowerDef; tower: TowerRuntime; bounce: number; dmgMul?: number; noSplit?: boolean; hasBounced?: boolean; bounceStep?: number }[] = [];
-    private stitchChains: StitchChainRuntime[] = [];
-    private nextStitchChainId = 1;
+    private skewerChains: SkewerChainRuntime[] = [];
+    private nextSkewerChainId = 1;
 
     // 地面减速区（胶带战术卡）：独立节点 + 计时器，到期自动清理
     private groundZones: { node: Node; timer: number; radius: number; slowMultiplier: number }[] = [];
@@ -1283,12 +1283,12 @@ export class SceneInitializer extends Component {
             mark('poison_burst', '弹射毒爆流', 'transform');
         }
 
-        const hasNeedle = count('needle') > 0;
+        const hasChopsticks = count('chopsticks') > 0;
         const hasScissors = count('scissors') > 0;
-        const hasThread = this.runBuild.hasTowerModifier('needle', 'thread_spool');
-        if (Number(hasNeedle) + Number(hasScissors) + Number(hasThread) >= 2) mark('stitch_cut', '针线裁剪流', 'direction');
-        if (hasNeedle && hasScissors && hasThread) mark('stitch_cut', '针线裁剪流', 'basic');
-        if (hasNeedle && hasScissors && hasThread && hasBuff('decisive_cut')) mark('stitch_cut', '针线裁剪流', 'transform');
+        const hasThread = this.runBuild.hasTowerModifier('chopsticks', 'thread_spool');
+        if (Number(hasChopsticks) + Number(hasScissors) + Number(hasThread) >= 2) mark('skewer_cut', '串线剪断流', 'direction');
+        if (hasChopsticks && hasScissors && hasThread) mark('skewer_cut', '串线剪断流', 'basic');
+        if (hasChopsticks && hasScissors && hasThread && hasBuff('decisive_cut')) mark('skewer_cut', '串线剪断流', 'transform');
     }
 
     /**
@@ -1886,8 +1886,8 @@ export class SceneInitializer extends Component {
         // 仅当最前方仍 fresh 时，才用 fresh 池优先向后排未受影响者扩散。
         let pool = inRange;
         if (def.id === 'scissors') {
-            const stitched = inRange.filter(c => !!c.enemy.buffs['stitch']);
-            if (stitched.length > 0) pool = stitched;
+            const skewered = inRange.filter(c => !!c.enemy.buffs['skewer']);
+            if (skewered.length > 0) pool = skewered;
         }
         if (aimMode === 'unaffected') {
             const fresh = inRange.filter(c => !this.isAffectedByTower(def, c.enemy));
@@ -2468,7 +2468,7 @@ export class SceneInitializer extends Component {
                     // 砸击（锅铲）：敌群最密点范围爆发
                     this.smashAttack(tower);
                 } else if (def.attack.attackType === 'pierce') {
-                    // 贯穿（缝衣针）：直线穿透多目标
+                    // 贯穿（筷子）：直线穿透多目标
                     this.pierceAttack(tower);
                 } else if (def.attack.attackType === 'spray') {
                     // 减速塔：按 attack.statusEffects 施减速/易伤（基础值来自 statusEffects）
@@ -2498,7 +2498,7 @@ export class SceneInitializer extends Component {
         // === spin 旋斩通道推进 ===
         this.updateSpins(dt);
 
-        // === 缝衣针弹体飞行与穿透命中 ===
+        // === 筷子弹体飞行与穿透命中 ===
         this.updatePierceShots(dt);
 
         // === 敌人减速 / 易伤计时 ===
@@ -2521,7 +2521,7 @@ export class SceneInitializer extends Component {
         for (let i = this.enemies.length - 1; i >= 0; i--) {
             const e = this.enemies[i];
             for (const key in e.buffs) {
-                if (key === 'stitch') continue;
+                if (key === 'skewer') continue;
                 const buff = e.buffs[key];
                 buff.timer -= dt;
                 if (buff.dps > 0) {
@@ -2537,8 +2537,8 @@ export class SceneInitializer extends Component {
             // buff 掉血致死：仅减血，死亡移除统一在 cleanupDeadEnemies() 处理
         }
 
-        // === 缝合链计时与彩线表现（自然消失不造成伤害）===
-        this.updateStitchChains(dt);
+        // === 串联链计时与彩线表现（自然消失不造成伤害）===
+        this.updateSkewerChains(dt);
 
         // === 敌人特殊行为（治疗者光环等）——遍历注册表的 onUpdate ===
         for (const e of this.enemies) {
@@ -3042,7 +3042,7 @@ export class SceneInitializer extends Component {
 
     /** 牙刷横扫：对范围内所有敌人造成伤害 */
     private sweepAttack(tower: TowerRuntime, p: TowerParams): void {
-        let stitchCutTarget: EnemyRuntime | null = null;
+        let skewerCutTarget: EnemyRuntime | null = null;
         for (const e of this.enemies) {
             if (!e.node.isValid) continue;
             if (Vec3.distance(tower.node.position, e.node.position) <= p.range) {
@@ -3052,14 +3052,14 @@ export class SceneInitializer extends Component {
                 this.damageEnemy(e, p.damage, this.towerDamageSource(tower, 'sweep', '范围横扫'));
                 EffectManager.instance?.playHit(e.node);
                 EffectManager.instance?.playDamageNumber(e.node.position, p.damage, false);
-                if (tower.def.id === 'scissors' && e.buffs['stitch']
-                    && (!stitchCutTarget || this.compareFirst(e, stitchCutTarget, tower.node.position) < 0)) {
-                    stitchCutTarget = e;
+                if (tower.def.id === 'scissors' && e.buffs['skewer']
+                    && (!skewerCutTarget || this.compareFirst(e, skewerCutTarget, tower.node.position) < 0)) {
+                    skewerCutTarget = e;
                 }
             }
         }
-        if (tower.def.id === 'scissors' && stitchCutTarget) {
-            this.cutStitchChain(stitchCutTarget);
+        if (tower.def.id === 'scissors' && skewerCutTarget) {
+            this.cutSkewerChain(skewerCutTarget);
         }
     }
 
@@ -3177,7 +3177,7 @@ export class SceneInitializer extends Component {
     }
 
     // ===== spin / smash / pierce 攻击（数值统一读 def.attack）=====
-    private pierceShots: PierceShot[] = [];   // 缝衣针飞行弹体（区别于戳击的即时直线）
+    private pierceShots: PierceShot[] = [];   // 筷子飞行弹体（区别于戳击的即时直线）
 
     /** spin 旋斩（打蛋器）：开启持续伤害通道，attackDuration 内每 damageTick 对半径内敌人结算 */
     private spinAttack(tower: TowerRuntime): void {
@@ -3293,7 +3293,7 @@ export class SceneInitializer extends Component {
         EffectManager.instance?.playExplosion(pos.clone(), radius);
     }
 
-    /** pierce 贯穿（缝衣针）：投掷一枚缝衣针弹体，沿直线飞行并穿透多个目标（区别于戳击的即时直线） */
+    /** pierce 贯穿（筷子）：投掷一枚筷子弹体，沿直线飞行并穿透多个目标（区别于戳击的即时直线） */
     private pierceAttack(tower: TowerRuntime): void {
         if (!this.battleRoot) return;
         const p = this.getTowerParams(tower);
@@ -3310,7 +3310,7 @@ export class SceneInitializer extends Component {
         const halfW = (a.width ?? 10) / 2;
         const maxTargets = a.maxTargets ?? 99;
 
-        // 预选中：针道内按"最靠近终点"优先，取前 maxTargets 个作为本针要结算的目标
+        // 预选中：弹道内按"最靠近终点"优先，取前 maxTargets 个作为本次要结算的目标
         const corridor: { e: EnemyRuntime; prog: number }[] = [];
         for (const e of this.enemies) {
             if (!e.node.isValid) continue;
@@ -3327,7 +3327,7 @@ export class SceneInitializer extends Component {
         const targetSet = new Set<EnemyRuntime>();
         for (let i = 0; i < Math.min(maxTargets, corridor.length); i++) targetSet.add(corridor[i].e);
 
-        const node = VisualFactory.createPierceShot(tower.def);   // 表现层构建针体外观
+        const node = VisualFactory.createPierceShot(tower.def);   // 表现层构建签体外观
         node.setParent(this.battleRoot);
         node.setPosition(tp);
         node.angle = Math.atan2(dirY, dirX) * 180 / Math.PI;
@@ -3342,7 +3342,7 @@ export class SceneInitializer extends Component {
         });
     }
 
-    /** 缝衣针弹体飞行与穿透命中：针尖到达敌人近缘即结算一次，最多 maxTargets 个 */
+    /** 筷子弹体飞行与穿透命中：签尖到达敌人近缘即结算一次，最多 maxTargets 个 */
     private updatePierceShots(dt: number): void {
         for (let i = this.pierceShots.length - 1; i >= 0; i--) {
             const s = this.pierceShots[i];
@@ -3354,19 +3354,19 @@ export class SceneInitializer extends Component {
                 if (!s.targetSet.has(e)) continue;               // 只结算预选中"最靠近终点"的目标
                 const fx = e.node.position.x - s.fromX;
                 const fy = e.node.position.y - s.fromY;
-                const f = fx * s.dirX + fy * s.dirY;        // 敌人沿针方向的前向距离
+                const f = fx * s.dirX + fy * s.dirY;        // 敌人沿弹道方向的前向距离
                 if (f < 0 || f > s.range) continue;
                 const sx = fx - f * s.dirX, sy = fy - f * s.dirY;
                 const rE = this.getEnemyDef(e.type)?.radius ?? 14;
-                if (Math.hypot(sx, sy) > s.halfW + rE) continue; // 针道外的敌人
-                if (s.traveled < f - rE) continue;               // 针尖尚未到达该敌人近缘
+                if (Math.hypot(sx, sy) > s.halfW + rE) continue; // 弹道外的敌人
+                if (s.traveled < f - rE) continue;               // 签尖尚未到达该敌人近缘
                 this.damageEnemy(e, s.damage, this.buildDamageSource(
                     s.sourceTowerId,
                     s.sourceTowerName,
                     s.sourceTowerId,
                     s.sourceTowerName,
                     'pierce',
-                    '穿透针击',
+                    '穿透射击',
                 ));
                 EffectManager.instance?.playHit(e.node);
                 EffectManager.instance?.playDamageNumber(e.node.position, s.damage, false);
@@ -3374,7 +3374,7 @@ export class SceneInitializer extends Component {
                 s.hitCount++;
             }
             if (s.traveled >= s.range || s.hitSet.size >= s.targetSet.size) {
-                this.tryCreateStitchChainFromPierceShot(s);
+                this.tryCreateSkewerChainFromPierceShot(s);
                 s.node.destroy();
                 this.pierceShots.splice(i, 1);
             }
@@ -3382,34 +3382,34 @@ export class SceneInitializer extends Component {
     }
 
     private threadSpoolModifier() {
-        return this.runBuild.towerModifiersOf('needle').find(m => m.id === 'thread_spool') ?? null;
+        return this.runBuild.towerModifiersOf('chopsticks').find(m => m.id === 'thread_spool') ?? null;
     }
 
-    private tryCreateStitchChainFromPierceShot(shot: PierceShot): void {
+    private tryCreateSkewerChainFromPierceShot(shot: PierceShot): void {
         const mod = this.threadSpoolModifier();
         if (!this.battleRoot) return;
 
-        // 0.3.1：无 thread_spool 改造卡时也创建基础缝合链（2目标、3秒、0.5倍伤害），
-        //       让剪刀+缝衣针联动不锁死在稀有卡牌后面；有改造卡时使用增强数值。
+        // 0.3.1：无 thread_spool 改造卡时也创建基础串联链（2目标、3秒、0.5倍伤害），
+        //       让剪刀+筷子联动不锁死在稀有卡牌后面；有改造卡时使用增强数值。
         const ch = mod?.changes;
-        const maxTargets = (ch?.stitchChainTargets ?? 2) + this.towerStats.stitchChainTargetBonus;
+        const maxTargets = (ch?.skewerChainTargets ?? 2) + this.towerStats.skewerChainTargetBonus;
         const candidates = Array.from(shot.hitSet)
-            .filter(e => e.node.isValid && e.hp > 0 && !e.buffs['stitch'])
+            .filter(e => e.node.isValid && e.hp > 0 && !e.buffs['skewer'])
             .slice(0, maxTargets);
         if (candidates.length < 2) return;
 
-        const maxChains = ch?.maxStitchChains ?? 1;
-        while (this.stitchChains.length >= maxChains) {
-            this.removeStitchChain(this.stitchChains[0]);
+        const maxChains = ch?.maxSkewerChains ?? 1;
+        while (this.skewerChains.length >= maxChains) {
+            this.removeSkewerChain(this.skewerChains[0]);
         }
 
-        const line = VisualFactory.createStitchChainLine(this.battleRoot);
-        const id = this.nextStitchChainId++;
-        const duration = (ch?.stitchDuration ?? 3) + this.towerStats.stitchDurationBonus;
+        const line = VisualFactory.createSkewerChainLine(this.battleRoot);
+        const id = this.nextSkewerChainId++;
+        const duration = (ch?.skewerDuration ?? 3) + this.towerStats.skewerDurationBonus;
         const damage = shot.damage
-            * (ch?.stitchCutDamageMultiplier ?? 0.5)
-            * (1 + this.towerStats.stitchCutDamageBonus);
-        const chain: StitchChainRuntime = {
+            * (ch?.skewerCutDamageMultiplier ?? 0.5)
+            * (1 + this.towerStats.skewerCutDamageBonus);
+        const chain: SkewerChainRuntime = {
             id,
             enemies: candidates,
             timer: duration,
@@ -3421,31 +3421,31 @@ export class SceneInitializer extends Component {
             lineGfx: line.gfx,
         };
         for (const e of candidates) {
-            e.buffs['stitch'] = { timer: duration, dps: 0, chainId: id };
+            e.buffs['skewer'] = { timer: duration, dps: 0, chainId: id };
         }
-        this.stitchChains.push(chain);
-        this.playtest.recordMechanismTrigger('stitch_chain', '彩线缝合', candidates.length);
-        this.drawStitchChain(chain);
+        this.skewerChains.push(chain);
+        this.playtest.recordMechanismTrigger('skewer_chain', '彩线串联', candidates.length);
+        this.drawSkewerChain(chain);
     }
 
-    private updateStitchChains(dt: number): void {
-        for (let i = this.stitchChains.length - 1; i >= 0; i--) {
-            const chain = this.stitchChains[i];
+    private updateSkewerChains(dt: number): void {
+        for (let i = this.skewerChains.length - 1; i >= 0; i--) {
+            const chain = this.skewerChains[i];
             chain.timer -= dt;
-            chain.enemies = chain.enemies.filter(e => e.node.isValid && e.hp > 0 && e.buffs['stitch']?.chainId === chain.id);
+            chain.enemies = chain.enemies.filter(e => e.node.isValid && e.hp > 0 && e.buffs['skewer']?.chainId === chain.id);
             if (chain.timer <= 0 || chain.enemies.length < 2) {
-                this.removeStitchChain(chain);
+                this.removeSkewerChain(chain);
                 continue;
             }
             for (const e of chain.enemies) {
-                const buff = e.buffs['stitch'];
+                const buff = e.buffs['skewer'];
                 if (buff) buff.timer = chain.timer;
             }
-            this.drawStitchChain(chain);
+            this.drawSkewerChain(chain);
         }
     }
 
-    private drawStitchChain(chain: StitchChainRuntime): void {
+    private drawSkewerChain(chain: SkewerChainRuntime): void {
         const g = chain.lineGfx;
         if (!g || !chain.lineNode.isValid) return;
         g.clear();
@@ -3477,10 +3477,10 @@ export class SceneInitializer extends Component {
         }
     }
 
-    private cutStitchChain(target: EnemyRuntime): void {
-        const chainId = target.buffs['stitch']?.chainId;
+    private cutSkewerChain(target: EnemyRuntime): void {
+        const chainId = target.buffs['skewer']?.chainId;
         if (chainId === undefined) return;
-        const chain = this.stitchChains.find(c => c.id === chainId);
+        const chain = this.skewerChains.find(c => c.id === chainId);
         if (!chain) return;
 
         const hitPos = target.node.position.clone();
@@ -3496,35 +3496,35 @@ export class SceneInitializer extends Component {
                 chain.sourceTowerName,
                 chain.sourceTowerId,
                 chain.sourceTowerName,
-                'stitch_cut',
-                '剪线引爆',
+                'skewer_cut',
+                '剪串引爆',
             ));
             EffectManager.instance?.playHit(e.node);
             EffectManager.instance?.playDamageNumber(e.node.position, chain.damage, true);
         }
-        this.playtest.recordMechanismTrigger('stitch_cut', '剪线引爆', hitCount);
-        EffectManager.instance?.playStitchCut(cutPoints.length > 0 ? cutPoints : [hitPos]);
-        this.removeStitchChain(chain);
+        this.playtest.recordMechanismTrigger('skewer_cut', '剪串引爆', hitCount);
+        EffectManager.instance?.playSkewerCut(cutPoints.length > 0 ? cutPoints : [hitPos]);
+        this.removeSkewerChain(chain);
     }
 
-    private removeStitchChain(chain: StitchChainRuntime): void {
-        const idx = this.stitchChains.indexOf(chain);
-        if (idx >= 0) this.stitchChains.splice(idx, 1);
+    private removeSkewerChain(chain: SkewerChainRuntime): void {
+        const idx = this.skewerChains.indexOf(chain);
+        if (idx >= 0) this.skewerChains.splice(idx, 1);
         for (const e of chain.enemies) {
-            if (e.buffs['stitch']?.chainId === chain.id) delete e.buffs['stitch'];
+            if (e.buffs['skewer']?.chainId === chain.id) delete e.buffs['skewer'];
         }
         if (chain.lineNode.isValid) chain.lineNode.destroy();
     }
 
-    private clearStitchChains(): void {
-        for (const chain of this.stitchChains) {
+    private clearSkewerChains(): void {
+        for (const chain of this.skewerChains) {
             for (const e of chain.enemies) {
-                if (e.buffs['stitch']?.chainId === chain.id) delete e.buffs['stitch'];
+                if (e.buffs['skewer']?.chainId === chain.id) delete e.buffs['skewer'];
             }
             if (chain.lineNode.isValid) chain.lineNode.destroy();
         }
-        this.stitchChains.length = 0;
-        this.nextStitchChainId = 1;
+        this.skewerChains.length = 0;
+        this.nextSkewerChainId = 1;
     }
 
     /** 敌群最密目标：在 range 内统计每个敌人 radius 邻域敌人数，取最大（aimMode 'mostEnemies'） */
@@ -3978,7 +3978,7 @@ export class SceneInitializer extends Component {
             if (s.node.isValid) s.node.destroy();
         }
         this.pierceShots.length = 0;
-        this.clearStitchChains();
+        this.clearSkewerChains();
 
         // 取消任何进行中的长按拖拽调度
         this.unschedule(this.onLongPressMove);

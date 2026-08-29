@@ -54,24 +54,24 @@ export const DRAW_CARDS: DrawCardDefinition[] = [
         effects: [{ effectType: 'spawnTower', target: { type: 'tile', tileType: 'empty' }, parameters: { towerId: 'spatula' } }],
     },
     {
-        id: 'card_tower_needle', name: '缝衣针', description: '贯穿：直线穿透多目标', icon: 't_needle',
+        id: 'card_tower_chopsticks', name: '筷子', description: '贯穿：直线穿透多目标', icon: 't_chopsticks',
         systemType: 'drawCard', contentType: 'tower',
-        rarity: 'common', tier: 1, buildPaths: ['firepower'], tags: ['tower', 'pierce', 'needle', 'stitch'],
+        rarity: 'common', tier: 1, buildPaths: ['firepower'], tags: ['tower', 'pierce', 'chopsticks', 'skewer'],
         unlockConditions: [], excludeConditions: [], weightRules: [
             { condition: { type: 'hasTower', towerId: 'scissors', count: 1, operator: '>=' }, multiplier: 1.25 },
         ],
         minWave: 1, maxStacks: 99, baseWeight: 70,
         targetType: 'emptyTile', playTiming: 'anytime', consumeOnUse: true, targetConditions: [],
-        towerId: 'needle',
-        effects: [{ effectType: 'spawnTower', target: { type: 'tile', tileType: 'empty' }, parameters: { towerId: 'needle' } }],
+        towerId: 'chopsticks',
+        effects: [{ effectType: 'spawnTower', target: { type: 'tile', tileType: 'empty' }, parameters: { towerId: 'chopsticks' } }],
     },
     {
-        id: 'card_tower_scissors', name: '剪刀', description: '近距离剪击；优先剪断缝合目标', icon: 't_scissors',
+        id: 'card_tower_scissors', name: '剪刀', description: '近距离剪击；优先剪断串联目标', icon: 't_scissors',
         systemType: 'drawCard', contentType: 'tower',
-        rarity: 'common', tier: 1, buildPaths: ['firepower'], tags: ['tower', 'sweep', 'scissors', 'stitch'],
+        rarity: 'common', tier: 1, buildPaths: ['firepower'], tags: ['tower', 'sweep', 'scissors', 'skewer'],
         unlockConditions: [], excludeConditions: [], weightRules: [
-            { condition: { type: 'hasTower', towerId: 'needle', count: 1, operator: '>=' }, multiplier: 1.35 },
-            { condition: { type: 'hasModifier', towerId: 'needle', modifierId: 'thread_spool', stacks: 1 }, multiplier: 1.5 },
+            { condition: { type: 'hasTower', towerId: 'chopsticks', count: 1, operator: '>=' }, multiplier: 1.35 },
+            { condition: { type: 'hasModifier', towerId: 'chopsticks', modifierId: 'thread_spool', stacks: 1 }, multiplier: 1.5 },
         ],
         minWave: 1, maxStacks: 99, baseWeight: 68,
         targetType: 'emptyTile', playTiming: 'anytime', consumeOnUse: true, targetConditions: [],
@@ -200,11 +200,11 @@ export const DRAW_CARDS: DrawCardDefinition[] = [
         effects: [{ effectType: 'addModifier', target: { type: 'towerType', towerId: 'powerbank' }, parameters: { modifierId: 'core_power' } }],
     },
     {
-        id: 'card_mod_thread_spool', name: '彩色线轴', description: '拖到缝衣针上：同一次穿透命中的敌人会形成缝合链', icon: 'mod_thread',
+        id: 'card_mod_thread_spool', name: '彩色线轴', description: '拖到筷子上：同一次穿透命中的敌人会形成串联链', icon: 'mod_thread',
         systemType: 'drawCard', contentType: 'modifier',
-        rarity: 'rare', tier: 2, buildPaths: ['firepower'], tags: ['modifier', 'needle', 'stitch', 'thread_spool'],
+        rarity: 'rare', tier: 2, buildPaths: ['firepower'], tags: ['modifier', 'chopsticks', 'skewer', 'thread_spool'],
         unlockConditions: [
-            { type: 'hasTower', towerId: 'needle', count: 1, operator: '>=' },
+            { type: 'hasTower', towerId: 'chopsticks', count: 1, operator: '>=' },
             { type: 'wave', value: 2, operator: '>=' },
         ],
         excludeConditions: [], weightRules: [
@@ -212,8 +212,8 @@ export const DRAW_CARDS: DrawCardDefinition[] = [
         ],
         minWave: 2, maxStacks: 1, baseWeight: 66,
         targetType: 'tower', playTiming: 'anytime', consumeOnUse: true, modifierSlotCost: 1,
-        targetConditions: [{ type: 'hasTower', towerId: 'needle', count: 1, operator: '>=' }],
-        effects: [{ effectType: 'addModifier', target: { type: 'towerType', towerId: 'needle' }, parameters: { modifierId: 'thread_spool' } }],
+        targetConditions: [{ type: 'hasTower', towerId: 'chopsticks', count: 1, operator: '>=' }],
+        effects: [{ effectType: 'addModifier', target: { type: 'towerType', towerId: 'chopsticks' }, parameters: { modifierId: 'thread_spool' } }],
     },
 
     // —— tactic：即时战场效果 ——
