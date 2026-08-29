@@ -1529,6 +1529,63 @@ export class SceneInitializer extends Component {
                     // 双倍或全无：绑定下一波（选卡发生在波间，currentWave 为刚结束波，下一波为 +1）
                     this.gambleWaveIndex = this.currentWave + 1;
                     this.gambleWaveLeaks = 0;
+                } else if (effectId === 'gamblerDice') {
+                    // 赌徒骰子：随机一座塔 +1 星，另一座塔 -1 星（降至 1 星则销毁，腾出格子）
+                    const p = effect.parameters ?? {};
+                    const upCount = Math.max(1, Math.round(Number(p.upgradeCount ?? 1)));
+                    const downCount = Math.max(1, Math.round(Number(p.downgradeCount ?? 1)));
+                    if (this.towers.length === 0) {
+                        console.warn('[gamblerDice] 场上无塔，效果空转');
+                    } else {
+                        const pool = this.towers.filter(t => t.node.isValid);
+                        // 升星：随机座，并记录已升星的塔，避免降星命中同一座导致效果空转
+                        const upgraded: typeof pool = [];
+                        for (let i = 0; i < upCount && pool.length > 0; i++) {
+                            const at = Math.floor(Math.random() * pool.length);
+                            const t = pool[at];
+                            pool.splice(at, 1);
+                            t.star = (t.star ?? 1) + 1;
+                            upgraded.push(t);
+                            this.refreshTowerBadges(t.def.id);
+                            console.log(`[gamblerDice] ${t.def.name} 升到 ${t.star} 星`);
+                        }
+                        // 降星：只从「未被升星的塔」中随机，保证收益与代价落在不同塔上
+                        const downPool = this.towers.filter(t => t.node.isValid && upgraded.indexOf(t) < 0);
+                        for (let i = 0; i < downCount && downPool.length > 0; i++) {
+                            const at = Math.floor(Math.random() * downPool.length);
+                            const t = downPool[at];
+                            downPool.splice(at, 1);
+                            const nextStar = (t.star ?? 1) - 1;
+                            if (nextStar <= 0) {
+                                console.log(`[gamblerDice] ${t.def.name} 降星至 0，已拆除`);
+                                const idx = this.towers.indexOf(t);
+                                if (idx >= 0) this.removeTowerNode(idx);
+                            } else {
+                                t.star = nextStar;
+                                this.refreshTowerBadges(t.def.id);
+                                console.log(`[gamblerDice] ${t.def.name} 降到 ${t.star} 星`);
+                            }
+                        }
+                        if (downPool.length === 0) {
+                            console.log('[gamblerDice] 无「未升星」的塔可降，降星部分空转');
+                        }
+                    }
+                } else if (effectId === 'overdraftPower') {
+                    // 透支供电：本波全体塔 +X% 伤害，波结束后所有塔 -1 星
+                    const p = effect.parameters ?? {};
+                    const bonus = Number(p.damageBonus ?? 0.8);
+                    this.overdraftDamageBonus = bonus;
+                    this.overdraftPending = true;
+                    console.log(`[overdraftPower] 本波塔伤害 +${Math.round(bonus * 100)}%，波末全场 -1 星`);
+                } else if (effectId === 'timeLoan') {
+                    // 时间借贷：立即给金币，后续 N 波收益归零
+                    const p = effect.parameters ?? {};
+                    const gold = Math.max(0, Math.round(Number(p.gold ?? 150)));
+                    const waves = Math.max(1, Math.round(Number(p.skipWaves ?? 2)));
+                    this.gold += gold;
+                    this.updateGoldLabel();
+                    this.incomeFreezeWaves = waves;
+                    console.log(`[timeLoan] 立即 +${gold} 金币，随后 ${waves} 波收益归零`);
                 } else {
                     console.warn(`[effectContext] 未注册的 custom 效果: ${effectId}`);
                 }
@@ -2282,6 +2339,12 @@ export class SceneInitializer extends Component {
             e.node.destroy();
             this.enemies.splice(i, 1);
             this.gold += this.KILL_REWARD;
+            // 回收齿轮（通用改造）：每座装了该改造的塔额外返还 2 金，收益随铺开的塔数增长
+            const salvage = this.countModifierStacksAcrossTowers('salvage_gear');
+            if (salvage > 0) {
+                this.gold += 2 * salvage;
+                console.log(`[salvage_gear] ${salvage} 层回收，返还 ${2 * salvage} 金币`);
+            }
             this.updateGoldLabel();
             console.log(`击杀！+${this.KILL_REWARD} 金币，当前 ${this.gold}`);
         }
@@ -2724,19 +2787,27 @@ export class SceneInitializer extends Component {
             // 波次进行到一半（已生成过半）时一次性发放 5 金币
             if (!this.midWaveRewardGiven && this.waveTotalCount > 0 &&
                 this.spawnedInWave >= Math.ceil(this.waveTotalCount / 2)) {
-                this.gold += 5;
                 this.midWaveRewardGiven = true;
-                this.updateGoldLabel();
-                console.log(`波次中间奖励 +5 金币，当前 ${this.gold}`);
+                if (this.incomeFreezeWaves > 0) {
+                    console.log('[timeLoan] 波中收益被冻结');
+                } else {
+                    this.gold += 5;
+                    this.updateGoldLabel();
+                    console.log(`波次中间奖励 +5 金币，当前 ${this.gold}`);
+                }
             }
             // 全部生成且全部死亡 → 自动暂停，等用户选 buff + 点"开始下一波"
             if (this.spawnedInWave >= this.waveTotalCount && this.enemies.length === 0) {
                 this.waveActive = false;
                 const waveBonus = this.WAVE_BONUSES[this.currentWave - 1] || 0;
                 if (waveBonus > 0) {
-                    this.gold += waveBonus;
-                    this.updateGoldLabel();
-                    console.log(`波次奖励 +${waveBonus} 金币，当前 ${this.gold}`);
+                    if (this.incomeFreezeWaves > 0) {
+                        console.log('[timeLoan] 波末收益被冻结');
+                    } else {
+                        this.gold += waveBonus;
+                        this.updateGoldLabel();
+                        console.log(`波次奖励 +${waveBonus} 金币，当前 ${this.gold}`);
+                    }
                 }
                 // 双倍或全无：赌约波结算（零漏怪 +150 金币，否则赌注失败）
                 if (this.gambleWaveIndex === this.currentWave) {
@@ -2750,6 +2821,39 @@ export class SceneInitializer extends Component {
                     }
                     this.gambleWaveIndex = null;
                     this.gambleWaveLeaks = 0;
+                }
+                // 透支供电反噬：波末全场塔 -1 星（保底 1 星，永不拆除），
+                // 并追加「下一波全体塔伤害 -30%」的可逆衰减，清空本波加成
+                if (this.overdraftPending) {
+                    this.overdraftPending = false;
+                    let demoted = 0;
+                    for (let i = this.towers.length - 1; i >= 0; i--) {
+                        const t = this.towers[i];
+                        if (!t.node.isValid) continue;
+                        const curStar = t.star ?? 1;
+                        const nextStar = Math.max(1, curStar - 1);
+                        if (nextStar !== curStar) {
+                            t.star = nextStar;
+                            demoted++;
+                            this.refreshTowerBadges(t.def.id);
+                        }
+                    }
+                    this.overdraftDamageBonus = 0;
+                    this.overdraftFatigueWaves = 1;
+                    console.log(`[overdraftPower] 波末结算：${demoted} 座塔降星（保底 1 星，未拆除），下一波塔伤害 -30%`);
+                    if (this.statusLabel) this.statusLabel.string = '透支反噬：全场降星，下一波伤害 -30%';
+                }
+                // 时间借贷：收益冻结波数递减（本波的击杀/波末收益已按下方的冻结判定跳过）
+                if (this.incomeFreezeWaves > 0) {
+                    this.incomeFreezeWaves--;
+                    console.log(`[timeLoan] 收益冻结剩余 ${this.incomeFreezeWaves} 波`);
+                }
+                // 透支供电衰减期递减：衰减仅持续一波，之后自动恢复
+                if (this.overdraftFatigueWaves > 0) {
+                    this.overdraftFatigueWaves--;
+                    if (this.overdraftFatigueWaves === 0) {
+                        console.log('[overdraftPower] 衰减期结束，塔伤害恢复正常');
+                    }
                 }
                 this.refreshPlaytestBuildMilestones();
                 this.playtest.endWave(this.buildPlaytestSnapshot());
@@ -3738,6 +3842,15 @@ export class SceneInitializer extends Component {
         return false;
     }
 
+    /** 统计某改造在全部塔类型上的累计层数（通用改造卡按塔类型分别记录，需跨类型汇总）。 */
+    private countModifierStacksAcrossTowers(modifierId: string): number {
+        let total = 0;
+        for (const towerId of Object.keys(this.runBuild.towerModifierStacks)) {
+            total += this.runBuild.modifierStacksOf(towerId, modifierId);
+        }
+        return total;
+    }
+
     /** 判断剩余手牌中是否还有可用的卡（用于剩余牌全部无效时自动结束） */
     private hasUsableCardRemaining(): boolean {
         return this.handCards.some(card => this.isHandCardUsable(card));
@@ -3745,6 +3858,19 @@ export class SceneInitializer extends Component {
 
     // === 游戏结束弹窗 ===
     private gameOverPanel: Node | null = null;
+    // ===== 复活机制（商业化：广告点位）=====
+    // 每局最多复活一次；复活后满血继续当前波，并给予补偿增益。
+    private reviveUsed = false;              // 本局是否已用过复活
+    private readonly reviveMaxUses = 1;      // 每局复活次数上限
+    private reviveHpRatio = 1.0;             // 复活后血量恢复比例（满血）
+    private reviveGoldBonus = 200;           // 复活补偿金币
+    private handleRevive = async (): Promise<boolean> => true;  // 由平台层注入的广告播放回调，默认直接成功
+    // ===== 高风险卡运行时状态 =====
+    private overdraftDamageBonus = 0;        // 透支供电：本波塔伤害加成（波末清空）
+    private overdraftPending = false;        // 透支供电：是否在波末执行全场降星
+    private overdraftFatigueWaves = 0;       // 透支供电：剩余「全体塔伤害衰减」的波数（可逆）
+    private readonly OVERDRAFT_FATIGUE_PENALTY = 0.3;  // 透支供电：衰减期塔伤害降低 30%
+    private incomeFreezeWaves = 0;           // 时间借贷：剩余收益归零的波数
     private isGameOver = false;
 
     private gameOver(): void {
@@ -5045,7 +5171,15 @@ export class SceneInitializer extends Component {
         const nonBossWaveMul = (!this.waveHasBoss && this.towerStats.nonBossWaveDamagePenalty > 0 && isTowerSrc)
             ? Math.max(0, 1 - this.towerStats.nonBossWaveDamagePenalty)
             : 1;
-        const applied = Math.max(0, amount) * bossWaveMul * nonBossWaveMul * (e.vulnerable > 0 ? e.vulnerable : 1);
+        // 透支供电：本波全体塔伤害加成（波末以降星 + 下波衰减偿还）
+        const overdraftMul = (this.overdraftDamageBonus > 0 && isTowerSrc)
+            ? 1 + this.overdraftDamageBonus
+            : 1;
+        // 透支供电衰减期：透支后的下一波全体塔伤害降低（可逆，一波后自动恢复）
+        const overdraftFatigueMul = (this.overdraftFatigueWaves > 0 && isTowerSrc)
+            ? Math.max(0, 1 - this.OVERDRAFT_FATIGUE_PENALTY)
+            : 1;
+        const applied = Math.max(0, amount) * bossWaveMul * nonBossWaveMul * overdraftMul * overdraftFatigueMul * (e.vulnerable > 0 ? e.vulnerable : 1);
         e.hp -= applied;
         const effectiveDamage = Math.min(beforeHp, applied);
         const isBoss = e.type === EnemyType.BOSS;
