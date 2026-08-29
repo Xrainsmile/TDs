@@ -1,4 +1,4 @@
-import { _decorator, Component, Node, view, UITransform, Layers, Vec3, Graphics, Color, Label, EventTouch, v3, UIOpacity, profiler } from 'cc';
+import { _decorator, Component, Node, view, UITransform, Layers, Vec3, Graphics, Color, Label, EventTouch, v3, UIOpacity } from 'cc';
 import { HUD } from '../ui/HUD';
 import { EffectManager } from './EffectManager';
 import { EnemyType } from './Constants';
@@ -14,7 +14,7 @@ import { TOWER_MODIFIERS } from './cards/TowerModifierRegistry';
 import { WaveBuffDefinition, GameSnapshot, EffectDefinition, DrawCardDefinition } from './cards/types';
 import { TowerParamResolver } from './systems/TowerParamResolver';
 import { ThrustSystem, ThrustSystemContext } from './systems/ThrustSystem';
-import { PlaytestRecorder, PlaytestSnapshot } from './playtest/PlaytestRecorder';
+import { PlaytestMetadata, PlaytestRecorder, PlaytestSnapshot } from './playtest/PlaytestRecorder';
 import {
     ENEMY_SPEED, BULLET_SPEED,
     INITIAL_GOLD, KILL_REWARD, WAVE_BONUSES,
@@ -27,9 +27,11 @@ import {
 } from './GameBalance';
 import {
     MAP_DESIGN_WIDTH, MAP_DESIGN_HEIGHT, PATH_WAYPOINTS,
+    PATH_BRANCHES, PATH_BRANCH_WAYPOINTS, BRANCH_COUNT,
     BUILD_CELLS, LOCKED_BUILD_CELL_KEYS,
     gridToLocal, CELL_SIZE, ROAD_WIDTH_RATIO, SLOT_SIZE_RATIO, GRID_COLS, GRID_ROWS,
 } from './MapConfig';
+import { buildMapArt, drawSlotMat, drawTowerBase } from './visuals/MapArt';
 import * as VisualFactory from './visuals/VisualFactory';   // 表现层：按 visualEffectId 构建攻击视觉
 import type { AffixId, DamageAttribution, EnemyRuntime, PierceShot, TowerParams, TowerRuntime } from './RuntimeTypes';
 
@@ -43,7 +45,7 @@ interface CardDef {
     color: Color;
 }
 
-interface StitchChainRuntime {
+interface SkewerChainRuntime {
     id: number;
     enemies: EnemyRuntime[];
     timer: number;
@@ -111,6 +113,11 @@ export class SceneInitializer extends Component {
     // 路径（直接从 GameBalance 引用，固定逻辑坐标）
     private get PATH_START() { return PATH_WAYPOINTS[0]; }
     private get PATH_END() { return PATH_WAYPOINTS[PATH_WAYPOINTS.length - 1]; }
+
+    /** 取敌人在其所属分支上的 waypoints 数组（双路分叉） */
+    private waypointsOf(e: EnemyRuntime): Vec3[] {
+        return PATH_BRANCH_WAYPOINTS[e.branch] ?? PATH_WAYPOINTS;
+    }
 
     // 基础数值（从 GameBalance 引用）
     private get ENEMY_SPEED() { return ENEMY_SPEED; }
@@ -304,11 +311,11 @@ export class SceneInitializer extends Component {
             },
         },
         {
-            id: 'needle',
-            name: '缝衣针',
+            id: 'chopsticks',
+            name: '筷子',
             cost: 130,
-            color: new Color(230, 230, 240, 255),
-            rangeColor: new Color(230, 230, 240, 60),
+            color: new Color(216, 176, 116, 255),
+            rangeColor: new Color(206, 168, 110, 60),
             buttonPos: ATTACK_BUTTON_POS,
             attack: {
                 attackType: 'pierce',
@@ -321,7 +328,7 @@ export class SceneInitializer extends Component {
                 canPierce: true,
                 maxHitsPerTarget: 1,
                 aimMode: 'first',
-                visualEffectId: 'needle_pierce',
+                visualEffectId: 'chopsticks_pierce',
             },
         },
         {
@@ -436,7 +443,7 @@ export class SceneInitializer extends Component {
             enemyType: EnemyType.BOSS,
             name: 'BOSS',
             speedMultiplier: 0.5,
-            hpMultiplier: 5,               // 血量是同波普通兵的 5 倍（满塔可在其抵达终点前击杀，原 10 过肉）
+            hpMultiplier: 4,               // 血量是同波普通兵的 4 倍（0.3.1：从 5 降到 4，败局平均只打出 70% BOSS 血量）
             color: new Color(255, 70, 70, 255),
             radius: 28,
             onUpdate: (enemy, dt) => {
@@ -475,15 +482,19 @@ export class SceneInitializer extends Component {
     private slotPositions: Vec3[] = [];
     private slotOccupied: boolean[] = [];
     private lockedSlots: boolean[] = [];    // 第二类锁定格：初始灰色，需锤子敲开才能放塔（坐标由 MapConfig 配置）
+    /** 甜品台地图美术层节点（桌布/糖渍/装饰/虫洞/蛋糕） */
+    private mapArt: ReturnType<typeof buildMapArt> | null = null;
+    /** 双路分叉：出怪时的分支轮换游标（交替分配，保证两路压力均衡） */
+    private spawnBranchToggle = 0;
 
     // ===== 卡牌系统（支付金币抽卡，拖动卡牌放置/敲开）=====
     private static readonly DRAW_COSTS = [
-        30, 30, 30,
+        25, 25, 25,
         35, 35, 35,
         40, 40, 40,
         45, 45, 45,
         50, 55, 60, 65, 70, 75,
-    ];                                                   // 抽卡花费曲线，之后按最后一档封顶
+    ];                                                   // 抽卡花费曲线（0.3.2：前3档 30→25），之后按最后一档封顶
     private static readonly MAX_CARD_USES_PER_DRAW = 2;  // 每轮发牌最多使用卡数
     private drawCount = 0;                         // 刷新次数（前两次保证基础塔完整）
     private drawsWithoutShovel = 0;                // 有灰格且连续未出锤子的轮数（第三轮强制出）
@@ -514,8 +525,8 @@ export class SceneInitializer extends Component {
     private towers: TowerRuntime[] = [];
     private towerTimers: number[] = [];
     private bullets: { node: Node; vx: number; vy: number; target: Node; def: TowerDef; tower: TowerRuntime; bounce: number; dmgMul?: number; noSplit?: boolean; hasBounced?: boolean; bounceStep?: number }[] = [];
-    private stitchChains: StitchChainRuntime[] = [];
-    private nextStitchChainId = 1;
+    private skewerChains: SkewerChainRuntime[] = [];
+    private nextSkewerChainId = 1;
 
     // 地面减速区（胶带战术卡）：独立节点 + 计时器，到期自动清理
     private groundZones: { node: Node; timer: number; radius: number; slowMultiplier: number }[] = [];
@@ -533,9 +544,15 @@ export class SceneInitializer extends Component {
     private hud: HUD | null = null;
     private gold = 0;
 
-    // 友军（基地）
-    private readonly ALLY_MAX_HP = 6;
+    // 友军（基地）：ALLY_MAX_HP_BASE 为初始上限
+    private readonly ALLY_MAX_HP_BASE = 7;
+    private allyMaxHp = this.ALLY_MAX_HP_BASE;
     private allyHp = 6;
+
+    // === 风险卡状态（咖啡因过载 / 双倍或全无）===
+    private waveHasBoss = false;                   // 当前波是否含 BOSS（咖啡因过载 加成/惩罚 的切换条件）
+    private gambleWaveIndex: number | null = null; // 双倍或全无：赌约绑定的波次（1-based）
+    private gambleWaveLeaks = 0;                   // 双倍或全无：赌约波内漏怪数（零漏怪才发奖金）
 
     // 波次运行时
     private currentWave = 0;
@@ -578,6 +595,7 @@ export class SceneInitializer extends Component {
     // 本局构筑状态（统一数据层：RunBuildState 记录 Buff/分支/层数/流派标签）
     private runBuild = new RunBuildState();
     private playtest = new PlaytestRecorder();
+    private readonly playtestMetadata = this.readPlaytestMetadata();
     private mainBuildPath: Exclude<BuildPath, 'general'> | null = null;  // 主构筑路线
     /** 是否正在三选一选卡（波次间暂停且未选 buff） */
     private get isBuffSelecting(): boolean { return this.isWavePaused && !this.buffSelected; }
@@ -620,20 +638,44 @@ export class SceneInitializer extends Component {
     private static readonly LONG_PRESS_TIME = 0.4;
     private static readonly MAX_STAR = 2;
 
+    /** 从 Web URL 或微信小游戏启动参数读取本轮测试配置；缺失或非法值由记录器统一警告并回退。 */
+    private readPlaytestMetadata(): Partial<PlaytestMetadata> {
+        const root = globalThis as unknown as Record<string, any>;
+        const values: Record<string, string | undefined> = {};
+        const search = typeof root.location?.search === 'string' ? root.location.search.replace(/^\?/, '') : '';
+        for (const pair of search.split('&')) {
+            if (!pair) continue;
+            const separator = pair.indexOf('=');
+            const rawKey = separator >= 0 ? pair.slice(0, separator) : pair;
+            const rawValue = separator >= 0 ? pair.slice(separator + 1) : '';
+            try {
+                values[decodeURIComponent(rawKey)] = decodeURIComponent(rawValue.replace(/\+/g, ' '));
+            } catch {
+                console.warn(`[PlaytestMetadata] 无法解析 URL 参数: ${pair} / Unable to decode URL parameter.`);
+            }
+        }
+
+        const launchQuery = root.wx?.getLaunchOptionsSync?.()?.query as Record<string, string> | undefined;
+        const read = (key: string): string | undefined => launchQuery?.[key] ?? values[key];
+        return {
+            balanceVersion: read('balanceVersion'),
+            testGroup: read('testGroup') as PlaytestMetadata['testGroup'] | undefined,
+            playStrategy: read('playStrategy') as PlaytestMetadata['playStrategy'] | undefined,
+            buildCommit: read('buildCommit'),
+        };
+    }
 
     protected start(): void {
-        // 关闭左下角 Cocos 调试性能面板（FPS/DrawCall 等），排查性能时临时注释掉即可
-        profiler.hideStats();
-        this.playtest.beginRun();
+        // 设计分辨率 640x960，策略 3 = ResolutionPolicy.FIXED_HEIGHT（注意：3 不是 FIXED_WIDTH）：
+        // 高度固定 960，可见宽度 = 屏幕宽×960/屏高，窄屏手机（如 19.5:9）可见宽度仅约 443 < 640，
+        // 因此所有横向固定排布的 UI（如手牌）必须按 _visibleSize.width 自适应缩放
+        view.setDesignResolutionSize(640, 960, 3);
+        this.playtest.beginRun(this.playtestMetadata);
         this.selectWavePattern();
         // 美术阶段：预加载 kind='sprite' 的皮肤贴图（当前全为 graphics 时是 no-op）
         VisualFactory.preloadVisualSprites();
         // 启动时校验卡牌配置（仅 console.error 报告，不修改数据）
         SceneInitializer.validateBuffConfigs();
-        // 设计分辨率 640x960，策略 3 = ResolutionPolicy.FIXED_HEIGHT（注意：3 不是 FIXED_WIDTH）：
-        // 高度固定 960，可见宽度 = 屏幕宽×960/屏高，窄屏手机（如 19.5:9）可见宽度仅约 443 < 640，
-        // 因此所有横向固定排布的 UI（如手牌）必须按 _visibleSize.width 自适应缩放
-        view.setDesignResolutionSize(640, 960, 3);
         this.setupScene();
     }
 
@@ -660,14 +702,13 @@ export class SceneInitializer extends Component {
         // 倒计时圆环位置：与抽卡按钮水平对齐（同高，置于按钮左侧，不遮挡卡牌）
         this.countdownPos = new Vec3(-220, -halfH + 48, 0);
 
-        // 屏幕适配：地图以逻辑像素尺寸（MAP_DESIGN = 360×480）显示，居中于战场；
-        // 仅当超出战场区域时才缩小，不再拉伸填满战场，保证棋盘视觉尺寸 = MAP_DESIGN。
-        // scale = min(1, 战场宽/地图宽, 战场高/地图高)
+        // 屏幕适配：地图等比缩放填满战场（新地图 576×640 已按战场比例设计，
+        // 允许放大不再限制 scale<=1，避免地图周围留大片空白）。
+        // scale = min(战场宽/地图宽, 战场高/地图高) × 安全系数
         const mapScale = Math.min(
-            1,
             battleWidth / MAP_DESIGN_WIDTH,
             battleHeight / MAP_DESIGN_HEIGHT
-        );
+        ) * 0.98;
 
         this._visibleSize = visible;
 
@@ -682,13 +723,10 @@ export class SceneInitializer extends Component {
         this.battleRoot.setScale(mapScale, mapScale, 1);
         // 挂载特效管理器
         this.battleRoot.addComponent(EffectManager);
-        // 地图调试框（黄色边框，随 BattleRoot 整体缩放；验收：调试框与地图同步缩放）
-        this.drawMapDebugFrame(this.battleRoot);
+        // === 甜品台地图美术（桌布 → 糖霜点缀 → 糖渍双路 → 虫洞入口 → 奶油蛋糕基地）===
+        this.mapArt = buildMapArt(this.battleRoot);
         // 6×8 调试网格（可开关，随 BattleRoot 整体缩放）
         if (SHOW_GRID) this.drawGridDebug(this.battleRoot);
-
-        // === 路径 ===
-        this.drawPath(this.battleRoot);
 
         // === 塔位（仅 GridCell，由 gridToLocal 计算位置；与手机尺寸无关，仅供适配缩放）===
         this.slotCells = BUILD_CELLS.map(c => ({ col: c.col, row: c.row }));
@@ -803,7 +841,7 @@ export class SceneInitializer extends Component {
                     const cardPos = card.getPosition();
                     const ct = card.getComponent(UITransform);
                     const halfW = (ct ? ct.width : 160) / 2;
-                    const halfH = (ct ? ct.height : 96) / 2;
+                    const halfH = (ct ? ct.height : 104) / 2;
                     if (Math.abs(buttonLocal.x - cardPos.x) <= halfW && Math.abs(buttonLocal.y - cardPos.y) <= halfH) {
                         this.selectBuff(i);
                         return;
@@ -838,17 +876,30 @@ export class SceneInitializer extends Component {
                     this.finishCardSelection();
                     return;
                 }
-                // 命中手牌 → 开始拖牌
-                const ci = this.findHandCardAt(buttonLocal);
-                if (ci >= 0) {
-                    this.dragCardIndex = ci;
-                    this.isDragging = true;
-                    this.cardGhost!.active = true;
-                    this.cardGhost!.setPosition(buttonLocal);
-                    this.drawCardGhost(this.handCards[ci]);
+            }
+
+            // 命中手牌 → 开始拖牌（选牌阶段外也允许：用满额度后残留的改造卡仍需可用，
+            // 否则卡面可见却拖不动，玩家会误判为「卡坏了」）
+            const ci = this.findHandCardAt(buttonLocal);
+            if (ci >= 0) {
+                const card = this.handCards[ci];
+                // 非选牌阶段仅放行即时改造卡；塔卡/锤子涉及建塔与格子，仍需在选牌阶段使用
+                if (this.cardMode || card.kind === 'modifier' || card.kind === 'tactic') {
+                    if (this.isHandCardUsable(card)) {
+                        this.dragCardIndex = ci;
+                        this.isDragging = true;
+                        this.cardGhost!.active = true;
+                        this.cardGhost!.setPosition(buttonLocal);
+                        this.drawCardGhost(card);
+                        return;
+                    }
+                    if (this.statusLabel) this.statusLabel.string = '该卡当前不可用';
                     return;
                 }
-                // 未命中手牌/按钮 → 继续往下走棋盘塔判定
+                if (!this.cardMode) {
+                    if (this.statusLabel) this.statusLabel.string = '该卡需在抽卡后使用';
+                    return;
+                }
             }
 
             // 1.5 判断是否点中了底部抽卡按钮（用卡阶段已在上面处理为「结束选牌」）
@@ -880,7 +931,8 @@ export class SceneInitializer extends Component {
             if (this.isUserPaused) return;  // 全局暂停时禁止拖动
             if (!this.isDragging) return;
             const local = this.eventToGameLocal(event);
-            if (this.cardMode && this.dragCardIndex >= 0) {
+            // 不再要求 cardMode：用满额度后残留的改造卡/战术卡拖动时 ghost 也需跟随手指
+            if (this.dragCardIndex >= 0) {
                 this.cardGhost!.setPosition(this.eventToCanvasLocal(event));
                 return;
             }
@@ -891,7 +943,9 @@ export class SceneInitializer extends Component {
         canvas.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
             if (this.isUserPaused) return;  // 全局暂停时禁止松手合并/弹信息
             // 卡牌拖动松手：判定落点使用（无效则取消）
-            if (this.cardMode && this.isDragging && this.dragCardIndex >= 0) {
+            // 注意：不再要求 cardMode——用满额度后残留的改造卡/战术卡仍可拖放使用，
+            // 否则卡面可见却拖不动，玩家会误判为「卡坏了」
+            if (this.isDragging && this.dragCardIndex >= 0) {
                 this.handleCardDrop(event);
                 return;
             }
@@ -1023,11 +1077,8 @@ export class SceneInitializer extends Component {
         // 统一同步 HUD 顶部金币与按钮上方常驻金币（避免开局按钮上方显示 0）
         this.updateGoldLabel();
         this.hud.setWave(0, this.WAVES.length);
-        this.hud.setLives(this.allyHp, this.ALLY_MAX_HP);
+        this.hud.setLives(this.allyHp, this.allyMaxHp);
         this.hud.setStatus(`点击「${this.currentDrawCost()}金抽卡」，5张牌最多使用2张`);
-
-        // === 终点友军建筑（城堡）===
-        this.drawAlly(this.battleRoot);
 
         // === 关卡开始倒计时 ===
         this.startLevelCountdown();
@@ -1200,7 +1251,7 @@ export class SceneInitializer extends Component {
             hasLockedTile: this.lockedSlots.some(l => l),
             boardFull: this.slotPositions.every((_, i) => this.slotOccupied[i] || this.lockedSlots[i]),
         };
-        const towers = this.towers.map(t => ({ id: t.def.id, tags: [] as string[] }));
+        const towers = this.towers.map(t => ({ id: t.def.id, tags: [] as string[], corePowered: t.corePowered }));
         return this.runBuild.toSnapshot(board, towers, this.currentWave);
     }
 
@@ -1252,12 +1303,12 @@ export class SceneInitializer extends Component {
             mark('poison_burst', '弹射毒爆流', 'transform');
         }
 
-        const hasNeedle = count('needle') > 0;
+        const hasChopsticks = count('chopsticks') > 0;
         const hasScissors = count('scissors') > 0;
-        const hasThread = this.runBuild.hasTowerModifier('needle', 'thread_spool');
-        if (Number(hasNeedle) + Number(hasScissors) + Number(hasThread) >= 2) mark('stitch_cut', '针线裁剪流', 'direction');
-        if (hasNeedle && hasScissors && hasThread) mark('stitch_cut', '针线裁剪流', 'basic');
-        if (hasNeedle && hasScissors && hasThread && hasBuff('decisive_cut')) mark('stitch_cut', '针线裁剪流', 'transform');
+        const hasThread = this.runBuild.hasTowerModifier('chopsticks', 'thread_spool');
+        if (Number(hasChopsticks) + Number(hasScissors) + Number(hasThread) >= 2) mark('skewer_cut', '串线剪断流', 'direction');
+        if (hasChopsticks && hasScissors && hasThread) mark('skewer_cut', '串线剪断流', 'basic');
+        if (hasChopsticks && hasScissors && hasThread && hasBuff('decisive_cut')) mark('skewer_cut', '串线剪断流', 'transform');
     }
 
     /**
@@ -1294,10 +1345,14 @@ export class SceneInitializer extends Component {
             if (buff.id === 'healSuppress' && nextWaveHasHealer) pity += 400;
 
             // 动态权重 = baseWeight × 倍率 + 额外 + 保底补偿（由 ConditionEvaluator + WeightCalculator 统一计算）
-            const weight = computeWeight(
-                { baseWeight: buff.baseWeight, weightRules: buff.weightRules, pityBonus: pity },
+            const relatedSelections = this.countRelatedBuildSelections(buff);
+            // 正反馈只帮助第一个连接件，不持续推送整条路线
+            const useWeightRules = relatedSelections === 0;
+            let weight = computeWeight(
+                { baseWeight: buff.baseWeight, weightRules: useWeightRules ? buff.weightRules : [], pityBonus: pity },
                 snap,
             );
+            if (relatedSelections >= 2) weight *= buff.contentType === 'capstone' ? 1.1 : 0.45;
             pool.push({ buff, weight });
         }
 
@@ -1306,6 +1361,15 @@ export class SceneInitializer extends Component {
 
     private buffHasTag(buff: WaveBuffDefinition, tag: string): boolean {
         return buff.tags.indexOf(tag) >= 0;
+    }
+
+    /** 按 buildId 精确统计已选强化，避免不同流派因共用标签被误降权。 */
+    private countRelatedBuildSelections(candidate: WaveBuffDefinition): number {
+        if (!candidate.buildId) return 0;
+        return this.runBuild.selectedBuffIds.reduce((count, id) => {
+            const selected = WAVE_BUFFS.find(buff => buff.id === id);
+            return selected?.buildId === candidate.buildId ? count + 1 : count;
+        }, 0);
     }
 
     private pickWeightedBuff(
@@ -1364,8 +1428,9 @@ export class SceneInitializer extends Component {
             }
             const hasIcon = VisualFactory.setCardIcon(this.buffCardLabels[i].iconNode, buff.id);
             const nameNode = this.buffCardLabels[i].name.node;
-            nameNode.setPosition(hasIcon ? 18 : 0, 14, 0);
-            nameNode.getComponent(UITransform)?.setContentSize(hasIcon ? 112 : 150, 28);
+            // 名称位置随卡加高同步（y 14→33）：有卡图时右移让位给图标，无卡图时居中
+            nameNode.setPosition(hasIcon ? 18 : 0, 33, 0);
+            nameNode.getComponent(UITransform)?.setContentSize(hasIcon ? 112 : 150, 26);
         }
         // 合格卡不足 3 张时，隐藏未被使用的卡片位
         for (let i = choiceCount; i < 3; i++) {
@@ -1467,12 +1532,73 @@ export class SceneInitializer extends Component {
                     this.createGroundZone(this.lastCardDropPos.clone(), radius, duration, slowMul);
                 } else if (effectId === 'repairBase') {
                     const amount = Math.max(0, Math.round(effect.value ?? 1));
-                    this.allyHp = Math.min(this.ALLY_MAX_HP, this.allyHp + amount);
-                    if (this.livesLabel) this.livesLabel.string = `Base: ${this.allyHp}/${this.ALLY_MAX_HP}`;
+                    this.allyHp = Math.min(this.allyMaxHp, this.allyHp + amount);
+                    if (this.livesLabel) this.livesLabel.string = `Base: ${this.allyHp}/${this.allyMaxHp}`;
                 } else if (effectId === 'hurtBase') {
                     const amount = Math.max(0, Math.round(effect.value ?? 1));
                     this.allyHp = Math.max(1, this.allyHp - amount);
-                    if (this.livesLabel) this.livesLabel.string = `Base: ${this.allyHp}/${this.ALLY_MAX_HP}`;
+                    if (this.livesLabel) this.livesLabel.string = `Base: ${this.allyHp}/${this.allyMaxHp}`;
+                } else if (effectId === 'doubleOrNothing') {
+                    // 双倍或全无：绑定下一波（选卡发生在波间，currentWave 为刚结束波，下一波为 +1）
+                    this.gambleWaveIndex = this.currentWave + 1;
+                    this.gambleWaveLeaks = 0;
+                } else if (effectId === 'gamblerDice') {
+                    // 赌徒骰子：随机一座塔 +1 星，另一座塔 -1 星（降至 1 星则销毁，腾出格子）
+                    const p = effect.parameters ?? {};
+                    const upCount = Math.max(1, Math.round(Number(p.upgradeCount ?? 1)));
+                    const downCount = Math.max(1, Math.round(Number(p.downgradeCount ?? 1)));
+                    if (this.towers.length === 0) {
+                        console.warn('[gamblerDice] 场上无塔，效果空转');
+                    } else {
+                        const pool = this.towers.filter(t => t.node.isValid);
+                        // 升星：随机座，并记录已升星的塔，避免降星命中同一座导致效果空转
+                        const upgraded: typeof pool = [];
+                        for (let i = 0; i < upCount && pool.length > 0; i++) {
+                            const at = Math.floor(Math.random() * pool.length);
+                            const t = pool[at];
+                            pool.splice(at, 1);
+                            t.star = (t.star ?? 1) + 1;
+                            upgraded.push(t);
+                            this.refreshTowerBadges(t.def.id);
+                            console.log(`[gamblerDice] ${t.def.name} 升到 ${t.star} 星`);
+                        }
+                        // 降星：只从「未被升星的塔」中随机，保证收益与代价落在不同塔上
+                        const downPool = this.towers.filter(t => t.node.isValid && upgraded.indexOf(t) < 0);
+                        for (let i = 0; i < downCount && downPool.length > 0; i++) {
+                            const at = Math.floor(Math.random() * downPool.length);
+                            const t = downPool[at];
+                            downPool.splice(at, 1);
+                            const nextStar = (t.star ?? 1) - 1;
+                            if (nextStar <= 0) {
+                                console.log(`[gamblerDice] ${t.def.name} 降星至 0，已拆除`);
+                                const idx = this.towers.indexOf(t);
+                                if (idx >= 0) this.removeTowerNode(idx);
+                            } else {
+                                t.star = nextStar;
+                                this.refreshTowerBadges(t.def.id);
+                                console.log(`[gamblerDice] ${t.def.name} 降到 ${t.star} 星`);
+                            }
+                        }
+                        if (downPool.length === 0) {
+                            console.log('[gamblerDice] 无「未升星」的塔可降，降星部分空转');
+                        }
+                    }
+                } else if (effectId === 'overdraftPower') {
+                    // 透支供电：本波全体塔 +X% 伤害，波结束后所有塔 -1 星
+                    const p = effect.parameters ?? {};
+                    const bonus = Number(p.damageBonus ?? 0.8);
+                    this.overdraftDamageBonus = bonus;
+                    this.overdraftPending = true;
+                    console.log(`[overdraftPower] 本波塔伤害 +${Math.round(bonus * 100)}%，波末全场 -1 星`);
+                } else if (effectId === 'timeLoan') {
+                    // 时间借贷：立即给金币，后续 N 波收益归零
+                    const p = effect.parameters ?? {};
+                    const gold = Math.max(0, Math.round(Number(p.gold ?? 150)));
+                    const waves = Math.max(1, Math.round(Number(p.skipWaves ?? 2)));
+                    this.gold += gold;
+                    this.updateGoldLabel();
+                    this.incomeFreezeWaves = waves;
+                    console.log(`[timeLoan] 立即 +${gold} 金币，随后 ${waves} 波收益归零`);
                 } else {
                     console.warn(`[effectContext] 未注册的 custom 效果: ${effectId}`);
                 }
@@ -1492,29 +1618,36 @@ export class SceneInitializer extends Component {
         const node = new Node(`BuffCard_${index}`);
         node.layer = Layers.Enum.UI_2D;
         const transform = node.addComponent(UITransform);
-        transform.setContentSize(160, 96);
+        // 卡高 96 → 104：原高度下描述区（y=-16 高54，顶边 11）会盖住名称区（y=14 高28，底边 0），
+        // 重叠 11px 导致长描述（如"安全距离：所有塔范围+8%，稳住漏怪风险"）与标题文字叠在一起。
+        // 加高后描述区扩到 63px（4 行），且与名称留 3px 间隙。
+        // 三张卡竖排间距为 110，卡高 104 后仍留 6px 空隙，不会互相碰撞。
+        // 点击命中判定按 UITransform 动态读取宽高，无需同步修改。
+        transform.setContentSize(160, 104);
         node.setPosition(pos);
 
         const gfx = node.addComponent(Graphics);
         // 深紫色圆角背景
         gfx.fillColor = new Color(40, 30, 70, 230);
-        gfx.roundRect(-80, -48, 160, 96, 10);
+        gfx.roundRect(-80, -52, 160, 104, 10);
         gfx.fill();
         // 金色边框
         gfx.strokeColor = new Color(255, 200, 80, 255);
         gfx.lineWidth = 3;
-        gfx.roundRect(-80, -48, 160, 96, 10);
+        gfx.roundRect(-80, -52, 160, 104, 10);
         gfx.stroke();
 
         // 正式卡图位于标题左侧；无对应美术时节点自动隐藏。
-        VisualFactory.createCardIcon(node, 36, -57, 15);
+        // 图标随卡加高上移（y 15→17），保持垂直居中于名称行
+        VisualFactory.createCardIcon(node, 36, -57, 17);
 
         // buff 名称
         const nameNode = new Node('BuffName');
         nameNode.layer = Layers.Enum.UI_2D;
         nameNode.addComponent(UITransform);
         nameNode.setParent(node);
-        nameNode.setPosition(0, 14, 0);
+        // buff 名称：y 14→33（随卡加高上移），高度 28→26，与描述区间隔 3px 不再重叠
+        nameNode.setPosition(0, 33, 0);
         const nameLabel = nameNode.addComponent(Label);
         nameLabel.string = '';
         nameLabel.fontSize = 16;
@@ -1524,14 +1657,16 @@ export class SceneInitializer extends Component {
         nameLabel.verticalAlign = Label.VerticalAlign.CENTER;
         nameLabel.enableWrapText = true;
         const nameTransform = nameNode.getComponent(UITransform)!;
-        nameTransform.setContentSize(150, 28);
+        nameTransform.setContentSize(150, 26);
 
         // buff 描述
         const descNode = new Node('BuffDesc');
         descNode.layer = Layers.Enum.UI_2D;
         descNode.addComponent(UITransform);
         descNode.setParent(node);
-        descNode.setPosition(0, -16, 0);
+        // 描述：y -16→-14.5，高度 54→63（4 行 = 行高 15 × 4 = 60，留 3px 余量）
+        // 区间 [-46, 17]，顶边 17 低于名称底边 20，间隙 3px，彻底消除重叠
+        descNode.setPosition(0, -14.5, 0);
         const descLabel = descNode.addComponent(Label);
         descLabel.string = '';
         descLabel.fontSize = 11;
@@ -1540,8 +1675,10 @@ export class SceneInitializer extends Component {
         descLabel.horizontalAlign = Label.HorizontalAlign.CENTER;
         descLabel.verticalAlign = Label.VerticalAlign.TOP;
         descLabel.enableWrapText = true;
+        // 与手牌描述同一修复：overflow 默认 NONE 会忽略宽度不断行，改 SHRINK 保证长描述不越界。
+        descLabel.overflow = Label.Overflow.SHRINK;
         const descTransform = descNode.getComponent(UITransform)!;
-        descTransform.setContentSize(144, 54);
+        descTransform.setContentSize(144, 63);
 
         return node;
     }
@@ -1597,6 +1734,12 @@ export class SceneInitializer extends Component {
 
         this.activeWaveEntries = this.waveEntriesForRun(this.currentWave);
         this.currentWave++;
+        // 咖啡因过载：判定本波是否含 BOSS（决定 BOSS 波伤害加成是否生效）
+        this.waveHasBoss = this.activeWaveEntries.some(entry => entry.type === EnemyType.BOSS);
+        // 双倍或全无：赌约波开始，提示本波赌注
+        if (this.gambleWaveIndex === this.currentWave && this.statusLabel) {
+            this.statusLabel.string = `双倍或全无生效：本波零漏怪 +150 金币，每漏 1 只额外 -1 命`;
+        }
         this.spawnedInWave = 0;
         this.waveActive = true;
         this.waveElapsed = 0;
@@ -1628,6 +1771,7 @@ export class SceneInitializer extends Component {
         this.updatePauseButton();
         this.hideGlobalBuffPanel();
         this.resetCardSystem();   // 胜利清除手牌，避免结算弹窗下残留
+        this.hideTowerInfo();     // 0.3.1：隐藏塔信息面板，防止遮挡结算弹窗导出按钮
 
         const canvas = this.node;
         const panel = new Node('VictoryPanel');
@@ -1819,8 +1963,8 @@ export class SceneInitializer extends Component {
         // 仅当最前方仍 fresh 时，才用 fresh 池优先向后排未受影响者扩散。
         let pool = inRange;
         if (def.id === 'scissors') {
-            const stitched = inRange.filter(c => !!c.enemy.buffs['stitch']);
-            if (stitched.length > 0) pool = stitched;
+            const skewered = inRange.filter(c => !!c.enemy.buffs['skewer']);
+            if (skewered.length > 0) pool = skewered;
         }
         if (aimMode === 'unaffected') {
             const fresh = inRange.filter(c => !this.isAffectedByTower(def, c.enemy));
@@ -1870,8 +2014,8 @@ export class SceneInitializer extends Component {
     /** 'first' 比较器：a 比 b 更靠近终点返回负值。pathIdx 大者优先 → 同段距下一 waypoint 近者优先 → 距塔近者优先 */
     private compareFirst(a: EnemyRuntime, b: EnemyRuntime, towerPos: Vec3): number {
         if (a.pathIdx !== b.pathIdx) return b.pathIdx - a.pathIdx;
-        const wa = PATH_WAYPOINTS[Math.min(a.pathIdx, PATH_WAYPOINTS.length - 1)];
-        const wb = PATH_WAYPOINTS[Math.min(b.pathIdx, PATH_WAYPOINTS.length - 1)];
+        const wa = this.waypointsOf(a)[Math.min(a.pathIdx, this.waypointsOf(a).length - 1)];
+        const wb = this.waypointsOf(b)[Math.min(b.pathIdx, this.waypointsOf(b).length - 1)];
         const da = Vec3.distance(a.node.position, wa);
         const db = Vec3.distance(b.node.position, wb);
         if (Math.abs(da - db) > 1e-6) return da - db;
@@ -1904,7 +2048,7 @@ export class SceneInitializer extends Component {
         this.lastAimPick.set(key, best);
         const desc = pool.map(c => {
             const e = c.enemy;
-            const wp = PATH_WAYPOINTS[Math.min(e.pathIdx, PATH_WAYPOINTS.length - 1)];
+            const wp = this.waypointsOf(e)[Math.min(e.pathIdx, this.waypointsOf(e).length - 1)];
             const dNext = Vec3.distance(e.node.position, wp);
             return `#${c.idx}[pathIdx=${e.pathIdx} dNext=${dNext.toFixed(1)}]`;
         }).join(' ');
@@ -1960,9 +2104,7 @@ export class SceneInitializer extends Component {
         const gfx = towerNode.getComponent(Graphics);
         if (!gfx) return;
         gfx.clear();
-        gfx.fillColor = new Color(60, 60, 70, 255);
-        gfx.rect(-28, -28, 56, 56);
-        gfx.fill();
+        drawTowerBase(gfx, def.color);
         gfx.strokeColor = def.rangeColor;
         gfx.lineWidth = 2;
         gfx.circle(0, 0, def.attack.range);
@@ -2210,6 +2352,12 @@ export class SceneInitializer extends Component {
             e.node.destroy();
             this.enemies.splice(i, 1);
             this.gold += this.KILL_REWARD;
+            // 回收齿轮（通用改造）：每座装了该改造的塔额外返还 2 金，收益随铺开的塔数增长
+            const salvage = this.countModifierStacksAcrossTowers('salvage_gear');
+            if (salvage > 0) {
+                this.gold += 2 * salvage;
+                console.log(`[salvage_gear] ${salvage} 层回收，返还 ${2 * salvage} 金币`);
+            }
             this.updateGoldLabel();
             console.log(`击杀！+${this.KILL_REWARD} 金币，当前 ${this.gold}`);
         }
@@ -2288,10 +2436,16 @@ export class SceneInitializer extends Component {
                     e.node.destroy();
                     this.enemies.splice(i, 1);
                     this.allyHp -= 1;
+                    // 双倍或全无：赌约波内每漏 1 只额外 -1 命（逐只叠加，漏 2 只共 -4）
+                    if (this.gambleWaveIndex === this.currentWave && this.waveActive) {
+                        this.allyHp -= 1;
+                        this.gambleWaveLeaks++;
+                        console.log('双倍或全无：漏怪额外 -1 命');
+                    }
                     this.playtest.recordLeak(String(e.type), this.allyHp);
-                    console.log(`漏怪！友军 HP: ${this.allyHp}/${this.ALLY_MAX_HP}`);
+                    console.log(`漏怪！友军 HP: ${this.allyHp}/${this.allyMaxHp}`);
                     if (this.livesLabel) {
-                        this.livesLabel.string = `Base: ${this.allyHp}/${this.ALLY_MAX_HP}`;
+                        this.livesLabel.string = `Base: ${this.allyHp}/${this.allyMaxHp}`;
                     }
                     if (this.allyHp <= 0) {
                         console.log('友军被摧毁，游戏结束！');
@@ -2302,10 +2456,17 @@ export class SceneInitializer extends Component {
                 // 沿 waypoints 逐段移动（pathIdx 跟踪目标；按本帧步长判定到达，避免掉帧时卡在折点）
                 const eDef = this.getEnemyDef(e.type);
                 const speedMult = eDef?.speedMultiplier ?? 1;
-                const speed = this.ENEMY_SPEED * speedMult * e.slowMultiplier;
-                if (e.pathIdx >= PATH_WAYPOINTS.length) e.pathIdx = PATH_WAYPOINTS.length - 1;
+                if (e.type === EnemyType.BOSS && !e.bossEnraged && e.hp <= e.maxHp * 0.5) {
+                    e.bossEnraged = true;
+                    EffectManager.instance?.playExplosion(e.node.position.clone(), 52);
+                    console.log('BOSS 半血狂暴：移动速度提升35%');
+                }
+                const phaseSpeedMultiplier = e.bossEnraged ? 1.35 : 1;
+                const speed = this.ENEMY_SPEED * speedMult * phaseSpeedMultiplier * e.slowMultiplier;
+                const wps = this.waypointsOf(e);
+                if (e.pathIdx >= wps.length) e.pathIdx = wps.length - 1;
 
-                const target = PATH_WAYPOINTS[e.pathIdx];
+                const target = wps[e.pathIdx];
                 const toX = target.x - pos.x;
                 const toY = target.y - pos.y;
                 const distToTarget = Math.hypot(toX, toY);
@@ -2314,7 +2475,7 @@ export class SceneInitializer extends Component {
                 // 用 step 作为到达阈值：掉帧时单帧移动很大也不会在折点反复横跳卡死。
                 if (distToTarget <= step || distToTarget <= 1) {
                     e.node.setPosition(target.x, target.y, 0);
-                    if (e.pathIdx < PATH_WAYPOINTS.length - 1) e.pathIdx++;
+                    if (e.pathIdx < wps.length - 1) e.pathIdx++;
                 } else {
                     e.node.setPosition(
                         pos.x + (toX / distToTarget) * step,
@@ -2389,7 +2550,7 @@ export class SceneInitializer extends Component {
                     // 砸击（锅铲）：敌群最密点范围爆发
                     this.smashAttack(tower);
                 } else if (def.attack.attackType === 'pierce') {
-                    // 贯穿（缝衣针）：直线穿透多目标
+                    // 贯穿（筷子）：直线穿透多目标
                     this.pierceAttack(tower);
                 } else if (def.attack.attackType === 'spray') {
                     // 减速塔：按 attack.statusEffects 施减速/易伤（基础值来自 statusEffects）
@@ -2419,7 +2580,7 @@ export class SceneInitializer extends Component {
         // === spin 旋斩通道推进 ===
         this.updateSpins(dt);
 
-        // === 缝衣针弹体飞行与穿透命中 ===
+        // === 筷子弹体飞行与穿透命中 ===
         this.updatePierceShots(dt);
 
         // === 敌人减速 / 易伤计时 ===
@@ -2442,7 +2603,7 @@ export class SceneInitializer extends Component {
         for (let i = this.enemies.length - 1; i >= 0; i--) {
             const e = this.enemies[i];
             for (const key in e.buffs) {
-                if (key === 'stitch') continue;
+                if (key === 'skewer') continue;
                 const buff = e.buffs[key];
                 buff.timer -= dt;
                 if (buff.dps > 0) {
@@ -2458,8 +2619,8 @@ export class SceneInitializer extends Component {
             // buff 掉血致死：仅减血，死亡移除统一在 cleanupDeadEnemies() 处理
         }
 
-        // === 缝合链计时与彩线表现（自然消失不造成伤害）===
-        this.updateStitchChains(dt);
+        // === 串联链计时与彩线表现（自然消失不造成伤害）===
+        this.updateSkewerChains(dt);
 
         // === 敌人特殊行为（治疗者光环等）——遍历注册表的 onUpdate ===
         for (const e of this.enemies) {
@@ -2511,7 +2672,7 @@ export class SceneInitializer extends Component {
                 if (d < 16) {
                     // 逐塔解析有效属性（含二星强化 + 词缀）
                     const p = this.getTowerParams(b.tower);
-                    const bounceMul = b.bounceStep === 1 ? 0.7 : (b.bounceStep ?? 0) >= 2 ? 0.5 : 1;
+                    const bounceMul = b.bounceStep === 1 ? 0.6 : (b.bounceStep ?? 0) >= 2 ? 0.4 : 1;
                     let dmg = p.damage * (b.dmgMul ?? 1) * bounceMul;
                     // 处决词缀：对低血敌人增伤
                     if (p.executeBonus > 0 && e.hp / e.maxHp < 0.3) {
@@ -2636,22 +2797,76 @@ export class SceneInitializer extends Component {
 
         // === 波次完成检测（在 cleanup 之后，确保本帧所有死亡已移除）===
         if (this.waveActive) {
-            // 波次进行到一半（已生成过半）时一次性发放 10 金币
+            // 波次进行到一半（已生成过半）时一次性发放 5 金币
             if (!this.midWaveRewardGiven && this.waveTotalCount > 0 &&
                 this.spawnedInWave >= Math.ceil(this.waveTotalCount / 2)) {
-                this.gold += 10;
                 this.midWaveRewardGiven = true;
-                this.updateGoldLabel();
-                console.log(`波次中间奖励 +10 金币，当前 ${this.gold}`);
+                if (this.incomeFreezeWaves > 0) {
+                    console.log('[timeLoan] 波中收益被冻结');
+                } else {
+                    this.gold += 5;
+                    this.updateGoldLabel();
+                    console.log(`波次中间奖励 +5 金币，当前 ${this.gold}`);
+                }
             }
             // 全部生成且全部死亡 → 自动暂停，等用户选 buff + 点"开始下一波"
             if (this.spawnedInWave >= this.waveTotalCount && this.enemies.length === 0) {
                 this.waveActive = false;
                 const waveBonus = this.WAVE_BONUSES[this.currentWave - 1] || 0;
                 if (waveBonus > 0) {
-                    this.gold += waveBonus;
-                    this.updateGoldLabel();
-                    console.log(`波次奖励 +${waveBonus} 金币，当前 ${this.gold}`);
+                    if (this.incomeFreezeWaves > 0) {
+                        console.log('[timeLoan] 波末收益被冻结');
+                    } else {
+                        this.gold += waveBonus;
+                        this.updateGoldLabel();
+                        console.log(`波次奖励 +${waveBonus} 金币，当前 ${this.gold}`);
+                    }
+                }
+                // 双倍或全无：赌约波结算（零漏怪 +150 金币，否则赌注失败）
+                if (this.gambleWaveIndex === this.currentWave) {
+                    if (this.gambleWaveLeaks === 0) {
+                        this.gold += 150;
+                        this.updateGoldLabel();
+                        console.log('双倍或全无达成：本波零漏怪，+150 金币');
+                        if (this.statusLabel) this.statusLabel.string = '双倍或全无达成：+150 金币！';
+                    } else {
+                        console.log(`双倍或全无失败：本波漏怪 ${this.gambleWaveLeaks} 只`);
+                    }
+                    this.gambleWaveIndex = null;
+                    this.gambleWaveLeaks = 0;
+                }
+                // 透支供电反噬：波末全场塔 -1 星（保底 1 星，永不拆除），
+                // 并追加「下一波全体塔伤害 -30%」的可逆衰减，清空本波加成
+                if (this.overdraftPending) {
+                    this.overdraftPending = false;
+                    let demoted = 0;
+                    for (let i = this.towers.length - 1; i >= 0; i--) {
+                        const t = this.towers[i];
+                        if (!t.node.isValid) continue;
+                        const curStar = t.star ?? 1;
+                        const nextStar = Math.max(1, curStar - 1);
+                        if (nextStar !== curStar) {
+                            t.star = nextStar;
+                            demoted++;
+                            this.refreshTowerBadges(t.def.id);
+                        }
+                    }
+                    this.overdraftDamageBonus = 0;
+                    this.overdraftFatigueWaves = 1;
+                    console.log(`[overdraftPower] 波末结算：${demoted} 座塔降星（保底 1 星，未拆除），下一波塔伤害 -30%`);
+                    if (this.statusLabel) this.statusLabel.string = '透支反噬：全场降星，下一波伤害 -30%';
+                }
+                // 时间借贷：收益冻结波数递减（本波的击杀/波末收益已按下方的冻结判定跳过）
+                if (this.incomeFreezeWaves > 0) {
+                    this.incomeFreezeWaves--;
+                    console.log(`[timeLoan] 收益冻结剩余 ${this.incomeFreezeWaves} 波`);
+                }
+                // 透支供电衰减期递减：衰减仅持续一波，之后自动恢复
+                if (this.overdraftFatigueWaves > 0) {
+                    this.overdraftFatigueWaves--;
+                    if (this.overdraftFatigueWaves === 0) {
+                        console.log('[overdraftPower] 衰减期结束，塔伤害恢复正常');
+                    }
                 }
                 this.refreshPlaytestBuildMilestones();
                 this.playtest.endWave(this.buildPlaytestSnapshot());
@@ -2681,10 +2896,15 @@ export class SceneInitializer extends Component {
         // 实际血量 = 配置 hp × 注册表 hpMultiplier
         const actualHp = Math.floor(hp * def.hpMultiplier);
 
+        // 双路分叉：交替分配左右两路，保证两路压力均衡（不随机，避免某路运气性过载）
+        const branch = this.spawnBranchToggle;
+        this.spawnBranchToggle = (this.spawnBranchToggle + 1) % BRANCH_COUNT;
+        const waypoints = PATH_BRANCH_WAYPOINTS[branch];
+
         const enemy = new Node(def.name);
         enemy.layer = Layers.Enum.UI_2D;
         enemy.setParent(this.battleRoot);
-        enemy.setPosition(this.PATH_START);
+        enemy.setPosition(waypoints[0]);
 
         const transform = enemy.addComponent(UITransform);
         transform.setContentSize(def.radius * 2, def.radius * 2);
@@ -2705,6 +2925,8 @@ export class SceneInitializer extends Component {
             slowTimer: 0, slowMultiplier: 1,
             type, healTimer: 0, healCd: 0, extraTimer: 0,
             pathIdx: 1,  // 从起点 waypoint[0] 出发，目标是 waypoint[1]
+            branch,     // 双路分叉：本敌人所走的分支
+            bossEnraged: false,
             buffs: {},
             vulnerable: 1,   // 易伤倍率（默认 1，易伤词缀目标承受额外伤害）
             vulnerableTimer: 0,  // 易伤剩余时间（归零恢复 1）
@@ -2717,13 +2939,14 @@ export class SceneInitializer extends Component {
     /** 将敌人在折线路径上的位置换算为 0..1 进度，供试玩统计最远推进使用。 */
     private enemyPathProgress(enemy: EnemyRuntime): number {
         let total = 0;
-        for (let i = 1; i < PATH_WAYPOINTS.length; i++) total += Vec3.distance(PATH_WAYPOINTS[i - 1], PATH_WAYPOINTS[i]);
+        const wps = this.waypointsOf(enemy);
+        for (let i = 1; i < wps.length; i++) total += Vec3.distance(wps[i - 1], wps[i]);
         if (total <= 0) return 0;
-        const targetIndex = Math.max(1, Math.min(enemy.pathIdx, PATH_WAYPOINTS.length - 1));
+        const targetIndex = Math.max(1, Math.min(enemy.pathIdx, wps.length - 1));
         let completed = 0;
-        for (let i = 1; i < targetIndex; i++) completed += Vec3.distance(PATH_WAYPOINTS[i - 1], PATH_WAYPOINTS[i]);
-        const segmentStart = PATH_WAYPOINTS[targetIndex - 1];
-        const segmentLength = Vec3.distance(segmentStart, PATH_WAYPOINTS[targetIndex]);
+        for (let i = 1; i < targetIndex; i++) completed += Vec3.distance(wps[i - 1], wps[i]);
+        const segmentStart = wps[targetIndex - 1];
+        const segmentLength = Vec3.distance(segmentStart, wps[targetIndex]);
         completed += Math.min(segmentLength, Vec3.distance(segmentStart, enemy.node.position));
         return completed / total;
     }
@@ -2949,7 +3172,7 @@ export class SceneInitializer extends Component {
 
     /** 牙刷横扫：对范围内所有敌人造成伤害 */
     private sweepAttack(tower: TowerRuntime, p: TowerParams): void {
-        let stitchCutTarget: EnemyRuntime | null = null;
+        let skewerCutTarget: EnemyRuntime | null = null;
         for (const e of this.enemies) {
             if (!e.node.isValid) continue;
             if (Vec3.distance(tower.node.position, e.node.position) <= p.range) {
@@ -2959,14 +3182,14 @@ export class SceneInitializer extends Component {
                 this.damageEnemy(e, p.damage, this.towerDamageSource(tower, 'sweep', '范围横扫'));
                 EffectManager.instance?.playHit(e.node);
                 EffectManager.instance?.playDamageNumber(e.node.position, p.damage, false);
-                if (tower.def.id === 'scissors' && e.buffs['stitch']
-                    && (!stitchCutTarget || this.compareFirst(e, stitchCutTarget, tower.node.position) < 0)) {
-                    stitchCutTarget = e;
+                if (tower.def.id === 'scissors' && e.buffs['skewer']
+                    && (!skewerCutTarget || this.compareFirst(e, skewerCutTarget, tower.node.position) < 0)) {
+                    skewerCutTarget = e;
                 }
             }
         }
-        if (tower.def.id === 'scissors' && stitchCutTarget) {
-            this.cutStitchChain(stitchCutTarget);
+        if (tower.def.id === 'scissors' && skewerCutTarget) {
+            this.cutSkewerChain(skewerCutTarget);
         }
     }
 
@@ -3001,7 +3224,10 @@ export class SceneInitializer extends Component {
                     ? '过载第二戳'
                     : tower.corePowered ? '供电戳击' : '吸管戳击';
                 if (result.isOverload) this.playtest.recordMechanismTrigger(mechanismId, mechanismName, 1);
-                this.damageEnemy(enemy, amount, this.towerDamageSource(
+                // 0.3.1：供电/过载戳击对 BOSS 额外 +50% 伤害（修复奶茶供电流打 BOSS 刮痧）
+                const bossMul = (mechanismId === 'core_powered_thrust' || mechanismId === 'overload_double_tap')
+                    && enemy.type === EnemyType.BOSS ? 1.5 : 1;
+                this.damageEnemy(enemy, amount * bossMul, this.towerDamageSource(
                     tower,
                     mechanismId,
                     mechanismName,
@@ -3025,7 +3251,8 @@ export class SceneInitializer extends Component {
 
     /** 敌人"离终点进度"标量：pathIdx 大优先，同段离下个 waypoint 近优先（值越大越靠近终点） */
     private enemyProgress(e: EnemyRuntime): number {
-        const wp = PATH_WAYPOINTS[Math.min(e.pathIdx, PATH_WAYPOINTS.length - 1)];
+        const wps = this.waypointsOf(e);
+        const wp = wps[Math.min(e.pathIdx, wps.length - 1)];
         const d = Vec3.distance(e.node.position, wp);
         return e.pathIdx * 10000 - d;
     }
@@ -3081,7 +3308,7 @@ export class SceneInitializer extends Component {
     }
 
     // ===== spin / smash / pierce 攻击（数值统一读 def.attack）=====
-    private pierceShots: PierceShot[] = [];   // 缝衣针飞行弹体（区别于戳击的即时直线）
+    private pierceShots: PierceShot[] = [];   // 筷子飞行弹体（区别于戳击的即时直线）
 
     /** spin 旋斩（打蛋器）：开启持续伤害通道，attackDuration 内每 damageTick 对半径内敌人结算 */
     private spinAttack(tower: TowerRuntime): void {
@@ -3197,7 +3424,7 @@ export class SceneInitializer extends Component {
         EffectManager.instance?.playExplosion(pos.clone(), radius);
     }
 
-    /** pierce 贯穿（缝衣针）：投掷一枚缝衣针弹体，沿直线飞行并穿透多个目标（区别于戳击的即时直线） */
+    /** pierce 贯穿（筷子）：投掷一枚筷子弹体，沿直线飞行并穿透多个目标（区别于戳击的即时直线） */
     private pierceAttack(tower: TowerRuntime): void {
         if (!this.battleRoot) return;
         const p = this.getTowerParams(tower);
@@ -3214,7 +3441,7 @@ export class SceneInitializer extends Component {
         const halfW = (a.width ?? 10) / 2;
         const maxTargets = a.maxTargets ?? 99;
 
-        // 预选中：针道内按"最靠近终点"优先，取前 maxTargets 个作为本针要结算的目标
+        // 预选中：弹道内按"最靠近终点"优先，取前 maxTargets 个作为本次要结算的目标
         const corridor: { e: EnemyRuntime; prog: number }[] = [];
         for (const e of this.enemies) {
             if (!e.node.isValid) continue;
@@ -3231,7 +3458,7 @@ export class SceneInitializer extends Component {
         const targetSet = new Set<EnemyRuntime>();
         for (let i = 0; i < Math.min(maxTargets, corridor.length); i++) targetSet.add(corridor[i].e);
 
-        const node = VisualFactory.createPierceShot(tower.def);   // 表现层构建针体外观
+        const node = VisualFactory.createPierceShot(tower.def);   // 表现层构建签体外观
         node.setParent(this.battleRoot);
         node.setPosition(tp);
         node.angle = Math.atan2(dirY, dirX) * 180 / Math.PI;
@@ -3246,7 +3473,7 @@ export class SceneInitializer extends Component {
         });
     }
 
-    /** 缝衣针弹体飞行与穿透命中：针尖到达敌人近缘即结算一次，最多 maxTargets 个 */
+    /** 筷子弹体飞行与穿透命中：签尖到达敌人近缘即结算一次，最多 maxTargets 个 */
     private updatePierceShots(dt: number): void {
         for (let i = this.pierceShots.length - 1; i >= 0; i--) {
             const s = this.pierceShots[i];
@@ -3258,19 +3485,19 @@ export class SceneInitializer extends Component {
                 if (!s.targetSet.has(e)) continue;               // 只结算预选中"最靠近终点"的目标
                 const fx = e.node.position.x - s.fromX;
                 const fy = e.node.position.y - s.fromY;
-                const f = fx * s.dirX + fy * s.dirY;        // 敌人沿针方向的前向距离
+                const f = fx * s.dirX + fy * s.dirY;        // 敌人沿弹道方向的前向距离
                 if (f < 0 || f > s.range) continue;
                 const sx = fx - f * s.dirX, sy = fy - f * s.dirY;
                 const rE = this.getEnemyDef(e.type)?.radius ?? 14;
-                if (Math.hypot(sx, sy) > s.halfW + rE) continue; // 针道外的敌人
-                if (s.traveled < f - rE) continue;               // 针尖尚未到达该敌人近缘
+                if (Math.hypot(sx, sy) > s.halfW + rE) continue; // 弹道外的敌人
+                if (s.traveled < f - rE) continue;               // 签尖尚未到达该敌人近缘
                 this.damageEnemy(e, s.damage, this.buildDamageSource(
                     s.sourceTowerId,
                     s.sourceTowerName,
                     s.sourceTowerId,
                     s.sourceTowerName,
                     'pierce',
-                    '穿透针击',
+                    '穿透射击',
                 ));
                 EffectManager.instance?.playHit(e.node);
                 EffectManager.instance?.playDamageNumber(e.node.position, s.damage, false);
@@ -3278,7 +3505,7 @@ export class SceneInitializer extends Component {
                 s.hitCount++;
             }
             if (s.traveled >= s.range || s.hitSet.size >= s.targetSet.size) {
-                this.tryCreateStitchChainFromPierceShot(s);
+                this.tryCreateSkewerChainFromPierceShot(s);
                 s.node.destroy();
                 this.pierceShots.splice(i, 1);
             }
@@ -3286,32 +3513,34 @@ export class SceneInitializer extends Component {
     }
 
     private threadSpoolModifier() {
-        return this.runBuild.towerModifiersOf('needle').find(m => m.id === 'thread_spool') ?? null;
+        return this.runBuild.towerModifiersOf('chopsticks').find(m => m.id === 'thread_spool') ?? null;
     }
 
-    private tryCreateStitchChainFromPierceShot(shot: PierceShot): void {
+    private tryCreateSkewerChainFromPierceShot(shot: PierceShot): void {
         const mod = this.threadSpoolModifier();
-        if (!mod || !this.battleRoot) return;
+        if (!this.battleRoot) return;
 
-        const ch = mod.changes;
-        const maxTargets = (ch.stitchChainTargets ?? 4) + this.towerStats.stitchChainTargetBonus;
+        // 0.3.1：无 thread_spool 改造卡时也创建基础串联链（2目标、3秒、0.5倍伤害），
+        //       让剪刀+筷子联动不锁死在稀有卡牌后面；有改造卡时使用增强数值。
+        const ch = mod?.changes;
+        const maxTargets = (ch?.skewerChainTargets ?? 2) + this.towerStats.skewerChainTargetBonus;
         const candidates = Array.from(shot.hitSet)
-            .filter(e => e.node.isValid && e.hp > 0 && !e.buffs['stitch'])
+            .filter(e => e.node.isValid && e.hp > 0 && !e.buffs['skewer'])
             .slice(0, maxTargets);
         if (candidates.length < 2) return;
 
-        const maxChains = ch.maxStitchChains ?? 3;
-        while (this.stitchChains.length >= maxChains) {
-            this.removeStitchChain(this.stitchChains[0]);
+        const maxChains = ch?.maxSkewerChains ?? 1;
+        while (this.skewerChains.length >= maxChains) {
+            this.removeSkewerChain(this.skewerChains[0]);
         }
 
-        const line = VisualFactory.createStitchChainLine(this.battleRoot);
-        const id = this.nextStitchChainId++;
-        const duration = (ch.stitchDuration ?? 4) + this.towerStats.stitchDurationBonus;
+        const line = VisualFactory.createSkewerChainLine(this.battleRoot);
+        const id = this.nextSkewerChainId++;
+        const duration = (ch?.skewerDuration ?? 3) + this.towerStats.skewerDurationBonus;
         const damage = shot.damage
-            * (ch.stitchCutDamageMultiplier ?? 0.8)
-            * (1 + this.towerStats.stitchCutDamageBonus);
-        const chain: StitchChainRuntime = {
+            * (ch?.skewerCutDamageMultiplier ?? 0.5)
+            * (1 + this.towerStats.skewerCutDamageBonus);
+        const chain: SkewerChainRuntime = {
             id,
             enemies: candidates,
             timer: duration,
@@ -3323,31 +3552,31 @@ export class SceneInitializer extends Component {
             lineGfx: line.gfx,
         };
         for (const e of candidates) {
-            e.buffs['stitch'] = { timer: duration, dps: 0, chainId: id };
+            e.buffs['skewer'] = { timer: duration, dps: 0, chainId: id };
         }
-        this.stitchChains.push(chain);
-        this.playtest.recordMechanismTrigger('stitch_chain', '彩线缝合', candidates.length);
-        this.drawStitchChain(chain);
+        this.skewerChains.push(chain);
+        this.playtest.recordMechanismTrigger('skewer_chain', '彩线串联', candidates.length);
+        this.drawSkewerChain(chain);
     }
 
-    private updateStitchChains(dt: number): void {
-        for (let i = this.stitchChains.length - 1; i >= 0; i--) {
-            const chain = this.stitchChains[i];
+    private updateSkewerChains(dt: number): void {
+        for (let i = this.skewerChains.length - 1; i >= 0; i--) {
+            const chain = this.skewerChains[i];
             chain.timer -= dt;
-            chain.enemies = chain.enemies.filter(e => e.node.isValid && e.hp > 0 && e.buffs['stitch']?.chainId === chain.id);
+            chain.enemies = chain.enemies.filter(e => e.node.isValid && e.hp > 0 && e.buffs['skewer']?.chainId === chain.id);
             if (chain.timer <= 0 || chain.enemies.length < 2) {
-                this.removeStitchChain(chain);
+                this.removeSkewerChain(chain);
                 continue;
             }
             for (const e of chain.enemies) {
-                const buff = e.buffs['stitch'];
+                const buff = e.buffs['skewer'];
                 if (buff) buff.timer = chain.timer;
             }
-            this.drawStitchChain(chain);
+            this.drawSkewerChain(chain);
         }
     }
 
-    private drawStitchChain(chain: StitchChainRuntime): void {
+    private drawSkewerChain(chain: SkewerChainRuntime): void {
         const g = chain.lineGfx;
         if (!g || !chain.lineNode.isValid) return;
         g.clear();
@@ -3379,10 +3608,10 @@ export class SceneInitializer extends Component {
         }
     }
 
-    private cutStitchChain(target: EnemyRuntime): void {
-        const chainId = target.buffs['stitch']?.chainId;
+    private cutSkewerChain(target: EnemyRuntime): void {
+        const chainId = target.buffs['skewer']?.chainId;
         if (chainId === undefined) return;
-        const chain = this.stitchChains.find(c => c.id === chainId);
+        const chain = this.skewerChains.find(c => c.id === chainId);
         if (!chain) return;
 
         const hitPos = target.node.position.clone();
@@ -3398,35 +3627,35 @@ export class SceneInitializer extends Component {
                 chain.sourceTowerName,
                 chain.sourceTowerId,
                 chain.sourceTowerName,
-                'stitch_cut',
-                '剪线引爆',
+                'skewer_cut',
+                '剪串引爆',
             ));
             EffectManager.instance?.playHit(e.node);
             EffectManager.instance?.playDamageNumber(e.node.position, chain.damage, true);
         }
-        this.playtest.recordMechanismTrigger('stitch_cut', '剪线引爆', hitCount);
-        EffectManager.instance?.playStitchCut(cutPoints.length > 0 ? cutPoints : [hitPos]);
-        this.removeStitchChain(chain);
+        this.playtest.recordMechanismTrigger('skewer_cut', '剪串引爆', hitCount);
+        EffectManager.instance?.playSkewerCut(cutPoints.length > 0 ? cutPoints : [hitPos]);
+        this.removeSkewerChain(chain);
     }
 
-    private removeStitchChain(chain: StitchChainRuntime): void {
-        const idx = this.stitchChains.indexOf(chain);
-        if (idx >= 0) this.stitchChains.splice(idx, 1);
+    private removeSkewerChain(chain: SkewerChainRuntime): void {
+        const idx = this.skewerChains.indexOf(chain);
+        if (idx >= 0) this.skewerChains.splice(idx, 1);
         for (const e of chain.enemies) {
-            if (e.buffs['stitch']?.chainId === chain.id) delete e.buffs['stitch'];
+            if (e.buffs['skewer']?.chainId === chain.id) delete e.buffs['skewer'];
         }
         if (chain.lineNode.isValid) chain.lineNode.destroy();
     }
 
-    private clearStitchChains(): void {
-        for (const chain of this.stitchChains) {
+    private clearSkewerChains(): void {
+        for (const chain of this.skewerChains) {
             for (const e of chain.enemies) {
-                if (e.buffs['stitch']?.chainId === chain.id) delete e.buffs['stitch'];
+                if (e.buffs['skewer']?.chainId === chain.id) delete e.buffs['skewer'];
             }
             if (chain.lineNode.isValid) chain.lineNode.destroy();
         }
-        this.stitchChains.length = 0;
-        this.nextStitchChainId = 1;
+        this.skewerChains.length = 0;
+        this.nextSkewerChainId = 1;
     }
 
     /** 敌群最密目标：在 range 内统计每个敌人 radius 邻域敌人数，取最大（aimMode 'mostEnemies'） */
@@ -3626,6 +3855,15 @@ export class SceneInitializer extends Component {
         return false;
     }
 
+    /** 统计某改造在全部塔类型上的累计层数（通用改造卡按塔类型分别记录，需跨类型汇总）。 */
+    private countModifierStacksAcrossTowers(modifierId: string): number {
+        let total = 0;
+        for (const towerId of Object.keys(this.runBuild.towerModifierStacks)) {
+            total += this.runBuild.modifierStacksOf(towerId, modifierId);
+        }
+        return total;
+    }
+
     /** 判断剩余手牌中是否还有可用的卡（用于剩余牌全部无效时自动结束） */
     private hasUsableCardRemaining(): boolean {
         return this.handCards.some(card => this.isHandCardUsable(card));
@@ -3633,6 +3871,19 @@ export class SceneInitializer extends Component {
 
     // === 游戏结束弹窗 ===
     private gameOverPanel: Node | null = null;
+    // ===== 复活机制（商业化：广告点位）=====
+    // 每局最多复活一次；复活后满血继续当前波，并给予补偿增益。
+    private reviveUsed = false;              // 本局是否已用过复活
+    private readonly reviveMaxUses = 1;      // 每局复活次数上限
+    private reviveHpRatio = 1.0;             // 复活后血量恢复比例（满血）
+    private reviveGoldBonus = 200;           // 复活补偿金币
+    private handleRevive = async (): Promise<boolean> => true;  // 由平台层注入的广告播放回调，默认直接成功
+    // ===== 高风险卡运行时状态 =====
+    private overdraftDamageBonus = 0;        // 透支供电：本波塔伤害加成（波末清空）
+    private overdraftPending = false;        // 透支供电：是否在波末执行全场降星
+    private overdraftFatigueWaves = 0;       // 透支供电：剩余「全体塔伤害衰减」的波数（可逆）
+    private readonly OVERDRAFT_FATIGUE_PENALTY = 0.3;  // 透支供电：衰减期塔伤害降低 30%
+    private incomeFreezeWaves = 0;           // 时间借贷：剩余收益归零的波数
     private isGameOver = false;
 
     private gameOver(): void {
@@ -3650,6 +3901,7 @@ export class SceneInitializer extends Component {
         this.updatePauseButton();
         this.hideGlobalBuffPanel();
         this.resetCardSystem();   // 失败清除手牌，避免结算弹窗下残留
+        this.hideTowerInfo();     // 0.3.1：隐藏塔信息面板，防止遮挡结算弹窗导出按钮
 
         // 清除所有敌人和子弹
         for (const en of this.enemies) en.node.destroy();
@@ -3716,14 +3968,133 @@ export class SceneInitializer extends Component {
             console.log('点击再来一局');
             this.restart();
         });
-        this.createPlaytestExportButton(panel, new Vec3(82, -40, 0));
+
+        // ===== 复活按钮（未用过复活时显示）=====
+        // 商业化为唯一广告点位：失败瞬间情绪峰值 + 沉没成本最高，转化优于局中插广告。
+        let reviveBtnNode: Node | null = null;
+        const canRevive = !this.reviveUsed;
+        if (canRevive) {
+            reviveBtnNode = this.createReviveButton(panel);
+        }
+        this.layoutDefeatButtons(panel, btnNode, reviveBtnNode);
 
         this.gameOverPanel = panel;
 
         if (this.statusLabel) this.statusLabel.string = '守卫失败';
     }
 
+    /** 失败面板底部：导出按钮固定在左侧，复活后主按钮右移，保证三按钮不重叠。 */
+    private layoutDefeatButtons(panel: Node, restartBtn: Node, reviveBtn: Node | null): void {
+        this.createPlaytestExportButton(panel, new Vec3(-190, -40, 0));
+        restartBtn.setPosition(0, -40, 0);
+        if (reviveBtn) reviveBtn.setPosition(190, -40, 0);
+    }
+
+    /**
+     * 创建「看广告复活」按钮 / Create revive button (ad placement).
+     * 点击后调用注入的 handleRevive（平台层播放激励视频），成功则复活当前局。
+     */
+    private createReviveButton(panel: Node): Node {
+        const btnNode = new Node('ReviveBtn');
+        btnNode.layer = Layers.Enum.UI_2D;
+        btnNode.setParent(panel);
+        const btnTransform = btnNode.addComponent(UITransform);
+        btnTransform.setContentSize(140, 44);
+        btnTransform.setAnchorPoint(0.5, 0.5);
+
+        const btnGfx = btnNode.addComponent(Graphics);
+        btnGfx.fillColor = new Color(200, 150, 40, 255);
+        btnGfx.roundRect(-70, -22, 140, 44, 8);
+        btnGfx.fill();
+
+        const btnLabelNode = new Node('Label');
+        btnLabelNode.layer = Layers.Enum.UI_2D;
+        btnLabelNode.setParent(btnNode);
+        btnLabelNode.addComponent(UITransform);
+        const btnLabel = btnLabelNode.addComponent(Label);
+        btnLabel.string = '看广告复活';
+        btnLabel.fontSize = 20;
+        btnLabel.color = new Color(255, 255, 255, 255);
+
+        btnNode.on(Node.EventType.TOUCH_END, async (event: EventTouch) => {
+            event.propagationStopped = true;
+            btnLabel.string = '加载中...';
+            const ok = await this.handleRevive();
+            if (ok) {
+                this.revive();
+            } else {
+                btnLabel.string = '看广告复活';
+                console.warn('复活失败：广告未播放完成');
+            }
+        });
+        return btnNode;
+    }
+
+    /**
+     * 执行复活 / Execute revive.
+     * 保留全部塔与构筑（沉没成本不丢失），回满血、补金币，重打当前波。
+     * 注意：不调用 restart，restart 会清空塔与格子。
+     */
+    private revive(): void {
+        if (this.reviveUsed) return;
+        this.reviveUsed = true;
+        console.log(`[Revive] 复活生效：回满血 +${this.reviveGoldBonus} 金币，重打第 ${this.currentWave} 波`);
+
+        // 销毁失败弹窗
+        if (this.gameOverPanel) {
+            this.gameOverPanel.destroy();
+            this.gameOverPanel = null;
+        }
+
+        this.stopCountdown();
+        this.cancelCardDrag();
+
+        // 清场：敌人/子弹/减速区（保留塔与格子状态）
+        for (const e of this.enemies) {
+            if (e.node.isValid) e.node.destroy();
+        }
+        this.enemies.length = 0;
+        for (const b of this.bullets) {
+            if (b.node.isValid) b.node.destroy();
+        }
+        this.bullets.length = 0;
+        for (const s of this.pierceShots) {
+            if (s.node.isValid) s.node.destroy();
+        }
+        this.pierceShots.length = 0;
+        this.clearSkewerChains();
+        for (const z of this.groundZones) {
+            if (z.node.isValid) z.node.destroy();
+        }
+        this.groundZones.length = 0;
+        // 复位 BOSS 锁定状态，避免指向已销毁的塔
+        this.bossLockedTower = null;
+        this.bossLockTimer = 0;
+
+        // 回满血 + 补偿金币
+        this.allyHp = Math.max(1, Math.ceil(this.allyMaxHp * this.reviveHpRatio));
+        this.gold += this.reviveGoldBonus;
+        if (this.livesLabel) this.livesLabel.string = `Base: ${this.allyHp}/${this.allyMaxHp}`;
+        if (this.goldLabel) this.goldLabel.string = `Gold: ${this.gold}`;
+
+        // 恢复运行态
+        this.isGameOver = false;
+        this.isWavePaused = false;
+        this.isUserPaused = false;
+        this.buffSelected = false;
+        this.hideBuffCards();
+        this.updatePauseButton();
+        this.hideTowerInfo();
+
+        // 重打当前波：currentWave 在 startNextWave 内自增，此处回退以保持波次不变
+        this.currentWave = Math.max(0, this.currentWave - 1);
+        this.startNextWave();
+    }
+
     private restart(): void {
+        // 新局复位复活状态（每局重新获得复活机会）
+        this.reviveUsed = false;
+
         // 销毁弹窗
         if (this.gameOverPanel) {
             this.gameOverPanel.destroy();
@@ -3760,7 +4131,7 @@ export class SceneInitializer extends Component {
             if (s.node.isValid) s.node.destroy();
         }
         this.pierceShots.length = 0;
-        this.clearStitchChains();
+        this.clearSkewerChains();
 
         // 取消任何进行中的长按拖拽调度
         this.unschedule(this.onLongPressMove);
@@ -3789,7 +4160,11 @@ export class SceneInitializer extends Component {
         // 重置状态
         this.isGameOver = false;
         this.gold = this.INITIAL_GOLD;
-        this.allyHp = this.ALLY_MAX_HP;
+        this.allyMaxHp = this.ALLY_MAX_HP_BASE;
+        this.allyHp = this.allyMaxHp;
+        this.waveHasBoss = false;
+        this.gambleWaveIndex = null;
+        this.gambleWaveLeaks = 0;
         this.currentWave = 0;
         this.spawnedInWave = 0;
         this.spawnTimer = 0;
@@ -3812,12 +4187,12 @@ export class SceneInitializer extends Component {
 
         // 更新 HUD
         this.updateGoldLabel();
-        if (this.livesLabel) this.livesLabel.string = `Base: ${this.allyHp}/${this.ALLY_MAX_HP}`;
+        if (this.livesLabel) this.livesLabel.string = `Base: ${this.allyHp}/${this.allyMaxHp}`;
         if (this.waveLabel) this.waveLabel.string = `Wave: 0/${this.WAVES.length}`;
         if (this.statusLabel) this.statusLabel.string = `点击「${this.currentDrawCost()}金抽卡」，5张牌最多使用2张`;
 
         // 关卡开始倒计时
-        this.playtest.beginRun();
+        this.playtest.beginRun(this.playtestMetadata);
         this.selectWavePattern();
         this.startLevelCountdown();
         console.log('游戏重新开始');
@@ -3901,9 +4276,7 @@ export class SceneInitializer extends Component {
         node.addComponent(UIOpacity);
 
         const gfx = node.addComponent(Graphics);
-        gfx.fillColor = new Color(60, 60, 70, 255);
-        gfx.rect(-28, -28, 56, 56);
-        gfx.fill();
+        drawTowerBase(gfx, def.color);
         gfx.strokeColor = def.rangeColor;
         gfx.lineWidth = 2;
         gfx.circle(0, 0, def.attack.range);
@@ -3952,61 +4325,30 @@ export class SceneInitializer extends Component {
         return node;
     }
 
+    /** 餐垫塔位：圆形垫子，尺寸与旧方块视觉体量一致（半径 = 格子的 36%） */
     private createTowerSlot(pos: Vec3, index: number, locked: boolean): Node {
         const node = new Node(`Slot_${index}`);
         node.layer = Layers.Enum.UI_2D;
         node.setPosition(pos);
 
         const transform = node.addComponent(UITransform);
-        const slotSize = CELL_SIZE * SLOT_SIZE_RATIO;   // 塔位尺寸 = 单元格的 70%
-        const slotHalf = slotSize / 2;
+        const slotSize = CELL_SIZE * SLOT_SIZE_RATIO;
         transform.setContentSize(slotSize, slotSize);
 
         const gfx = node.addComponent(Graphics);
-        this.drawSlotGfx(gfx, slotHalf, locked);
+        drawSlotMat(gfx, locked);
 
         return node;
     }
 
-    /** 绘制建造点（locked=true 灰色封锁，false 绿色可用） */
-    private drawSlotGfx(gfx: Graphics, slotHalf: number, locked: boolean): void {
-        gfx.clear();
-        const stroke = locked ? new Color(120, 120, 130) : new Color(100, 200, 100);
-        const fill = locked ? new Color(120, 120, 130, 60) : new Color(100, 200, 100, 60);
-        gfx.lineWidth = 3;
-        gfx.strokeColor = stroke;
-        gfx.fillColor = fill;
-        gfx.rect(-slotHalf, -slotHalf, slotHalf * 2, slotHalf * 2);
-        gfx.fill();
-        gfx.stroke();
 
-        if (locked) {
-            // 锁图标：锁身 + 锁梁（上半圆）
-            gfx.fillColor = new Color(220, 220, 230, 220);
-            gfx.rect(-8, -2, 16, 14);
-            gfx.fill();
-            gfx.lineWidth = 3;
-            gfx.strokeColor = new Color(220, 220, 230, 220);
-            gfx.arc(0, -2, 7, Math.PI, 0, false);   // false=顺时针，PI→PI/2→0 走上半圆
-            gfx.stroke();
-        } else {
-            // 十字标记
-            gfx.strokeColor = stroke;
-            gfx.lineWidth = 3;
-            gfx.moveTo(-14, 0); gfx.lineTo(14, 0);
-            gfx.moveTo(0, -14); gfx.lineTo(0, 14);
-            gfx.stroke();
-        }
-    }
-
-    /** 重绘某个建造点（用于解锁后由灰变绿） */
+    /** 重绘某个建造点（用于解锁后由灰变亮） */
     private redrawSlot(index: number, locked: boolean): void {
         const node = this.slotNodes[index];
         if (!node) return;
         const gfx = node.getComponent(Graphics);
         if (!gfx) return;
-        const slotSize = CELL_SIZE * SLOT_SIZE_RATIO;
-        this.drawSlotGfx(gfx, slotSize / 2, locked);
+        drawSlotMat(gfx, locked);
     }
 
     /** 根据占用/锁定状态同步地基显示，修复拖拽异常导致的空格隐藏。 */
@@ -4185,24 +4527,48 @@ export class SceneInitializer extends Component {
 
         const towerCount = 5 - hammerCount;
         const result: CardDef[] = [];
+        const usedSourceIds = new Set<string>();  // 同手牌去重
 
-        // 前两次刷新保证基础塔类型相对完整（从候选中挑 tower 类）
+        // 开局保底：仅第一次抽牌给1个入口塔+1个充电宝
         const towerCands = candidates.filter(c => c.contentType === 'tower');
-        if (this.drawCount < 2 && towerCount >= 3) {
-            for (const id of ['bubble_tea_straw', 'slow', 'poison']) {
-                const c = towerCands.find(x => x.towerId === id);
-                if (c) result.push(this.makeCardFromDef(c));
+        if (this.drawCount < 1 && towerCount >= 3) {
+            // 从3个流派入口中随机选1个
+            const entryTowers = ['bubble_tea_straw', 'poison', 'slow'];
+            const chosenId = entryTowers[Math.floor(Math.random() * entryTowers.length)];
+            const c = towerCands.find(x => x.towerId === chosenId);
+            if (c) {
+                result.push(this.makeCardFromDef(c));
+                usedSourceIds.add(c.id);
+            }
+            // 保底1个通用辅助塔（充电宝）
+            const powerbank = towerCands.find(x => x.towerId === 'powerbank');
+            if (powerbank) {
+                result.push(this.makeCardFromDef(powerbank));
+                usedSourceIds.add(powerbank.id);
             }
         }
-        // 补足剩余：从候选加权随机（含 tower/tool/modifier/tactic）
+        // 补足剩余：从候选加权随机（含 tower/tool/modifier/tactic），同手牌禁止重复 sourceId
         while (result.length < towerCount) {
             if (candidates.length === 0) break;
-            const pool = candidates.map(c => ({ c, w: computeWeight({ baseWeight: c.baseWeight, weightRules: c.weightRules }, snap) }));
+            const pool = candidates
+                .filter(c => !usedSourceIds.has(c.id))
+                .map(c => {
+                    // 改造卡权重：仅当本流派尚无任何改造时才启用 weightRules
+                    let rules = c.weightRules;
+                    if (c.contentType === 'modifier' && c.towerId) {
+                        const towerMods = this.runBuild.towerModifierStacks[c.towerId];
+                        const hasModForThisTower = towerMods && Object.keys(towerMods).length > 0;
+                        if (hasModForThisTower) rules = [];
+                    }
+                    return { c, w: computeWeight({ baseWeight: c.baseWeight, weightRules: rules }, snap) };
+                });
             const total = pool.reduce((s, x) => s + Math.max(0, x.w), 0);
+            if (total <= 0) break;
             let r = Math.random() * total;
             let pick = pool[0].c;
             for (const x of pool) { r -= Math.max(0, x.w); if (r <= 0) { pick = x.c; break; } }
             result.push(this.makeCardFromDef(pick));
+            usedSourceIds.add(pick.id);
         }
 
         if (hammerCount > 0) {
@@ -4317,21 +4683,28 @@ export class SceneInitializer extends Component {
         gfx.roundRect(-48, -58, 96, 116, 10);
         gfx.stroke();
         gfx.fillColor = new Color(150, 150, 150, 255);
-        gfx.circle(0, -2, 11);
+        // 占位圆跟随图标新位置（y 26、尺寸 26），半径由 11 缩到 8
+        gfx.circle(0, 26, 8);
         gfx.fill();
         node.active = false;
 
-        const iconNode = VisualFactory.createCardIcon(node, 38, 0, -1);
+        // 图标：38→26 并上移到 y=26（原 y=-1）。
+        // 目的：把卡片上部空间让给描述区。配合名称字号 15→13、描述字号 10→9（行高 13→12），
+        // 描述区高度 42→50，可容行数 3 行 → 4 行。
+        // 尺寸由 UITransform 控制（Sprite 为 CUSTOM 模式，跟随节点尺寸），改此处即可生效。
+        const iconNode = VisualFactory.createCardIcon(node, 26, 0, 26);
 
         const nameNode = new Node('Name');
         nameNode.layer = Layers.Enum.UI_2D;
         const nameTransform = nameNode.addComponent(UITransform);
-        nameTransform.setContentSize(82, 22);
+        // 名称：随图标下移到 y=4（原 38），高度 22→16，字号 15→13（行高 16）。
+        // 仍保留 82px 宽度，13 字号可容 6 字，四字塔名（如"杀虫喷雾"）不会换行。
+        nameTransform.setContentSize(82, 16);
         nameNode.setParent(node);
-        nameNode.setPosition(0, 34, 0);
+        nameNode.setPosition(0, 4, 0);
         const nameLabel = nameNode.addComponent(Label);
-        nameLabel.fontSize = 15;
-        nameLabel.lineHeight = 18;
+        nameLabel.fontSize = 13;
+        nameLabel.lineHeight = 16;
         nameLabel.color = new Color(255, 255, 255, 255);
         nameLabel.horizontalAlign = Label.HorizontalAlign.CENTER;
         nameLabel.verticalAlign = Label.VerticalAlign.CENTER;
@@ -4340,16 +4713,22 @@ export class SceneInitializer extends Component {
         const descNode = new Node('Desc');
         descNode.layer = Layers.Enum.UI_2D;
         const descTransform = descNode.addComponent(UITransform);
-        descTransform.setContentSize(82, 42);
+        // 描述区：高度 42→50（y=-30），容纳 4 行 = 行高 12 × 4 = 48，留 2px 余量。
+        // 区间 [-55, -5]：底边距卡底 3px，顶边与名称下沿（-4）留 1px 间隙，不与图标/名称重叠。
+        descTransform.setContentSize(88, 50);
         descNode.setParent(node);
-        descNode.setPosition(0, -34, 0);
+        descNode.setPosition(0, -30, 0);
         const descLabel = descNode.addComponent(Label);
-        descLabel.fontSize = 10;
-        descLabel.lineHeight = 13;
+        descLabel.fontSize = 9;
+        descLabel.lineHeight = 12;
         descLabel.color = new Color(200, 200, 210, 255);
         descLabel.horizontalAlign = Label.HorizontalAlign.CENTER;
         descLabel.verticalAlign = Label.VerticalAlign.TOP;
         descLabel.enableWrapText = true;
+        // 关键修复：Cocos Label 的 overflow 默认为 NONE，此时 enableWrapText 不会按节点宽度断行，
+        // 长描述会单行横向溢出卡片（手牌"时间借贷/杀虫喷雾"等长文案曾整句冲出卡外）。
+        // 改为 SHRINK：先按宽度自动换行，行数仍超出时才整体缩小字号兜底，绝不越界。
+        descLabel.overflow = Label.Overflow.SHRINK;
 
         // 卡类型标签（顶部，区分 塔/战术/改造/工具）
         const kindNode = new Node('Kind');
@@ -4398,10 +4777,12 @@ export class SceneInitializer extends Component {
         gfx.stroke();
         gfx.fillColor = card.color;
         if (card.kind === 'hammer') {
-            gfx.rect(-8, -7, 16, 14);
+            // 锤子占位图形随图标区上移：图标中心 y=-1 → 26，图形中心同步到 26
+            gfx.rect(-7, 20, 14, 12);
             gfx.fill();
         } else if (!hasIcon) {
-            gfx.circle(0, -2, 11);
+            // 同上：无贴图时的占位圆对齐新图标位置（y 26、半径 8）
+            gfx.circle(0, 26, 8);
             gfx.fill();
         }
         slot.nameLabel.string = card.name;
@@ -4428,12 +4809,36 @@ export class SceneInitializer extends Component {
         }
     }
 
+    /**
+     * 手牌描述断行：优先按"整句"断（；。！？），其次才退化为按逗号断。
+     *
+     * 旧实现对每个「：，、」都插换行，导致"立即获得150金币；随后2波的击杀与波次收益归零"
+     * 被切成 5 段语义破碎的短行（数字和它的量词被强行分开），可读性反而更差。
+     * 新逻辑：先按整句断开；只有当整句仍然很长（>12 字，装不进卡片宽度）时，
+     * 才在该句内部按逗号二次断行，保证每片都是完整的语义单元。
+     */
     private formatHandCardDesc(desc: string): string {
-        return desc
-            .replace(/：/g, '：\n')
-            .replace(/，/g, '，\n')
-            .replace(/、/g, '、\n')
-            .replace(/但/g, '\n但')
+        const sentences = desc
+            .split(/(?<=[；。！？])/)
+            .map(s => s.trim())
+            .filter(s => s.length > 0);
+
+        const pieces: string[] = [];
+        for (const sentence of sentences) {
+            if (sentence.length <= 12) {
+                pieces.push(sentence);
+                continue;
+            }
+            // 整句过长：按逗号/顿号二次断行，同样只断在标点之后，保留语义完整
+            const sub = sentence
+                .split(/(?<=[，、：])/)
+                .map(s => s.trim())
+                .filter(s => s.length > 0);
+            pieces.push(...(sub.length > 0 ? sub : [sentence]));
+        }
+
+        return pieces
+            .join('\n')
             .replace(/\n\s+/g, '\n')
             .replace(/\n{2,}/g, '\n')
             .trim();
@@ -4671,60 +5076,7 @@ export class SceneInitializer extends Component {
             && pos.y + radius <= halfH;
     }
 
-    /** 绘制终点友军建筑（城堡）*/
-    private drawAlly(parent: Node): void {
-        const node = new Node('Ally');
-        node.layer = Layers.Enum.UI_2D;
-        node.setParent(parent);
-        node.setPosition(this.PATH_END);
 
-        const transform = node.addComponent(UITransform);
-        transform.setContentSize(60, 60);
-
-        const gfx = node.addComponent(Graphics);
-        // 城堡主体
-        gfx.fillColor = new Color(120, 80, 60, 255);
-        gfx.rect(-20, -20, 40, 40);
-        gfx.fill();
-        // 城垛
-        gfx.rect(-20, 10, 10, 10);
-        gfx.rect(-5, 10, 10, 10);
-        gfx.rect(10, 10, 10, 10);
-        gfx.fill();
-        // 城门
-        gfx.fillColor = new Color(40, 40, 40, 255);
-        gfx.rect(-6, -20, 12, 16);
-        gfx.fill();
-    }
-
-    private drawPath(parent: Node): void {
-        const node = new Node('Path');
-        node.layer = Layers.Enum.UI_2D;
-        node.setParent(parent);
-        const transform = node.addComponent(UITransform);
-        transform.setContentSize(2000, 2000);
-        transform.setAnchorPoint(0.5, 0.5);
-
-        const gfx = node.addComponent(Graphics);
-        gfx.lineWidth = CELL_SIZE * ROAD_WIDTH_RATIO;   // 道路宽度 = 单元格的 65%
-        gfx.strokeColor = new Color(200, 180, 140, 180);
-        // 绘制折线路径
-        gfx.moveTo(PATH_WAYPOINTS[0].x, PATH_WAYPOINTS[0].y);
-        for (let i = 1; i < PATH_WAYPOINTS.length; i++) {
-            gfx.lineTo(PATH_WAYPOINTS[i].x, PATH_WAYPOINTS[i].y);
-        }
-        gfx.stroke();
-
-        // 起点（绿色）
-        gfx.fillColor = new Color(0, 255, 0, 200);
-        gfx.circle(this.PATH_START.x, this.PATH_START.y, 20);
-        gfx.fill();
-
-        // 终点（红色）
-        gfx.fillColor = new Color(255, 0, 0, 200);
-        gfx.circle(this.PATH_END.x, this.PATH_END.y, 20);
-        gfx.fill();
-    }
 
     /** 地图调试框：黄色边框，标示 BattleRoot 边界，作为 BattleRoot 子节点随地图整体等比缩放 */
     private drawMapDebugFrame(parent: Node): void {
@@ -4824,7 +5176,23 @@ export class SceneInitializer extends Component {
     /** 统一扣血入口：应用易伤后，仅记录真正扣掉的生命值，排除溢出伤害。 */
     private damageEnemy(e: EnemyRuntime, amount: number, source?: DamageAttribution, activeSeconds = 0): void {
         const beforeHp = Math.max(0, e.hp);
-        const applied = Math.max(0, amount) * (e.vulnerable > 0 ? e.vulnerable : 1);
+        // 咖啡因过载：BOSS 波塔伤害提升 / 非 BOSS 波塔伤害惩罚（归因记录含此倍率）
+        const isTowerSrc = source?.sourceType === 'tower';
+        const bossWaveMul = (this.waveHasBoss && this.towerStats.bossWaveDamageBonus > 0 && isTowerSrc)
+            ? 1 + this.towerStats.bossWaveDamageBonus
+            : 1;
+        const nonBossWaveMul = (!this.waveHasBoss && this.towerStats.nonBossWaveDamagePenalty > 0 && isTowerSrc)
+            ? Math.max(0, 1 - this.towerStats.nonBossWaveDamagePenalty)
+            : 1;
+        // 透支供电：本波全体塔伤害加成（波末以降星 + 下波衰减偿还）
+        const overdraftMul = (this.overdraftDamageBonus > 0 && isTowerSrc)
+            ? 1 + this.overdraftDamageBonus
+            : 1;
+        // 透支供电衰减期：透支后的下一波全体塔伤害降低（可逆，一波后自动恢复）
+        const overdraftFatigueMul = (this.overdraftFatigueWaves > 0 && isTowerSrc)
+            ? Math.max(0, 1 - this.OVERDRAFT_FATIGUE_PENALTY)
+            : 1;
+        const applied = Math.max(0, amount) * bossWaveMul * nonBossWaveMul * overdraftMul * overdraftFatigueMul * (e.vulnerable > 0 ? e.vulnerable : 1);
         e.hp -= applied;
         const effectiveDamage = Math.min(beforeHp, applied);
         const isBoss = e.type === EnemyType.BOSS;
@@ -5105,58 +5473,61 @@ export class SceneInitializer extends Component {
     private ensureTowerInfoPanel(): void {
         if (this.towerInfoPanel) return;
         const canvas = this.node;
+        const panelWidth = 420;
+        const panelHeight = 430;
         const panel = new Node('TowerInfoPanel');
         panel.layer = Layers.Enum.UI_2D;
         panel.setParent(canvas);
         const t = panel.addComponent(UITransform);
-        t.setContentSize(300, 260);
+        t.setContentSize(panelWidth, panelHeight);
         t.setAnchorPoint(0.5, 0.5);
         const g = panel.addComponent(Graphics);
-        g.fillColor = new Color(18, 20, 32, 230);
-        g.roundRect(-150, -130, 300, 260, 12);
+        g.fillColor = new Color(18, 20, 32, 242);
+        g.roundRect(-panelWidth / 2, -panelHeight / 2, panelWidth, panelHeight, 12);
         g.fill();
         g.strokeColor = new Color(120, 200, 255, 255);
         g.lineWidth = 2;
-        g.roundRect(-150, -130, 300, 260, 12);
+        g.roundRect(-panelWidth / 2, -panelHeight / 2, panelWidth, panelHeight, 12);
         g.stroke();
 
         const label = new Node('InfoText');
         label.layer = Layers.Enum.UI_2D;
         label.setParent(panel);
         const lt = label.addComponent(UITransform);
-        lt.setContentSize(280, 180);
+        lt.setContentSize(388, 330);
         lt.setAnchorPoint(0.5, 0.5);
-        label.setPosition(0, 28, 0);
+        label.setPosition(0, 34, 0);
         const ll = label.addComponent(Label);
         ll.string = '';
-        ll.fontSize = 15;
+        ll.fontSize = 14;
         ll.color = new Color(255, 255, 255, 255);
-        ll.lineHeight = 21;
+        ll.lineHeight = 20;
         ll.horizontalAlign = Label.HorizontalAlign.LEFT;
         ll.verticalAlign = Label.VerticalAlign.TOP;
+        ll.overflow = Label.Overflow.SHRINK;
         ll.enableWrapText = true;
 
         const btn = new Node('DismantleButton');
         btn.layer = Layers.Enum.UI_2D;
         btn.setParent(panel);
-        btn.setPosition(0, -100, 0);
+        btn.setPosition(0, -181, 0);
         const bt = btn.addComponent(UITransform);
-        bt.setContentSize(180, 42);
+        bt.setContentSize(220, 48);
         bt.setAnchorPoint(0.5, 0.5);
         const bg = btn.addComponent(Graphics);
         bg.fillColor = new Color(95, 45, 45, 255);
-        bg.roundRect(-90, -21, 180, 42, 8);
+        bg.roundRect(-110, -24, 220, 48, 8);
         bg.fill();
         bg.strokeColor = new Color(255, 140, 120, 255);
         bg.lineWidth = 2;
-        bg.roundRect(-90, -21, 180, 42, 8);
+        bg.roundRect(-110, -24, 220, 48, 8);
         bg.stroke();
 
         const btnText = new Node('Text');
         btnText.layer = Layers.Enum.UI_2D;
         btnText.setParent(btn);
         btnText.setPosition(0, 0, 0);
-        btnText.addComponent(UITransform).setContentSize(170, 34);
+        btnText.addComponent(UITransform).setContentSize(210, 38);
         const bl = btnText.addComponent(Label);
         bl.string = '';
         bl.fontSize = 18;
@@ -5292,6 +5663,8 @@ export class SceneInitializer extends Component {
         if (ts.bleedLevel > 0) globals.push(`出血Lv${ts.bleedLevel}`);
         if (ts.slowLevel > 0) globals.push(`减速Lv${ts.slowLevel}`);
         if (ts.healSuppression > 0) globals.push(`治疗抑制${Math.round(ts.healSuppression * 100)}%`);
+        if (ts.bossWaveDamageBonus > 0) globals.push(`BOSS波伤害+${Math.round(ts.bossWaveDamageBonus * 100)}%`);
+        if (ts.nonBossWaveDamagePenalty > 0) globals.push(`非BOSS波伤害-${Math.round(ts.nonBossWaveDamagePenalty * 100)}%`);
         if (ts.strawDamageBonus > 0) globals.push(`奶茶伤害+${Math.round(ts.strawDamageBonus * 100)}%`);
         if (ts.corePoweredDamageBonus > 0 || ts.corePoweredCritBonus > 0) {
             globals.push(`供电强化+${Math.round(ts.corePoweredDamageBonus * 100)}%伤害/${Math.round(ts.corePoweredCritBonus * 100)}%暴击`);
@@ -5413,13 +5786,16 @@ export class SceneInitializer extends Component {
         if (ts.speedBonus !== 0) general.push(`攻速 ${ts.speedBonus > 0 ? '+' : ''}${Math.round(ts.speedBonus * 100)}%`);
         if (ts.rangeBonus !== 0) general.push(`范围 ${ts.rangeBonus > 0 ? '+' : ''}${Math.round(ts.rangeBonus * 100)}%`);
         if (ts.healSuppression > 0) general.push(`治疗抑制 ${Math.round(ts.healSuppression * 100)}%`);
+        if (ts.bossWaveDamageBonus > 0) general.push(`BOSS波伤害 +${Math.round(ts.bossWaveDamageBonus * 100)}%`);
+        if (ts.nonBossWaveDamagePenalty > 0) general.push(`非BOSS波伤害 -${Math.round(ts.nonBossWaveDamagePenalty * 100)}%`);
         if (ts.splashLevel > 0) general.push(`溅射 Lv${ts.splashLevel} / ${Math.round(ts.splashDamage * 100)}%`);
         if (ts.bleedLevel > 0) general.push(`出血 Lv${ts.bleedLevel} / 暴击${Math.round(ts.critChance * 100)}%`);
         if (ts.slowLevel > 0) general.push(`缓速弹幕 Lv${ts.slowLevel} / ${Math.round((1 - ts.slowMultiplier) * 100)}%`);
         addSection('通用', general);
 
         const milkTea: string[] = [];
-        if (ts.strawDamageBonus > 0) milkTea.push(`短管猛戳 +${Math.round(ts.strawDamageBonus * 100)}%伤害`);
+        const strawStacks = this.runBuild.stacksOf('straw_close_combat');
+        if (ts.strawDamageBonus > 0) milkTea.push(`短管猛戳 ${strawStacks}层 / +${Math.round(ts.strawDamageBonus * 100)}%伤害`);
         if (ts.corePoweredDamageBonus > 0 || ts.corePoweredCritBonus > 0) {
             milkTea.push(`供电 +${Math.round(ts.corePoweredDamageBonus * 100)}%伤害 / +${Math.round(ts.corePoweredCritBonus * 100)}%暴击`);
         }
@@ -5436,7 +5812,8 @@ export class SceneInitializer extends Component {
         const control: string[] = [];
         if (ts.smashSlowedDamageBonus > 0) control.push(`锅铲砸减速 +${Math.round(ts.smashSlowedDamageBonus * 100)}%伤害`);
         if (ts.smashRadiusBonus > 0) control.push(`锅铲半径 +${Math.round(ts.smashRadiusBonus * 100)}% / 变慢${Math.round(ts.smashIntervalPenalty * 100)}%`);
-        if (ts.brushSlowVulnerableBonus > 0) control.push(`刷洗破绽 +${Math.round(ts.brushSlowVulnerableBonus * 100)}%易伤`);
+        const weakspotStacks = this.runBuild.stacksOf('brush_weakspot');
+        if (ts.brushSlowVulnerableBonus > 0) control.push(`刷洗破绽 ${weakspotStacks}层 / 减速目标+${Math.round(ts.brushSlowVulnerableBonus * 100)}%易伤（2.5秒）`);
         if (ts.smashBrushedBurstLevel > 0) control.push(`碎裂爆破 Lv${ts.smashBrushedBurstLevel}`);
         addSection('控制爆破', control);
 

@@ -36,9 +36,11 @@ function applyModifyStat(effect: EffectDefinition, ctx: EffectContext): void {
         case 'smashIntervalPenalty': stats.smashIntervalPenalty += v; break;
         case 'brushSlowVulnerable': stats.brushSlowVulnerableBonus += v; break;
         case 'smashBrushedBurst': stats.smashBrushedBurstLevel += Math.round(v); break;
-        case 'stitchChainTargets': stats.stitchChainTargetBonus += Math.round(v); break;
-        case 'stitchDuration': stats.stitchDurationBonus += v; break;
-        case 'stitchCutDamage': stats.stitchCutDamageBonus += v; break;
+        case 'skewerChainTargets': stats.skewerChainTargetBonus += Math.round(v); break;
+        case 'skewerDuration': stats.skewerDurationBonus += v; break;
+        case 'skewerCutDamage': stats.skewerCutDamageBonus += v; break;
+        case 'bossWaveDamage': stats.bossWaveDamageBonus += v; break;
+        case 'nonBossWaveDamage': stats.nonBossWaveDamagePenalty -= v; break; // v 为伤害变化量（-0.25 → 惩罚 0.25）
         default:
             console.warn(`[EffectExecutor] 未知 stat: ${stat}`);
     }

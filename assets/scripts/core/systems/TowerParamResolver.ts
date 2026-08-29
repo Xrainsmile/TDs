@@ -9,8 +9,8 @@ export class TowerParamResolver {
         const star = tower.star;
         const affix = tower.affix;
 
-        // 基础（全局 roguelike 倍率）；各塔攻击力统一 +20%（Math.round 取整）
-        let damage = Math.round(def.attack.damage * 1.2 * ts.damageMultiplier);
+        // 基础（全局 roguelike 倍率）
+        let damage = Math.round(def.attack.damage * ts.damageMultiplier);
         let interval = def.attack.attackInterval / (ts.speedMultiplier * (tower.auraSpeedMul ?? 1));
         let range = def.attack.range * ts.rangeMultiplier;
         let poisonDps = 8;

@@ -80,7 +80,8 @@ export const WAVE_BUFFS: WaveBuffDefinition[] = [
         excludeConditions: [], weightRules: [
             { condition: { type: 'hasTower', towerId: 'bubble_tea_straw', count: 2, operator: '>=' }, multiplier: 1.35 },
         ],
-        minWave: 1, maxStacks: 3, baseWeight: 90,
+        minWave: 1, maxStacks: 1, baseWeight: 90,
+        buildId: 'milk_tea_power',
         effects: [
             { effectType: 'modifyStat', target: { type: 'towerType', towerId: 'bubble_tea_straw' }, value: 0.25, valueType: 'percent', parameters: { stat: 'strawDamage' } },
             { effectType: 'modifyStat', target: { type: 'towerType', towerId: 'bubble_tea_straw' }, value: 0.08, valueType: 'percent', parameters: { stat: 'strawRangePenalty' } },
@@ -98,6 +99,7 @@ export const WAVE_BUFFS: WaveBuffDefinition[] = [
             { condition: { type: 'hasTower', towerId: 'bubble_tea_straw', count: 2, operator: '>=' }, multiplier: 1.25 },
         ],
         minWave: 2, maxStacks: 2, baseWeight: 85,
+        buildId: 'milk_tea_power',
         effects: [
             { effectType: 'modifyStat', target: { type: 'towerType', towerId: 'bubble_tea_straw' }, value: 0.25, valueType: 'percent', parameters: { stat: 'corePoweredDamage' } },
             { effectType: 'modifyStat', target: { type: 'towerType', towerId: 'bubble_tea_straw' }, value: 0.10, valueType: 'percent', parameters: { stat: 'corePoweredCrit' } },
@@ -112,47 +114,51 @@ export const WAVE_BUFFS: WaveBuffDefinition[] = [
             { type: 'hasTower', towerId: 'powerbank', count: 1, operator: '>=' },
             { type: 'hasModifier', towerId: 'powerbank', modifierId: 'core_power', stacks: 1 },
             { type: 'hasModifier', towerId: 'bubble_tea_straw', modifierId: 'double_straw', stacks: 1 },
+            { type: 'hasCorePoweredTower', towerId: 'bubble_tea_straw', count: 2, operator: '>=' },
         ],
         excludeConditions: [], weightRules: [
             { condition: { type: 'hasTower', towerId: 'bubble_tea_straw', count: 2, operator: '>=' }, multiplier: 1.25 },
         ],
-        minWave: 3, maxStacks: 1, baseWeight: 95,
+        minWave: 5, maxStacks: 1, baseWeight: 78,
+        buildId: 'milk_tea_power',
         effects: [
             { effectType: 'modifyStat', target: { type: 'towerType', towerId: 'bubble_tea_straw' }, value: 1, parameters: { stat: 'corePoweredSecondStrikeCrit' } },
         ],
     },
     {
-        id: 'extended_thread', name: '加长线轴', description: '彩线额外连接2个敌人，缝合持续时间+1.5秒', icon: 'thr',
+        id: 'extended_thread', name: '加长线轴', description: '彩线额外连接2个敌人，串联持续时间+1.5秒', icon: 'thr',
         systemType: 'waveBuff', contentType: 'fusion', scope: 'towerType', permanent: true,
-        rarity: 'rare', tier: 2, buildPaths: ['firepower'], tags: ['role:build', 'needle', 'scissors', 'stitch', 'thread_spool'],
+        rarity: 'rare', tier: 2, buildPaths: ['firepower'], tags: ['role:build', 'chopsticks', 'scissors', 'skewer', 'thread_spool'],
         unlockConditions: [
-            { type: 'hasTower', towerId: 'needle', count: 1, operator: '>=' },
-            { type: 'hasModifier', towerId: 'needle', modifierId: 'thread_spool', stacks: 1 },
+            { type: 'hasTower', towerId: 'chopsticks', count: 1, operator: '>=' },
+            { type: 'hasModifier', towerId: 'chopsticks', modifierId: 'thread_spool', stacks: 1 },
         ],
         excludeConditions: [], weightRules: [
             { condition: { type: 'hasTower', towerId: 'scissors', count: 1, operator: '>=' }, multiplier: 1.35 },
         ],
         minWave: 2, maxStacks: 1, baseWeight: 88,
+        buildId: 'skewer_cut',
         effects: [
-            { effectType: 'modifyStat', target: { type: 'towerType', towerId: 'needle' }, value: 2, parameters: { stat: 'stitchChainTargets' } },
-            { effectType: 'modifyStat', target: { type: 'towerType', towerId: 'needle' }, value: 1.5, parameters: { stat: 'stitchDuration' } },
+            { effectType: 'modifyStat', target: { type: 'towerType', towerId: 'chopsticks' }, value: 2, parameters: { stat: 'skewerChainTargets' } },
+            { effectType: 'modifyStat', target: { type: 'towerType', towerId: 'chopsticks' }, value: 1.5, parameters: { stat: 'skewerDuration' } },
         ],
     },
     {
-        id: 'decisive_cut', name: '利落裁口', description: '剪线引爆伤害+50%，让剪刀成为缝合链的爆点', icon: 'cut',
+        id: 'decisive_cut', name: '利落裁口', description: '剪串引爆伤害+50%，让剪刀成为串联链的爆点', icon: 'cut',
         systemType: 'waveBuff', contentType: 'capstone', scope: 'towerType', permanent: true,
-        rarity: 'epic', tier: 3, buildPaths: ['firepower'], tags: ['role:build', 'needle', 'scissors', 'stitch', 'burst'],
+        rarity: 'epic', tier: 3, buildPaths: ['firepower'], tags: ['role:build', 'chopsticks', 'scissors', 'skewer', 'burst'],
         unlockConditions: [
-            { type: 'hasTower', towerId: 'needle', count: 1, operator: '>=' },
+            { type: 'hasTower', towerId: 'chopsticks', count: 1, operator: '>=' },
             { type: 'hasTower', towerId: 'scissors', count: 1, operator: '>=' },
-            { type: 'hasModifier', towerId: 'needle', modifierId: 'thread_spool', stacks: 1 },
+            { type: 'hasModifier', towerId: 'chopsticks', modifierId: 'thread_spool', stacks: 1 },
         ],
         excludeConditions: [], weightRules: [
             { condition: { type: 'hasBuff', buffId: 'extended_thread', stacks: 1 }, multiplier: 1.35 },
         ],
         minWave: 3, maxStacks: 2, baseWeight: 94,
+        buildId: 'skewer_cut',
         effects: [
-            { effectType: 'modifyStat', target: { type: 'towerType', towerId: 'needle' }, value: 0.5, valueType: 'percent', parameters: { stat: 'stitchCutDamage' } },
+            { effectType: 'modifyStat', target: { type: 'towerType', towerId: 'chopsticks' }, value: 0.5, valueType: 'percent', parameters: { stat: 'skewerCutDamage' } },
         ],
     },
     {
@@ -167,6 +173,7 @@ export const WAVE_BUFFS: WaveBuffDefinition[] = [
             { condition: { type: 'hasBuff', buffId: 'toxic_residue', stacks: 1 }, multiplier: 1.25 },
         ],
         minWave: 2, maxStacks: 3, baseWeight: 90,
+        buildId: 'poison_burst',
         effects: [{ effectType: 'modifyStat', target: { type: 'allTowers' }, value: 1, parameters: { stat: 'poisonResidue' } }],
     },
     {
@@ -179,6 +186,7 @@ export const WAVE_BUFFS: WaveBuffDefinition[] = [
         ],
         excludeConditions: [], weightRules: [],
         minWave: 3, maxStacks: 3, baseWeight: 78,
+        buildId: 'poison_burst',
         effects: [
             { effectType: 'modifyStat', target: { type: 'allTowers' }, value: 0.35, valueType: 'percent', parameters: { stat: 'poisonBurstDamage' } },
             { effectType: 'modifyStat', target: { type: 'allTowers' }, value: 0.10, valueType: 'percent', parameters: { stat: 'poisonBurstRadius' } },
@@ -194,6 +202,7 @@ export const WAVE_BUFFS: WaveBuffDefinition[] = [
         ],
         excludeConditions: [], weightRules: [],
         minWave: 2, maxStacks: 3, baseWeight: 88,
+        buildId: 'control_burst',
         effects: [{ effectType: 'modifyStat', target: { type: 'towerType', towerId: 'spatula' }, value: 0.40, valueType: 'percent', parameters: { stat: 'smashSlowedDamage' } }],
     },
     {
@@ -208,6 +217,7 @@ export const WAVE_BUFFS: WaveBuffDefinition[] = [
             { condition: { type: 'hasTower', towerId: 'spatula', count: 1, operator: '>=' }, multiplier: 1.25 },
         ],
         minWave: 2, maxStacks: 3, baseWeight: 86,
+        buildId: 'control_burst',
         effects: [{ effectType: 'modifyStat', target: { type: 'towerType', towerId: 'toothbrush' }, value: 0.20, valueType: 'percent', parameters: { stat: 'brushSlowVulnerable' } }],
     },
     {
@@ -217,6 +227,7 @@ export const WAVE_BUFFS: WaveBuffDefinition[] = [
         unlockConditions: [{ type: 'hasTower', towerId: 'spatula', count: 1, operator: '>=' }],
         excludeConditions: [], weightRules: [],
         minWave: 2, maxStacks: 2, baseWeight: 70,
+        buildId: 'control_burst',
         effects: [
             { effectType: 'modifyStat', target: { type: 'towerType', towerId: 'spatula' }, value: 0.25, valueType: 'percent', parameters: { stat: 'smashRadius' } },
             { effectType: 'modifyStat', target: { type: 'towerType', towerId: 'spatula' }, value: 0.15, valueType: 'percent', parameters: { stat: 'smashIntervalPenalty' } },
@@ -236,6 +247,7 @@ export const WAVE_BUFFS: WaveBuffDefinition[] = [
             { condition: { type: 'hasBuff', buffId: 'shatter_slow', stacks: 1 }, multiplier: 1.25 },
         ],
         minWave: 3, maxStacks: 2, baseWeight: 92,
+        buildId: 'control_burst',
         effects: [{ effectType: 'modifyStat', target: { type: 'allTowers' }, value: 1, parameters: { stat: 'smashBrushedBurst' } }],
     },
     {
@@ -246,6 +258,7 @@ export const WAVE_BUFFS: WaveBuffDefinition[] = [
         excludeConditions: [],
         weightRules: [{ condition: { type: 'hasBuff', buffId: 'splash', stacks: 1 }, multiplier: 1.2 }],
         minWave: 1, maxStacks: 3, baseWeight: 62,
+        buildId: 'poison_burst',
         effects: [{ effectType: 'modifyStat', target: { type: 'allTowers' }, value: 1, parameters: { stat: 'splash' } }],
     },
     {
@@ -256,6 +269,7 @@ export const WAVE_BUFFS: WaveBuffDefinition[] = [
         excludeConditions: [],
         weightRules: [{ condition: { type: 'hasBuff', buffId: 'bleed', stacks: 1 }, multiplier: 1.2 }],
         minWave: 1, maxStacks: 3, baseWeight: 58,
+        buildId: 'poison_burst',
         effects: [{ effectType: 'modifyStat', target: { type: 'allTowers' }, value: 1, parameters: { stat: 'bleed' } }],
     },
 
@@ -291,6 +305,29 @@ export const WAVE_BUFFS: WaveBuffDefinition[] = [
         effects: [
             { effectType: 'modifyStat', target: { type: 'allTowers' }, value: 0.18, valueType: 'percent', parameters: { stat: 'range' } },
             { effectType: 'modifyStat', target: { type: 'allTowers' }, value: -0.08, valueType: 'percent', parameters: { stat: 'damage' } },
+        ],
+    },
+
+    // —— 高风险高回报：代价真实可感、回报有质变感、结果有波动 ——
+    {
+        id: 'caffeine_overdrive', name: '咖啡因过载', description: 'BOSS波塔伤害+60%，非BOSS波塔伤害-25%', icon: 'caf',
+        systemType: 'waveBuff', contentType: 'mechanic', scope: 'global', permanent: true,
+        rarity: 'epic', tier: 2, buildPaths: ['firepower'], tags: ['role:greed', 'boss', 'damage'],
+        unlockConditions: [], excludeConditions: [], weightRules: [],
+        minWave: 3, maxStacks: 1, baseWeight: 76,
+        effects: [
+            { effectType: 'modifyStat', target: { type: 'allTowers' }, value: 0.6, valueType: 'percent', parameters: { stat: 'bossWaveDamage' } },
+            { effectType: 'modifyStat', target: { type: 'allTowers' }, value: -0.25, valueType: 'percent', parameters: { stat: 'nonBossWaveDamage' } },
+        ],
+    },
+    {
+        id: 'double_or_nothing', name: '双倍或全无', description: '下一波零漏怪+150金币；每漏1只额外-1命', icon: 'dbl',
+        systemType: 'waveBuff', contentType: 'mechanic', scope: 'global', permanent: true,
+        rarity: 'rare', tier: 1, buildPaths: ['general'], tags: ['role:greed', 'economy', 'gamble'],
+        unlockConditions: [], excludeConditions: [], weightRules: [],
+        minWave: 2, maxStacks: 3, baseWeight: 80,
+        effects: [
+            { effectType: 'custom', target: { type: 'self' }, value: 150, effectId: 'doubleOrNothing' },
         ],
     },
 ];

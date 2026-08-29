@@ -115,11 +115,22 @@ interface WaveDamageSummary {
     }>;
 }
 
+export type PlaytestGroup = 'A' | 'B' | 'C';
+export type PlayStrategy = '认真构筑' | '乱选' | '强追流派' | '自动试玩' | '人工试玩';
+
+export interface PlaytestMetadata {
+    balanceVersion: string;
+    testGroup: PlaytestGroup;
+    playStrategy: PlayStrategy;
+    buildCommit: string;
+}
+
 interface PlaytestSession {
-    schemaVersion: 3;
+    schemaVersion: 4;
     runId: string;
     platform: string;
     startedAt: string;
+    metadata: PlaytestMetadata;
     endedAt?: string;
     result?: 'victory' | 'defeat' | 'abandoned';
     finalWave?: number;
@@ -195,13 +206,18 @@ export class PlaytestRecorder {
     private openBuff: BuffRecord | null = null;
     private finalizedArtifact: StoredPlaytestArtifact | null = null;
     private milestoneKeys = new Set<string>();
+    /**
+     * 遥测总开关 / Telemetry master switch.
+     * URL 参数 telemetry=0（或微信启动参数）时关闭全部记录与落盘，用于裸玩或纯净试玩。
+     */
+    private telemetryEnabled: boolean = true;
 
     constructor() {
-        this.session = this.createSession();
+        this.session = this.createSession(this.defaultMetadata());
         this.installDebugBridge();
     }
 
-    beginRun(): void {
+    beginRun(metadata: Partial<PlaytestMetadata> = {}): void {
         if (!this.session.result && this.session.events.length > 1) {
             this.finalize('abandoned', this.session.finalWave ?? 0, this.session.finalSnapshot);
         }
@@ -211,8 +227,10 @@ export class PlaytestRecorder {
         this.openBuff = null;
         this.finalizedArtifact = null;
         this.milestoneKeys.clear();
-        this.session = this.createSession();
-        this.event('run_started');
+        this.telemetryEnabled = this.readTelemetryFlag(metadata);
+        this.session = this.createSession(this.normalizeMetadata(metadata));
+        this.event('run_started', 0, { ...this.session.metadata });
+        this.persistDraft();
         this.installDebugBridge();
     }
 
@@ -459,9 +477,11 @@ export class PlaytestRecorder {
             json,
             markdown,
         };
-        savePlaytestArtifact(this.finalizedArtifact);
+        if (this.telemetryEnabled) {
+            savePlaytestArtifact(this.finalizedArtifact);
+            console.log(`[Playtest] ${result}，记录已保存: ${this.session.runId}`);
+        }
         this.installDebugBridge();
-        console.log(`[Playtest] ${result}，记录已保存: ${this.session.runId}`);
         return this.finalizedArtifact;
     }
 
@@ -472,13 +492,73 @@ export class PlaytestRecorder {
         return exportPlaytestArtifact(this.finalizedArtifact);
     }
 
-    private createSession(): PlaytestSession {
+    private defaultMetadata(): PlaytestMetadata {
+        return {
+            balanceVersion: 'unversioned',
+            testGroup: 'A',
+            playStrategy: '人工试玩',
+            buildCommit: 'unknown',
+        };
+    }
+
+    /**
+     * 读取遥测总开关 / Read telemetry master switch.
+     * telemetry=0 / false / off 时关闭；缺省或任何其他值均视为开启。
+     */
+    private readTelemetryFlag(metadata: Partial<PlaytestMetadata>): boolean {
+        const root = globalThis as unknown as Record<string, any>;
+        const search = typeof root.location?.search === 'string' ? root.location.search : '';
+        const match = /[?&]telemetry=([^&]*)/.exec(search);
+        const launchQuery = root.wx?.getLaunchOptionsSync?.()?.query as Record<string, string> | undefined;
+        const raw = (match ? decodeURIComponent(match[1]) : launchQuery?.telemetry)?.trim().toLowerCase();
+        const disabled = raw === '0' || raw === 'false' || raw === 'off';
+        if (disabled) {
+            console.warn('[Playtest] 遥测已关闭（telemetry=0），本局不记录任何数据 / Telemetry disabled; no data recorded.');
+        }
+        return !disabled;
+    }
+
+    private normalizeMetadata(metadata: Partial<PlaytestMetadata>): PlaytestMetadata {
+        const defaults = this.defaultMetadata();
+        const balanceVersion = metadata.balanceVersion?.trim() ?? '';
+        const buildCommit = metadata.buildCommit?.trim() ?? '';
+        const testGroup = metadata.testGroup;
+        const playStrategy = metadata.playStrategy;
+        const validGroup = testGroup === 'A' || testGroup === 'B' || testGroup === 'C';
+        const validStrategy = playStrategy === '认真构筑' || playStrategy === '乱选' || playStrategy === '强追流派' || playStrategy === '自动试玩' || playStrategy === '人工试玩';
+        const validCommit = /^[0-9a-f]{7,40}$/i.test(buildCommit);
+
+        if (!balanceVersion) {
+            console.warn('[PlaytestMetadata] 缺少 balanceVersion，已使用 unversioned / Missing balanceVersion; using unversioned.');
+        }
+        if (!validGroup) {
+            console.warn('[PlaytestMetadata] testGroup 必须是 A、B 或 C，已使用 A / testGroup must be A, B, or C; using A.');
+        }
+        if (!validStrategy) {
+            console.warn('[PlaytestMetadata] playStrategy 非法，已使用“认真构筑” / Invalid playStrategy; using default.');
+        }
+        if (!validCommit) {
+            console.warn('[PlaytestMetadata] buildCommit 应为 7-40 位 Git 哈希，已使用 unknown / buildCommit should be a 7-40 character Git hash; using unknown.');
+        }
+
+        return {
+            balanceVersion: balanceVersion || defaults.balanceVersion,
+            testGroup: testGroup === 'A' || testGroup === 'B' || testGroup === 'C' ? testGroup : defaults.testGroup,
+            playStrategy: playStrategy === '认真构筑' || playStrategy === '乱选' || playStrategy === '强追流派' || playStrategy === '自动试玩' || playStrategy === '人工试玩'
+                ? playStrategy
+                : defaults.playStrategy,
+            buildCommit: validCommit ? buildCommit : defaults.buildCommit,
+        };
+    }
+
+    private createSession(metadata: PlaytestMetadata): PlaytestSession {
         const stamp = Date.now();
         return {
-            schemaVersion: 3,
+            schemaVersion: 4,
             runId: `${stamp}-${(`0000${Math.floor(Math.random() * 10000)}`).slice(-4)}`,
             platform: platformName(),
             startedAt: nowIso(),
+            metadata,
             waves: [], draws: [], buffs: [], milestones: [], events: [],
             damage: { total: 0, bossTotal: 0, sources: {}, mechanisms: {}, towers: {}, waves: {} },
             manualFeedback: {
@@ -514,6 +594,7 @@ export class PlaytestRecorder {
     }
 
     private persistDraft(): void {
+        if (!this.telemetryEnabled) return;
         const json = JSON.stringify(this.session, null, 2);
         savePlaytestArtifact({
             runId: this.session.runId,
@@ -552,6 +633,10 @@ export class PlaytestRecorder {
             `- 平台：${s.platform}`,
             `- 敌群变体：${s.runVariant?.name ?? '标准纵队'}`,
             `- 开始时间：${s.startedAt}`,
+            `- 平衡版本：${s.metadata.balanceVersion}`,
+            `- 测试组：${s.metadata.testGroup}`,
+            `- 游玩策略：${s.metadata.playStrategy}`,
+            `- Git Commit：${s.metadata.buildCommit}`,
             `- 结果：${s.result ?? '进行中'}`,
             `- 最终波次：${s.finalWave ?? '-'}`,
             `- 总抽牌次数：${s.draws.length}`,

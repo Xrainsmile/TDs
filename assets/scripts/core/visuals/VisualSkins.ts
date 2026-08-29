@@ -5,7 +5,7 @@
  * 美术阶段：把对应条目改成 kind='sprite'/'spine'/'particle'/'prefab' 并填 asset/clip，
  *           VisualFactory 按 kind 分支加载真资源，战斗逻辑零改动。
  * sprite 贴图约定：asset = assets/resources 下相对路径（不含扩展名，如 'art/attacks/straw_thrust'）；
- *           攻击视觉图一律"水平朝右"绘制——吸管根部在左缘、缝衣针针尖在右缘、
+ *           攻击视觉图一律"水平朝右"绘制——吸管根部在左缘、筷子签尖在右缘、
  *           圆环/冲击波居中（锚点由 VisualFactory 各 create* 按此约定设置）；
  *           贴图未加载完成时自动回退 Graphics 占位。
  */
@@ -79,8 +79,8 @@ export const VISUAL_SKINS: Record<string, VisualSkin> = {
     whisk_spin: { kind: 'graphics', body: [150, 200, 255, 220], accent: [255, 255, 255, 220] },
     // 锅铲砸击
     spatula_smash: { kind: 'graphics', body: [200, 140, 90, 255] },
-    // 缝衣针穿透：亮针体 + 灰针尖
-    needle_pierce: { kind: 'graphics', body: [235, 235, 245, 255], accent: [150, 150, 165, 255] },
+    // 筷子穿透：竹木色签体 + 深褐签尖（原缝衣针的金属银配色，随改名为筷子同步换色）
+    chopsticks_pierce: { kind: 'graphics', body: [222, 184, 122, 255], accent: [150, 105, 58, 255] },
     // 剪刀剪击：冷色金属 + 白色剪口
     scissors_sweep: { kind: 'graphics', body: [190, 210, 230, 255], accent: [255, 255, 255, 230], outline: [90, 110, 140, 230] },
 
@@ -103,7 +103,7 @@ export const VISUAL_SKINS: Record<string, VisualSkin> = {
         outline: [255, 255, 255, 210],
     },
     'fx.core_power_bolt': { kind: 'sprite', asset: 'art-bundle/art/fx/core_power_bolt_segment' },
-    'fx.stitch_chain': { kind: 'graphics', body: [255, 85, 170, 230], accent: [100, 235, 255, 230], outline: [255, 230, 80, 210] },
+    'fx.skewer_chain': { kind: 'graphics', body: [255, 85, 170, 230], accent: [100, 235, 255, 230], outline: [255, 230, 80, 210] },
 };
 
 /** 按 visualEffectId 取皮肤；未注册返回兜底 */

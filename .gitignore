@@ -56,3 +56,15 @@ build/
 # --- 日志 ---
 *.log
 logs/
+
+# --- 本地工具临时目录 ---
+.debug/
+.pink/
+.weixin-minigame-helper/
+
+# --- 本地临时备份目录（不入仓库）---
+.backup_map_*/
+
+# --- 误建的空壳目录（仅空 meta 嵌套，零实际资源）---
+/assets/rick/
+/assets/rick.meta

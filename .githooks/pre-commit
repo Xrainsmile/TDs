@@ -1,0 +1,68 @@
+#!/bin/sh
+#
+# TDs pre-commit：UI 布局几何自检
+#
+# 作用：提交前自动校验程序化创建的 UI 卡片（手牌卡 / buff 卡）内部元素
+#      是否越界、重叠、描述区行数是否够放。有问题则拦截提交。
+#
+# 设计取舍：
+#   1. 只检查"已暂存的改动"是否触及布局源码，未触及则直接放行，
+#      避免每次提交都白跑一遍（fast-path）。
+#   2. 用暂存区（--cached）的内容校验，而不是工作区文件。
+#      否则会出现"工作区已改好但暂存的是旧版"，或反过来，导致校验结论
+#      与即将入库的代码不一致。做法是把暂存版本导出到临时文件再校验。
+#   3. 校验失败一律拦截，但提供 --no-verify 逃生通道（见下方提示）。
+#
+# 绕过方式（确有紧急提交时）：
+#   git commit --no-verify
+
+set -e
+
+SRC_REL="assets/scripts/core/SceneInitializer.ts"
+
+# ── 1. 快速通道：本次提交未触及布局源码则直接放行 ──────────────────
+# git diff --cached --name-only 列出已暂存文件；--quiet 无输出表示无匹配
+if git diff --cached --name-only -- "$SRC_REL" | grep -q . ; then
+    : # 触及布局源码，继续校验
+else
+    exit 0
+fi
+
+# ── 2. 把"暂存区版本"的源码导出到临时文件 ────────────────────────
+TMPDIR_CHECK=$(mktemp -d)
+trap 'rm -rf "$TMPDIR_CHECK"' EXIT
+
+STAGED_SRC="$TMPDIR_CHECK/SceneInitializer.ts"
+if ! git show ":$SRC_REL" > "$STAGED_SRC" 2>/dev/null; then
+    echo "⚠️  [layout-check] 无法读取暂存区文件 :$SRC_REL，跳过校验"
+    exit 0
+fi
+
+# ── 3. 用暂存版本跑自检 ──────────────────────────────────────────
+# 自检脚本默认读 assets/scripts/core/SceneInitializer.ts，
+# 这里用 --src 参数指向暂存版本。
+if [ ! -f "tools/check-layout.js" ]; then
+    echo "⚠️  [layout-check] 找不到 tools/check-layout.js，跳过校验"
+    exit 0
+fi
+
+echo "🔍 [layout-check] 检测到布局源码改动，正在校验 UI 几何…"
+
+if node tools/check-layout.js --src "$STAGED_SRC" --quiet; then
+    echo "✅ [layout-check] 通过：无越界、无重叠、行数充足"
+    exit 0
+else
+    echo ""
+    echo "❌ [layout-check] UI 布局校验未通过，提交已拦截。"
+    echo ""
+    echo "   请修复上述问题后重新暂存并提交："
+    echo "     git add $SRC_REL"
+    echo "     git commit"
+    echo ""
+    echo "   查看详细几何数据："
+    echo "     npm run check:layout"
+    echo ""
+    echo "   确需紧急提交可绕过（不推荐）："
+    echo "     git commit --no-verify"
+    exit 1
+fi

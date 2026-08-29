@@ -47,6 +47,25 @@ __TD_PLAYTEST__.list()         // 最近20局
 __TD_PLAYTEST__.exportLatest() // 导出最近完成的一局
 ```
 
+## 试玩元数据
+
+每局 JSON 顶层和 Markdown 报告头部都会记录：
+
+- `balanceVersion`：平衡版本，例如 `0.3.0`。
+- `testGroup`：测试组，只能是 `A`、`B` 或 `C`。
+- `playStrategy`：游玩策略，只能是 `认真构筑`、`乱选` 或 `强追流派`。
+- `buildCommit`：本次构建对应的真实 Git commit，支持 7 至 40 位十六进制哈希。
+
+Web 端通过地址参数传入，中文策略需进行 URL 编码；浏览器直接粘贴中文地址时通常会自动编码：
+
+```text
+http://127.0.0.1:55035/?balanceVersion=0.3.0&testGroup=A&playStrategy=认真构筑&buildCommit=7ac91de
+```
+
+微信小游戏端读取 `wx.getLaunchOptionsSync().query` 中的同名字段。点击“再来一局”会继续使用本次启动时读取的同一组元数据。
+
+缺少或传入非法参数时，控制台会输出中英文警告，并采用 `unversioned`、`A`、`认真构筑`、`unknown` 作为安全回退值，不影响战斗。正式测试前应使用 `git rev-parse --short HEAD` 获取真实提交号，不要使用示例值。
+
 ## 人工补充内容
 
 导出的 Markdown 已预留以下字段：
