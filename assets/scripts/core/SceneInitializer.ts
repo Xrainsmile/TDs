@@ -1408,8 +1408,9 @@ export class SceneInitializer extends Component {
             }
             const hasIcon = VisualFactory.setCardIcon(this.buffCardLabels[i].iconNode, buff.id);
             const nameNode = this.buffCardLabels[i].name.node;
-            nameNode.setPosition(hasIcon ? 18 : 0, 14, 0);
-            nameNode.getComponent(UITransform)?.setContentSize(hasIcon ? 112 : 150, 28);
+            // 名称位置随卡加高同步（y 14→33）：有卡图时右移让位给图标，无卡图时居中
+            nameNode.setPosition(hasIcon ? 18 : 0, 33, 0);
+            nameNode.getComponent(UITransform)?.setContentSize(hasIcon ? 112 : 150, 26);
         }
         // 合格卡不足 3 张时，隐藏未被使用的卡片位
         for (let i = choiceCount; i < 3; i++) {
@@ -1540,29 +1541,36 @@ export class SceneInitializer extends Component {
         const node = new Node(`BuffCard_${index}`);
         node.layer = Layers.Enum.UI_2D;
         const transform = node.addComponent(UITransform);
-        transform.setContentSize(160, 96);
+        // 卡高 96 → 104：原高度下描述区（y=-16 高54，顶边 11）会盖住名称区（y=14 高28，底边 0），
+        // 重叠 11px 导致长描述（如"安全距离：所有塔范围+8%，稳住漏怪风险"）与标题文字叠在一起。
+        // 加高后描述区扩到 63px（4 行），且与名称留 3px 间隙。
+        // 三张卡竖排间距为 110，卡高 104 后仍留 6px 空隙，不会互相碰撞。
+        // 点击命中判定按 UITransform 动态读取宽高，无需同步修改。
+        transform.setContentSize(160, 104);
         node.setPosition(pos);
 
         const gfx = node.addComponent(Graphics);
         // 深紫色圆角背景
         gfx.fillColor = new Color(40, 30, 70, 230);
-        gfx.roundRect(-80, -48, 160, 96, 10);
+        gfx.roundRect(-80, -52, 160, 104, 10);
         gfx.fill();
         // 金色边框
         gfx.strokeColor = new Color(255, 200, 80, 255);
         gfx.lineWidth = 3;
-        gfx.roundRect(-80, -48, 160, 96, 10);
+        gfx.roundRect(-80, -52, 160, 104, 10);
         gfx.stroke();
 
         // 正式卡图位于标题左侧；无对应美术时节点自动隐藏。
-        VisualFactory.createCardIcon(node, 36, -57, 15);
+        // 图标随卡加高上移（y 15→17），保持垂直居中于名称行
+        VisualFactory.createCardIcon(node, 36, -57, 17);
 
         // buff 名称
         const nameNode = new Node('BuffName');
         nameNode.layer = Layers.Enum.UI_2D;
         nameNode.addComponent(UITransform);
         nameNode.setParent(node);
-        nameNode.setPosition(0, 14, 0);
+        // buff 名称：y 14→33（随卡加高上移），高度 28→26，与描述区间隔 3px 不再重叠
+        nameNode.setPosition(0, 33, 0);
         const nameLabel = nameNode.addComponent(Label);
         nameLabel.string = '';
         nameLabel.fontSize = 16;
@@ -1572,14 +1580,16 @@ export class SceneInitializer extends Component {
         nameLabel.verticalAlign = Label.VerticalAlign.CENTER;
         nameLabel.enableWrapText = true;
         const nameTransform = nameNode.getComponent(UITransform)!;
-        nameTransform.setContentSize(150, 28);
+        nameTransform.setContentSize(150, 26);
 
         // buff 描述
         const descNode = new Node('BuffDesc');
         descNode.layer = Layers.Enum.UI_2D;
         descNode.addComponent(UITransform);
         descNode.setParent(node);
-        descNode.setPosition(0, -16, 0);
+        // 描述：y -16→-14.5，高度 54→63（4 行 = 行高 15 × 4 = 60，留 3px 余量）
+        // 区间 [-46, 17]，顶边 17 低于名称底边 20，间隙 3px，彻底消除重叠
+        descNode.setPosition(0, -14.5, 0);
         const descLabel = descNode.addComponent(Label);
         descLabel.string = '';
         descLabel.fontSize = 11;
@@ -1588,8 +1598,10 @@ export class SceneInitializer extends Component {
         descLabel.horizontalAlign = Label.HorizontalAlign.CENTER;
         descLabel.verticalAlign = Label.VerticalAlign.TOP;
         descLabel.enableWrapText = true;
+        // 与手牌描述同一修复：overflow 默认 NONE 会忽略宽度不断行，改 SHRINK 保证长描述不越界。
+        descLabel.overflow = Label.Overflow.SHRINK;
         const descTransform = descNode.getComponent(UITransform)!;
-        descTransform.setContentSize(144, 54);
+        descTransform.setContentSize(144, 63);
 
         return node;
     }
@@ -3803,14 +3815,133 @@ export class SceneInitializer extends Component {
             console.log('点击再来一局');
             this.restart();
         });
-        this.createPlaytestExportButton(panel, new Vec3(82, -40, 0));
+
+        // ===== 复活按钮（未用过复活时显示）=====
+        // 商业化为唯一广告点位：失败瞬间情绪峰值 + 沉没成本最高，转化优于局中插广告。
+        let reviveBtnNode: Node | null = null;
+        const canRevive = !this.reviveUsed;
+        if (canRevive) {
+            reviveBtnNode = this.createReviveButton(panel);
+        }
+        this.layoutDefeatButtons(panel, btnNode, reviveBtnNode);
 
         this.gameOverPanel = panel;
 
         if (this.statusLabel) this.statusLabel.string = '守卫失败';
     }
 
+    /** 失败面板底部：导出按钮固定在左侧，复活后主按钮右移，保证三按钮不重叠。 */
+    private layoutDefeatButtons(panel: Node, restartBtn: Node, reviveBtn: Node | null): void {
+        this.createPlaytestExportButton(panel, new Vec3(-190, -40, 0));
+        restartBtn.setPosition(0, -40, 0);
+        if (reviveBtn) reviveBtn.setPosition(190, -40, 0);
+    }
+
+    /**
+     * 创建「看广告复活」按钮 / Create revive button (ad placement).
+     * 点击后调用注入的 handleRevive（平台层播放激励视频），成功则复活当前局。
+     */
+    private createReviveButton(panel: Node): Node {
+        const btnNode = new Node('ReviveBtn');
+        btnNode.layer = Layers.Enum.UI_2D;
+        btnNode.setParent(panel);
+        const btnTransform = btnNode.addComponent(UITransform);
+        btnTransform.setContentSize(140, 44);
+        btnTransform.setAnchorPoint(0.5, 0.5);
+
+        const btnGfx = btnNode.addComponent(Graphics);
+        btnGfx.fillColor = new Color(200, 150, 40, 255);
+        btnGfx.roundRect(-70, -22, 140, 44, 8);
+        btnGfx.fill();
+
+        const btnLabelNode = new Node('Label');
+        btnLabelNode.layer = Layers.Enum.UI_2D;
+        btnLabelNode.setParent(btnNode);
+        btnLabelNode.addComponent(UITransform);
+        const btnLabel = btnLabelNode.addComponent(Label);
+        btnLabel.string = '看广告复活';
+        btnLabel.fontSize = 20;
+        btnLabel.color = new Color(255, 255, 255, 255);
+
+        btnNode.on(Node.EventType.TOUCH_END, async (event: EventTouch) => {
+            event.propagationStopped = true;
+            btnLabel.string = '加载中...';
+            const ok = await this.handleRevive();
+            if (ok) {
+                this.revive();
+            } else {
+                btnLabel.string = '看广告复活';
+                console.warn('复活失败：广告未播放完成');
+            }
+        });
+        return btnNode;
+    }
+
+    /**
+     * 执行复活 / Execute revive.
+     * 保留全部塔与构筑（沉没成本不丢失），回满血、补金币，重打当前波。
+     * 注意：不调用 restart，restart 会清空塔与格子。
+     */
+    private revive(): void {
+        if (this.reviveUsed) return;
+        this.reviveUsed = true;
+        console.log(`[Revive] 复活生效：回满血 +${this.reviveGoldBonus} 金币，重打第 ${this.currentWave} 波`);
+
+        // 销毁失败弹窗
+        if (this.gameOverPanel) {
+            this.gameOverPanel.destroy();
+            this.gameOverPanel = null;
+        }
+
+        this.stopCountdown();
+        this.cancelCardDrag();
+
+        // 清场：敌人/子弹/减速区（保留塔与格子状态）
+        for (const e of this.enemies) {
+            if (e.node.isValid) e.node.destroy();
+        }
+        this.enemies.length = 0;
+        for (const b of this.bullets) {
+            if (b.node.isValid) b.node.destroy();
+        }
+        this.bullets.length = 0;
+        for (const s of this.pierceShots) {
+            if (s.node.isValid) s.node.destroy();
+        }
+        this.pierceShots.length = 0;
+        this.clearSkewerChains();
+        for (const z of this.groundZones) {
+            if (z.node.isValid) z.node.destroy();
+        }
+        this.groundZones.length = 0;
+        // 复位 BOSS 锁定状态，避免指向已销毁的塔
+        this.bossLockedTower = null;
+        this.bossLockTimer = 0;
+
+        // 回满血 + 补偿金币
+        this.allyHp = Math.max(1, Math.ceil(this.allyMaxHp * this.reviveHpRatio));
+        this.gold += this.reviveGoldBonus;
+        if (this.livesLabel) this.livesLabel.string = `Base: ${this.allyHp}/${this.allyMaxHp}`;
+        if (this.goldLabel) this.goldLabel.string = `Gold: ${this.gold}`;
+
+        // 恢复运行态
+        this.isGameOver = false;
+        this.isWavePaused = false;
+        this.isUserPaused = false;
+        this.buffSelected = false;
+        this.hideBuffCards();
+        this.updatePauseButton();
+        this.hideTowerInfo();
+
+        // 重打当前波：currentWave 在 startNextWave 内自增，此处回退以保持波次不变
+        this.currentWave = Math.max(0, this.currentWave - 1);
+        this.startNextWave();
+    }
+
     private restart(): void {
+        // 新局复位复活状态（每局重新获得复活机会）
+        this.reviveUsed = false;
+
         // 销毁弹窗
         if (this.gameOverPanel) {
             this.gameOverPanel.destroy();
@@ -4043,61 +4174,30 @@ export class SceneInitializer extends Component {
         return node;
     }
 
+    /** 餐垫塔位：圆形垫子，尺寸与旧方块视觉体量一致（半径 = 格子的 36%） */
     private createTowerSlot(pos: Vec3, index: number, locked: boolean): Node {
         const node = new Node(`Slot_${index}`);
         node.layer = Layers.Enum.UI_2D;
         node.setPosition(pos);
 
         const transform = node.addComponent(UITransform);
-        const slotSize = CELL_SIZE * SLOT_SIZE_RATIO;   // 塔位尺寸 = 单元格的 70%
-        const slotHalf = slotSize / 2;
+        const slotSize = CELL_SIZE * SLOT_SIZE_RATIO;
         transform.setContentSize(slotSize, slotSize);
 
         const gfx = node.addComponent(Graphics);
-        this.drawSlotGfx(gfx, slotHalf, locked);
+        drawSlotMat(gfx, locked);
 
         return node;
     }
 
-    /** 绘制建造点（locked=true 灰色封锁，false 绿色可用） */
-    private drawSlotGfx(gfx: Graphics, slotHalf: number, locked: boolean): void {
-        gfx.clear();
-        const stroke = locked ? new Color(120, 120, 130) : new Color(100, 200, 100);
-        const fill = locked ? new Color(120, 120, 130, 60) : new Color(100, 200, 100, 60);
-        gfx.lineWidth = 3;
-        gfx.strokeColor = stroke;
-        gfx.fillColor = fill;
-        gfx.rect(-slotHalf, -slotHalf, slotHalf * 2, slotHalf * 2);
-        gfx.fill();
-        gfx.stroke();
 
-        if (locked) {
-            // 锁图标：锁身 + 锁梁（上半圆）
-            gfx.fillColor = new Color(220, 220, 230, 220);
-            gfx.rect(-8, -2, 16, 14);
-            gfx.fill();
-            gfx.lineWidth = 3;
-            gfx.strokeColor = new Color(220, 220, 230, 220);
-            gfx.arc(0, -2, 7, Math.PI, 0, false);   // false=顺时针，PI→PI/2→0 走上半圆
-            gfx.stroke();
-        } else {
-            // 十字标记
-            gfx.strokeColor = stroke;
-            gfx.lineWidth = 3;
-            gfx.moveTo(-14, 0); gfx.lineTo(14, 0);
-            gfx.moveTo(0, -14); gfx.lineTo(0, 14);
-            gfx.stroke();
-        }
-    }
-
-    /** 重绘某个建造点（用于解锁后由灰变绿） */
+    /** 重绘某个建造点（用于解锁后由灰变亮） */
     private redrawSlot(index: number, locked: boolean): void {
         const node = this.slotNodes[index];
         if (!node) return;
         const gfx = node.getComponent(Graphics);
         if (!gfx) return;
-        const slotSize = CELL_SIZE * SLOT_SIZE_RATIO;
-        this.drawSlotGfx(gfx, slotSize / 2, locked);
+        drawSlotMat(gfx, locked);
     }
 
     /** 根据占用/锁定状态同步地基显示，修复拖拽异常导致的空格隐藏。 */
@@ -4432,21 +4532,28 @@ export class SceneInitializer extends Component {
         gfx.roundRect(-48, -58, 96, 116, 10);
         gfx.stroke();
         gfx.fillColor = new Color(150, 150, 150, 255);
-        gfx.circle(0, -2, 11);
+        // 占位圆跟随图标新位置（y 26、尺寸 26），半径由 11 缩到 8
+        gfx.circle(0, 26, 8);
         gfx.fill();
         node.active = false;
 
-        const iconNode = VisualFactory.createCardIcon(node, 38, 0, -1);
+        // 图标：38→26 并上移到 y=26（原 y=-1）。
+        // 目的：把卡片上部空间让给描述区。配合名称字号 15→13、描述字号 10→9（行高 13→12），
+        // 描述区高度 42→50，可容行数 3 行 → 4 行。
+        // 尺寸由 UITransform 控制（Sprite 为 CUSTOM 模式，跟随节点尺寸），改此处即可生效。
+        const iconNode = VisualFactory.createCardIcon(node, 26, 0, 26);
 
         const nameNode = new Node('Name');
         nameNode.layer = Layers.Enum.UI_2D;
         const nameTransform = nameNode.addComponent(UITransform);
-        nameTransform.setContentSize(82, 22);
+        // 名称：随图标下移到 y=4（原 38），高度 22→16，字号 15→13（行高 16）。
+        // 仍保留 82px 宽度，13 字号可容 6 字，四字塔名（如"杀虫喷雾"）不会换行。
+        nameTransform.setContentSize(82, 16);
         nameNode.setParent(node);
-        nameNode.setPosition(0, 34, 0);
+        nameNode.setPosition(0, 4, 0);
         const nameLabel = nameNode.addComponent(Label);
-        nameLabel.fontSize = 15;
-        nameLabel.lineHeight = 18;
+        nameLabel.fontSize = 13;
+        nameLabel.lineHeight = 16;
         nameLabel.color = new Color(255, 255, 255, 255);
         nameLabel.horizontalAlign = Label.HorizontalAlign.CENTER;
         nameLabel.verticalAlign = Label.VerticalAlign.CENTER;
@@ -4455,16 +4562,22 @@ export class SceneInitializer extends Component {
         const descNode = new Node('Desc');
         descNode.layer = Layers.Enum.UI_2D;
         const descTransform = descNode.addComponent(UITransform);
-        descTransform.setContentSize(82, 42);
+        // 描述区：高度 42→50（y=-30），容纳 4 行 = 行高 12 × 4 = 48，留 2px 余量。
+        // 区间 [-55, -5]：底边距卡底 3px，顶边与名称下沿（-4）留 1px 间隙，不与图标/名称重叠。
+        descTransform.setContentSize(88, 50);
         descNode.setParent(node);
-        descNode.setPosition(0, -34, 0);
+        descNode.setPosition(0, -30, 0);
         const descLabel = descNode.addComponent(Label);
-        descLabel.fontSize = 10;
-        descLabel.lineHeight = 13;
+        descLabel.fontSize = 9;
+        descLabel.lineHeight = 12;
         descLabel.color = new Color(200, 200, 210, 255);
         descLabel.horizontalAlign = Label.HorizontalAlign.CENTER;
         descLabel.verticalAlign = Label.VerticalAlign.TOP;
         descLabel.enableWrapText = true;
+        // 关键修复：Cocos Label 的 overflow 默认为 NONE，此时 enableWrapText 不会按节点宽度断行，
+        // 长描述会单行横向溢出卡片（手牌"时间借贷/杀虫喷雾"等长文案曾整句冲出卡外）。
+        // 改为 SHRINK：先按宽度自动换行，行数仍超出时才整体缩小字号兜底，绝不越界。
+        descLabel.overflow = Label.Overflow.SHRINK;
 
         // 卡类型标签（顶部，区分 塔/战术/改造/工具）
         const kindNode = new Node('Kind');
@@ -4513,10 +4626,12 @@ export class SceneInitializer extends Component {
         gfx.stroke();
         gfx.fillColor = card.color;
         if (card.kind === 'hammer') {
-            gfx.rect(-8, -7, 16, 14);
+            // 锤子占位图形随图标区上移：图标中心 y=-1 → 26，图形中心同步到 26
+            gfx.rect(-7, 20, 14, 12);
             gfx.fill();
         } else if (!hasIcon) {
-            gfx.circle(0, -2, 11);
+            // 同上：无贴图时的占位圆对齐新图标位置（y 26、半径 8）
+            gfx.circle(0, 26, 8);
             gfx.fill();
         }
         slot.nameLabel.string = card.name;
@@ -4543,12 +4658,36 @@ export class SceneInitializer extends Component {
         }
     }
 
+    /**
+     * 手牌描述断行：优先按"整句"断（；。！？），其次才退化为按逗号断。
+     *
+     * 旧实现对每个「：，、」都插换行，导致"立即获得150金币；随后2波的击杀与波次收益归零"
+     * 被切成 5 段语义破碎的短行（数字和它的量词被强行分开），可读性反而更差。
+     * 新逻辑：先按整句断开；只有当整句仍然很长（>12 字，装不进卡片宽度）时，
+     * 才在该句内部按逗号二次断行，保证每片都是完整的语义单元。
+     */
     private formatHandCardDesc(desc: string): string {
-        return desc
-            .replace(/：/g, '：\n')
-            .replace(/，/g, '，\n')
-            .replace(/、/g, '、\n')
-            .replace(/但/g, '\n但')
+        const sentences = desc
+            .split(/(?<=[；。！？])/)
+            .map(s => s.trim())
+            .filter(s => s.length > 0);
+
+        const pieces: string[] = [];
+        for (const sentence of sentences) {
+            if (sentence.length <= 12) {
+                pieces.push(sentence);
+                continue;
+            }
+            // 整句过长：按逗号/顿号二次断行，同样只断在标点之后，保留语义完整
+            const sub = sentence
+                .split(/(?<=[，、：])/)
+                .map(s => s.trim())
+                .filter(s => s.length > 0);
+            pieces.push(...(sub.length > 0 ? sub : [sentence]));
+        }
+
+        return pieces
+            .join('\n')
             .replace(/\n\s+/g, '\n')
             .replace(/\n{2,}/g, '\n')
             .trim();
@@ -4786,60 +4925,7 @@ export class SceneInitializer extends Component {
             && pos.y + radius <= halfH;
     }
 
-    /** 绘制终点友军建筑（城堡）*/
-    private drawAlly(parent: Node): void {
-        const node = new Node('Ally');
-        node.layer = Layers.Enum.UI_2D;
-        node.setParent(parent);
-        node.setPosition(this.PATH_END);
 
-        const transform = node.addComponent(UITransform);
-        transform.setContentSize(60, 60);
-
-        const gfx = node.addComponent(Graphics);
-        // 城堡主体
-        gfx.fillColor = new Color(120, 80, 60, 255);
-        gfx.rect(-20, -20, 40, 40);
-        gfx.fill();
-        // 城垛
-        gfx.rect(-20, 10, 10, 10);
-        gfx.rect(-5, 10, 10, 10);
-        gfx.rect(10, 10, 10, 10);
-        gfx.fill();
-        // 城门
-        gfx.fillColor = new Color(40, 40, 40, 255);
-        gfx.rect(-6, -20, 12, 16);
-        gfx.fill();
-    }
-
-    private drawPath(parent: Node): void {
-        const node = new Node('Path');
-        node.layer = Layers.Enum.UI_2D;
-        node.setParent(parent);
-        const transform = node.addComponent(UITransform);
-        transform.setContentSize(2000, 2000);
-        transform.setAnchorPoint(0.5, 0.5);
-
-        const gfx = node.addComponent(Graphics);
-        gfx.lineWidth = CELL_SIZE * ROAD_WIDTH_RATIO;   // 道路宽度 = 单元格的 65%
-        gfx.strokeColor = new Color(200, 180, 140, 180);
-        // 绘制折线路径
-        gfx.moveTo(PATH_WAYPOINTS[0].x, PATH_WAYPOINTS[0].y);
-        for (let i = 1; i < PATH_WAYPOINTS.length; i++) {
-            gfx.lineTo(PATH_WAYPOINTS[i].x, PATH_WAYPOINTS[i].y);
-        }
-        gfx.stroke();
-
-        // 起点（绿色）
-        gfx.fillColor = new Color(0, 255, 0, 200);
-        gfx.circle(this.PATH_START.x, this.PATH_START.y, 20);
-        gfx.fill();
-
-        // 终点（红色）
-        gfx.fillColor = new Color(255, 0, 0, 200);
-        gfx.circle(this.PATH_END.x, this.PATH_END.y, 20);
-        gfx.fill();
-    }
 
     /** 地图调试框：黄色边框，标示 BattleRoot 边界，作为 BattleRoot 子节点随地图整体等比缩放 */
     private drawMapDebugFrame(parent: Node): void {
