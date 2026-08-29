@@ -7,7 +7,9 @@
         "version": "3.8.8"
     },
     "scripts": {
-        "build:wechat": "/Applications/Cocos/Creator/3.8.8/CocosCreator.app/Contents/MacOS/CocosCreator --project . --build \"platform=wechatgame;debug=true;md5Cache=false\""
+        "build:wechat": "/Applications/Cocos/Creator/3.8.8/CocosCreator.app/Contents/MacOS/CocosCreator --project . --build \"platform=wechatgame;debug=true;md5Cache=false\"",
+        "check:layout": "node tools/check-layout.js",
+        "check:layout:watch": "node tools/check-layout.js --watch"
     },
     "pink": {
         "uuid": "87c5af07-a5f2-456c-b673-355769bc48f5",
