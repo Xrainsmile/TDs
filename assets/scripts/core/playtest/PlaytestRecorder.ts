@@ -1,4 +1,5 @@
 import {
+    discardPlaytestArtifact,
     exportPlaytestArtifact,
     listPlaytestArtifacts,
     PlaytestExportResult,
@@ -483,6 +484,26 @@ export class PlaytestRecorder {
         }
         this.installDebugBridge();
         return this.finalizedArtifact;
+    }
+
+    /**
+     * 复活后重开本局遥测：撤销已落库的 defeat 记录，让本局回到「进行中」。
+     * 用于「失败 → 看广告复活 → 最终获胜」的场景：
+     * 若不作废失败记录，同一局会同时留下 defeat 与 victory 两条终局数据，污染胜率统计。
+     */
+    reopenAfterRevive(): void {
+        if (!this.finalizedArtifact) return;
+        const revoked = this.finalizedArtifact;
+        this.finalizedArtifact = null;
+        this.session.result = undefined;
+        this.session.endedAt = undefined;
+        // 记录复活事件，保留「曾经失败过」的事实供复盘，但不作为终局结果
+        this.event('run_revived', this.currentWave(), { revokedResult: revoked.result });
+        if (this.telemetryEnabled) {
+            discardPlaytestArtifact(revoked.runId);
+            console.log(`[Playtest] 复活生效，已作废 ${revoked.result} 终局记录: ${revoked.runId}`);
+        }
+        this.installDebugBridge();
     }
 
     exportLatest(): PlaytestExportResult {

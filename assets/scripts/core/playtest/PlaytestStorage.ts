@@ -54,6 +54,12 @@ export function savePlaytestArtifact(artifact: StoredPlaytestArtifact): void {
     writeArtifacts([artifact, ...previous].slice(0, MAX_STORED_RUNS));
 }
 
+/** 作废指定 runId 的终局记录（复活场景：撤销已落库的 defeat，避免与后续 victory 并存） */
+export function discardPlaytestArtifact(runId: string): void {
+    const remaining = readArtifacts().filter(item => item.runId !== runId);
+    writeArtifacts(remaining);
+}
+
 export function listPlaytestArtifacts(): StoredPlaytestArtifact[] {
     return readArtifacts();
 }

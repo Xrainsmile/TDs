@@ -4107,6 +4107,8 @@ export class SceneInitializer extends Component {
         this.hideBuffCards();
         this.updatePauseButton();
         this.hideTowerInfo();
+        // 作废失败时已落库的 defeat 记录：复活后若最终获胜，只保留 victory，避免污染胜率统计
+        this.playtest.reopenAfterRevive();
 
         // 重打当前波：currentWave 在 startNextWave 内自增，此处回退以保持波次不变
         this.currentWave = Math.max(0, this.currentWave - 1);
@@ -4200,6 +4202,12 @@ export class SceneInitializer extends Component {
         this.isUserPaused = false;
         this.buffSelected = false;
         this.currentBuffChoices = [];
+        // 高风险卡运行时状态复位：不清空会把上一局的透支加成/衰减、收益冻结带入新局
+        this.overdraftDamageBonus = 0;
+        this.overdraftPending = false;
+        this.overdraftFatigueWaves = 0;
+        this.overdraftFatigueSetThisWave = false;
+        this.incomeFreezeWaves = 0;
         this.towerStats.reset();
         this.runBuild.reset();
         this.mainBuildPath = null;
