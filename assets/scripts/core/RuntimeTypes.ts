@@ -115,6 +115,8 @@ export interface EnemyRuntime {
     branch: number;
     bossEnraged: boolean;
     buffs: Record<string, EnemyBuffRuntime>;
+    /** 最后一次受到塔伤害时，造成伤害的塔 id（回收齿轮等按塔结算的效果依赖此归属） */
+    lastHitTowerId?: string;
 }
 
 /** pierce 筷子飞行弹体 */

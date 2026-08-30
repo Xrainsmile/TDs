@@ -2351,15 +2351,23 @@ export class SceneInitializer extends Component {
             e.node.removeFromParent();
             e.node.destroy();
             this.enemies.splice(i, 1);
-            this.gold += this.KILL_REWARD;
-            // 回收齿轮（通用改造）：每座装了该改造的塔额外返还 2 金，收益随铺开的塔数增长
-            const salvage = this.countModifierStacksAcrossTowers('salvage_gear');
-            if (salvage > 0) {
-                this.gold += 2 * salvage;
-                console.log(`[salvage_gear] ${salvage} 层回收，返还 ${2 * salvage} 金币`);
+            const frozen = this.incomeFreezeWaves > 0;
+            if (frozen) {
+                console.log('[timeLoan] 击杀收益被冻结');
+            } else {
+                this.gold += this.KILL_REWARD;
+            }
+            // 回收齿轮（通用改造）：按「击杀该敌人的塔自身」的改造层数返还，
+            // 而非全场累加——全场累加会让多塔铺开时每次击杀返还 4/6/8 金，经济失控
+            if (!frozen && e.lastHitTowerId) {
+                const salvage = this.runBuild.modifierStacksOf(e.lastHitTowerId, 'salvage_gear');
+                if (salvage > 0) {
+                    this.gold += this.SALVAGE_GEAR_GOLD_PER_STACK * salvage;
+                    console.log(`[salvage_gear] ${e.lastHitTowerId} ${salvage} 层回收，返还 ${this.SALVAGE_GEAR_GOLD_PER_STACK * salvage} 金币`);
+                }
             }
             this.updateGoldLabel();
-            console.log(`击杀！+${this.KILL_REWARD} 金币，当前 ${this.gold}`);
+            console.log(`击杀！+${frozen ? 0 : this.KILL_REWARD} 金币，当前 ${this.gold}`);
         }
     }
 
@@ -2852,20 +2860,28 @@ export class SceneInitializer extends Component {
                         }
                     }
                     this.overdraftDamageBonus = 0;
-                    this.overdraftFatigueWaves = 1;
-                    console.log(`[overdraftPower] 波末结算：${demoted} 座塔降星（保底 1 星，未拆除），下一波塔伤害 -30%`);
-                    if (this.statusLabel) this.statusLabel.string = '透支反噬：全场降星，下一波伤害 -30%';
+                    this.overdraftFatigueWaves = this.OVERDRAFT_FATIGUE_WAVES;
+                    // 标记本波刚设置衰减，避免下方递减块在同一波末把它减回 0（衰减应作用于下一波）
+                    this.overdraftFatigueSetThisWave = true;
+                    console.log(`[overdraftPower] 波末结算：${demoted} 座塔降星（保底 1 星，未拆除），随后 ${this.overdraftFatigueWaves} 波塔伤害 -${Math.round(this.OVERDRAFT_FATIGUE_PENALTY * 100)}%`);
+                    if (this.statusLabel) this.statusLabel.string = `透支反噬：全场降星，后续 ${this.overdraftFatigueWaves} 波伤害 -${Math.round(this.OVERDRAFT_FATIGUE_PENALTY * 100)}%`;
                 }
                 // 时间借贷：收益冻结波数递减（本波的击杀/波末收益已按下方的冻结判定跳过）
                 if (this.incomeFreezeWaves > 0) {
                     this.incomeFreezeWaves--;
                     console.log(`[timeLoan] 收益冻结剩余 ${this.incomeFreezeWaves} 波`);
                 }
-                // 透支供电衰减期递减：衰减仅持续一波，之后自动恢复
+                // 透支供电衰减期递减：仅消耗「上一波及更早」已生效的波数，
+                // 本波刚设置的衰减跳过递减，确保衰减真正作用于接下来的完整波次
                 if (this.overdraftFatigueWaves > 0) {
-                    this.overdraftFatigueWaves--;
-                    if (this.overdraftFatigueWaves === 0) {
-                        console.log('[overdraftPower] 衰减期结束，塔伤害恢复正常');
+                    if (this.overdraftFatigueSetThisWave) {
+                        this.overdraftFatigueSetThisWave = false;
+                        console.log(`[overdraftPower] 衰减期开始，剩余 ${this.overdraftFatigueWaves} 波`);
+                    } else {
+                        this.overdraftFatigueWaves--;
+                        if (this.overdraftFatigueWaves === 0) {
+                            console.log('[overdraftPower] 衰减期结束，塔伤害恢复正常');
+                        }
                     }
                 }
                 this.refreshPlaytestBuildMilestones();
@@ -3855,15 +3871,6 @@ export class SceneInitializer extends Component {
         return false;
     }
 
-    /** 统计某改造在全部塔类型上的累计层数（通用改造卡按塔类型分别记录，需跨类型汇总）。 */
-    private countModifierStacksAcrossTowers(modifierId: string): number {
-        let total = 0;
-        for (const towerId of Object.keys(this.runBuild.towerModifierStacks)) {
-            total += this.runBuild.modifierStacksOf(towerId, modifierId);
-        }
-        return total;
-    }
-
     /** 判断剩余手牌中是否还有可用的卡（用于剩余牌全部无效时自动结束） */
     private hasUsableCardRemaining(): boolean {
         return this.handCards.some(card => this.isHandCardUsable(card));
@@ -3883,6 +3890,9 @@ export class SceneInitializer extends Component {
     private overdraftPending = false;        // 透支供电：是否在波末执行全场降星
     private overdraftFatigueWaves = 0;       // 透支供电：剩余「全体塔伤害衰减」的波数（可逆）
     private readonly OVERDRAFT_FATIGUE_PENALTY = 0.3;  // 透支供电：衰减期塔伤害降低 30%
+    private readonly OVERDRAFT_FATIGUE_WAVES = 1;      // 透支供电：反噬衰减持续的波数
+    private overdraftFatigueSetThisWave = false;       // 透支供电：衰减是否在本波末刚设置（避免同波被递减清零）
+    private readonly SALVAGE_GEAR_GOLD_PER_STACK = 2;  // 回收齿轮：每层每次击杀返还金币（按击杀塔自身层数结算）
     private incomeFreezeWaves = 0;           // 时间借贷：剩余收益归零的波数
     private isGameOver = false;
 
@@ -5197,6 +5207,11 @@ export class SceneInitializer extends Component {
         const effectiveDamage = Math.min(beforeHp, applied);
         const isBoss = e.type === EnemyType.BOSS;
         const killed = beforeHp > 0 && e.hp <= 0;
+        // 记录最后击打者：回收齿轮等「按塔结算」的效果依赖此归因，
+        // 若伤害来自塔则记录塔 id，非塔伤害（毒/环境等）不清空已有归属
+        if (isTowerSrc && source?.sourceId) {
+            e.lastHitTowerId = source.sourceId;
+        }
         this.playtest.recordDamage(source ?? {
             sourceType: 'unknown', sourceId: 'unknown', sourceName: '未归因伤害',
             mechanismId: 'unknown', mechanismName: '未归因',
