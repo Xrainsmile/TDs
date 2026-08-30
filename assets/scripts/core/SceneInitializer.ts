@@ -3189,9 +3189,16 @@ export class SceneInitializer extends Component {
     /** 牙刷横扫：对范围内所有敌人造成伤害 */
     private sweepAttack(tower: TowerRuntime, p: TowerParams): void {
         let skewerCutTarget: EnemyRuntime | null = null;
+        // 加宽口径：作用范围倍率 + 横扫角度加成。
+        // 扇形张角越大，等效覆盖半径越大（以 90° 为基准按角度比例折算），
+        // 避免改造后张角变大但判定半径不变导致的"看得见打不到"。
+        const sweepRadius = p.range * (p.radiusMultiplier ?? 1);
+        const angleBonus = p.angleBonus ?? 0;
+        const angleScale = angleBonus > 0 ? 1 + angleBonus / 90 : 1;
+        const effectiveRange = sweepRadius * angleScale;
         for (const e of this.enemies) {
             if (!e.node.isValid) continue;
-            if (Vec3.distance(tower.node.position, e.node.position) <= p.range) {
+            if (Vec3.distance(tower.node.position, e.node.position) <= effectiveRange) {
                 if (tower.def.id === 'toothbrush' && this.towerStats.brushSlowVulnerableBonus > 0 && this.isEnemySlowed(e)) {
                     this.applyBrushWeakspot(e);
                 }
@@ -3369,7 +3376,8 @@ export class SceneInitializer extends Component {
     private smashAttack(tower: TowerRuntime): void {
         const p = this.getTowerParams(tower);
         const a = tower.def.attack;
-        const radius = (a.radius ?? 60) * (1 + this.towerStats.smashRadiusBonus);
+        // 加宽口径：作用半径倍率（改造叠加后由参数解析器输出）
+        const radius = (a.radius ?? 60) * (1 + this.towerStats.smashRadiusBonus) * (p.radiusMultiplier ?? 1);
         const tidx = this.findMostEnemiesTarget(tower.node.position, p.range, radius);
         if (tidx < 0) return;
         // 漏怪风险兜底：最密点爆发若覆盖不到范围内"最靠前(离终点最近)"的落单敌人，
@@ -3455,7 +3463,11 @@ export class SceneInitializer extends Component {
         const dirX = dx / len, dirY = dy / len;
         const range = p.range;
         const halfW = (a.width ?? 10) / 2;
-        const maxTargets = a.maxTargets ?? 99;
+        // 穿刺弹头：额外命中目标数（改造叠加后由参数解析器输出）；99 视为无上限，不叠加
+        const baseMaxTargets = a.maxTargets ?? 99;
+        const maxTargets = baseMaxTargets >= 99 ? 99 : baseMaxTargets + (p.maxTargetsBonus ?? 0);
+        // 加宽口径：弹道半宽也受作用范围倍率影响
+        const halfWEffective = halfW * (p.radiusMultiplier ?? 1);
 
         // 预选中：弹道内按"最靠近终点"优先，取前 maxTargets 个作为本次要结算的目标
         const corridor: { e: EnemyRuntime; prog: number }[] = [];
@@ -3467,7 +3479,7 @@ export class SceneInitializer extends Component {
             const f = fx * dirX + fy * dirY;
             if (f < -rE || f > range + rE) continue;
             const sx = fx - f * dirX, sy = fy - f * dirY;
-            if (Math.hypot(sx, sy) > halfW + rE) continue;
+            if (Math.hypot(sx, sy) > halfWEffective + rE) continue;
             corridor.push({ e, prog: this.enemyProgress(e) });
         }
         corridor.sort((x, y) => y.prog - x.prog);   // 最靠近终点在前
@@ -3481,7 +3493,7 @@ export class SceneInitializer extends Component {
         this.pierceShots.push({
             node, fromX: tp.x, fromY: tp.y, dirX, dirY,
             speed: 720, traveled: 0, range,
-            halfW, damage: p.damage,
+            halfW: halfWEffective, damage: p.damage,
             maxTargets, hitCount: 0, hitSet: new Set(),
             targetSet,
             sourceTowerId: tower.def.id,

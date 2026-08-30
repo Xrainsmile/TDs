@@ -20,6 +20,12 @@ export interface TowerParams {
     thrustRepeatDelay?: number;
     poisonOnHitDps?: number;
     poisonOnHitDuration?: number;
+    /** 范围类攻击的作用半径倍率（加宽口径等改造叠加，默认 1） */
+    radiusMultiplier?: number;
+    /** 横扫类攻击的角度加成（度，加宽口径等改造叠加，默认 0） */
+    angleBonus?: number;
+    /** 额外可命中的目标数（穿刺弹头等改造叠加，默认 0） */
+    maxTargetsBonus?: number;
 }
 
 /** 伤害归因标签：战斗系统只负责提供事实，试玩记录器负责聚合。 */

@@ -63,11 +63,20 @@ export class TowerParamResolver {
         let thrustRepeatDelay = 0;
         let poisonOnHitDps = 0;
         let poisonOnHitDuration = 0;
+        // 改造叠加：多层同改造按乘法/加法累积，默认值为「无改造」时的中性值
+        let radiusMultiplier = 1;
+        let angleBonus = 0;
+        let maxTargetsBonus = 0;
         for (const m of mods) {
             const ch = m.changes;
             if (ch.damageMultiplier) damage = Math.round(damage * ch.damageMultiplier);
             if (ch.intervalMultiplier) interval *= ch.intervalMultiplier;
             if (ch.rangeMultiplier) range *= ch.rangeMultiplier;
+            // 加宽口径：作用半径倍率按层相乘，横扫角度按层相加
+            if (ch.radiusMultiplier) radiusMultiplier *= ch.radiusMultiplier;
+            if (ch.angleBonus) angleBonus += ch.angleBonus;
+            // 穿刺弹头：额外命中目标数按层相加
+            if (ch.maxTargetsBonus) maxTargetsBonus += ch.maxTargetsBonus;
             if (ch.repeatCount && ch.repeatCount > 1) {
                 thrustRepeatCount = ch.repeatCount;
                 thrustRepeatDelay = ch.repeatDelay ?? 0;
@@ -82,6 +91,7 @@ export class TowerParamResolver {
             damage, interval, range, poisonDps, poisonDuration, slowMultiplier, slowDuration,
             vulnerable, executeBonus, rapid, critChance, critMultiplier, thrustRepeatCount, thrustRepeatDelay,
             poisonOnHitDps, poisonOnHitDuration,
+            radiusMultiplier, angleBonus, maxTargetsBonus,
         };
     }
 }
