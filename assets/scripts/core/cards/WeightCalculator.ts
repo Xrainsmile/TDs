@@ -5,6 +5,7 @@
  * 保底机制(pity)由抽卡系统统一传入，避免每张卡各写一套。
  */
 
+import { rng } from '../utils/SeededRandom';
 import { GameSnapshot, WeightRule } from './types';
 import { evaluateCondition } from './ConditionEvaluator';
 
@@ -30,7 +31,7 @@ export function computeWeight(input: WeightInput, snap: GameSnapshot): number {
 export function weightedPick<T>(pool: { item: T; weight: number }[]): number {
     const total = pool.reduce((s, p) => s + Math.max(0, p.weight), 0);
     if (total <= 0) return -1;
-    let r = Math.random() * total;
+    let r = rng.random() * total;
     for (let i = 0; i < pool.length; i++) {
         r -= Math.max(0, pool[i].weight);
         if (r <= 0) return i;

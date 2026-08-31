@@ -1,3 +1,4 @@
+import { rng } from './utils/SeededRandom';
 import { _decorator, Component, Node, view, UITransform, Layers, Vec3, Graphics, Color, Label, EventTouch, v3, UIOpacity } from 'cc';
 import { HUD } from '../ui/HUD';
 import { EffectManager } from './EffectManager';
@@ -595,8 +596,88 @@ export class SceneInitializer extends Component {
     // 本局构筑状态（统一数据层：RunBuildState 记录 Buff/分支/层数/流派标签）
     private runBuild = new RunBuildState();
     private playtest = new PlaytestRecorder();
-    private readonly playtestMetadata = this.readPlaytestMetadata();
+    /** 基线测试元数据持久化键（Web localStorage / 微信 storage） */
+    private static readonly BASELINE_META_KEY = 'td.baseline.meta.v1';
+    /** 元数据：URL 参数打底，再用持久化的基线配置覆盖，避免每局重复拼 URL */
+    private playtestMetadata = this.initPlaytestMetadata();
+    /** 复活开关：revive=0/false/off 时关闭。复活会回满血并 +200 金币，会污染金币与结果统计。 */
+    private get reviveEnabled(): boolean {
+        return this.playtestMetadata.reviveEnabled !== false;
+    }
     private mainBuildPath: Exclude<BuildPath, 'general'> | null = null;  // 主构筑路线
+
+    /** 开局重置随机序列：指定 seed 时用种子 RNG 使发牌与战斗可复现，否则回退纯随机。 */
+    private resetRunRandom(): void {
+        const seed = this.playtestMetadata.seed;
+        if (seed === undefined) {
+            rng.clearSeed();
+            return;
+        }
+        rng.setSeed(seed);
+        console.log(`[SeededRandom] 本局种子 ${seed}，发牌与战斗随机可复现`);
+    }
+
+    // ===== 基线测试：一次设好常量，之后每局只换种子 =====
+
+    private initPlaytestMetadata(): Partial<PlaytestMetadata> {
+        return { ...this.readPlaytestMetadata(), ...this.readStoredMeta() };
+    }
+
+    private readStoredMeta(): Partial<PlaytestMetadata> {
+        try {
+            const root = globalThis as unknown as Record<string, any>;
+            const raw = root.localStorage?.getItem(SceneInitializer.BASELINE_META_KEY)
+                ?? root.wx?.getStorageSync?.(SceneInitializer.BASELINE_META_KEY);
+            return raw ? JSON.parse(raw) : {};
+        } catch {
+            return {};
+        }
+    }
+
+    private writeStoredMeta(meta: Partial<PlaytestMetadata>): void {
+        try {
+            const root = globalThis as unknown as Record<string, any>;
+            const raw = JSON.stringify(meta);
+            root.localStorage?.setItem(SceneInitializer.BASELINE_META_KEY, raw);
+            root.wx?.setStorageSync?.(SceneInitializer.BASELINE_META_KEY, raw);
+        } catch { /* 存储不可用时忽略，不影响战斗 */ }
+    }
+
+    /** 合并基线配置并持久化：commit / 版本 / 策略 / 复活开关这类常量只需设一次 */
+    private applyBaselineMeta(patch: Partial<PlaytestMetadata>): void {
+        this.playtestMetadata = { ...this.playtestMetadata, ...patch };
+        this.writeStoredMeta(this.playtestMetadata);
+        console.log('[Baseline] 配置已更新：', this.playtestMetadata);
+    }
+
+    /** 以指定种子重开本局：无需刷新页面、无需拼 URL */
+    private startSeededRun(seed: number, targetBuild?: string): void {
+        if (!Number.isFinite(seed) || seed < 0) {
+            console.warn('[Baseline] seed 必须是非负整数');
+            return;
+        }
+        this.applyBaselineMeta({ seed, targetBuild });
+        this.restart();
+    }
+
+    /** 控制台基线测试入口：__TD_BASELINE__ */
+    private installBaselineBridge(): void {
+        (globalThis as unknown as Record<string, any>).__TD_BASELINE__ = {
+            /** 一次性设好常量（持久化，之后每局自动带上） */
+            setMeta: (patch: Partial<PlaytestMetadata>) => this.applyBaselineMeta(patch),
+            /** 以指定种子重开本局 */
+            run: (seed: number, targetBuild?: string) => this.startSeededRun(seed, targetBuild),
+            /** 查看当前配置 */
+            info: () => ({ ...this.playtestMetadata, reviveEnabled: this.reviveEnabled }),
+            /** 清除持久化配置，回到纯 URL 参数 */
+            clear: () => {
+                this.writeStoredMeta({});
+                this.playtestMetadata = this.readPlaytestMetadata();
+                console.log('[Baseline] 已清除持久化配置');
+            },
+        };
+    }
+
     /** 是否正在三选一选卡（波次间暂停且未选 buff） */
     private get isBuffSelecting(): boolean { return this.isWavePaused && !this.buffSelected; }
 
@@ -657,11 +738,20 @@ export class SceneInitializer extends Component {
 
         const launchQuery = root.wx?.getLaunchOptionsSync?.()?.query as Record<string, string> | undefined;
         const read = (key: string): string | undefined => launchQuery?.[key] ?? values[key];
+        // seed：非负整数；非法值交给 PlaytestRecorder.normalizeMetadata 警告并忽略
+        const seedRaw = read('seed');
+        const seedNum = seedRaw !== undefined && seedRaw.trim() !== '' ? Number(seedRaw) : undefined;
+        // revive：0 / false / off 关闭复活（基线测试用）
+        const reviveRaw = read('revive')?.trim().toLowerCase();
+        const reviveEnabled = !(reviveRaw === '0' || reviveRaw === 'false' || reviveRaw === 'off');
+
         return {
             balanceVersion: read('balanceVersion'),
             testGroup: read('testGroup') as PlaytestMetadata['testGroup'] | undefined,
             playStrategy: read('playStrategy') as PlaytestMetadata['playStrategy'] | undefined,
             buildCommit: read('buildCommit'),
+            seed: seedNum !== undefined && Number.isFinite(seedNum) ? seedNum : undefined,
+            reviveEnabled,
         };
     }
 
@@ -670,7 +760,9 @@ export class SceneInitializer extends Component {
         // 高度固定 960，可见宽度 = 屏幕宽×960/屏高，窄屏手机（如 19.5:9）可见宽度仅约 443 < 640，
         // 因此所有横向固定排布的 UI（如手牌）必须按 _visibleSize.width 自适应缩放
         view.setDesignResolutionSize(640, 960, 3);
+        this.installBaselineBridge();
         this.playtest.beginRun(this.playtestMetadata);
+        this.resetRunRandom();
         this.selectWavePattern();
         // 美术阶段：预加载 kind='sprite' 的皮肤贴图（当前全为 graphics 时是 no-op）
         VisualFactory.preloadVisualSprites();
@@ -1381,7 +1473,7 @@ export class SceneInitializer extends Component {
         if (candidates.length === 0) return null;
         const totalWeight = candidates.reduce((sum, p) => sum + Math.max(0, p.weight), 0);
         if (totalWeight <= 0) return candidates[0].buff;
-        let r = Math.random() * totalWeight;
+        let r = rng.random() * totalWeight;
         for (const p of candidates) {
             r -= Math.max(0, p.weight);
             if (r <= 0) return p.buff;
@@ -1491,7 +1583,7 @@ export class SceneInitializer extends Component {
             // 战术卡：冻结全场（以强减速实现，复用现有 slow 系统）
             addStatusToEnemies: (status: string, duration: number, chance?: number) => {
                 for (const e of this.enemies) {
-                    if (chance !== undefined && Math.random() >= chance) continue;
+                    if (chance !== undefined && rng.random() >= chance) continue;
                     e.slowTimer = Math.max(e.slowTimer, duration);
                     e.slowMultiplier = status === 'freeze' ? 0.4 : 0.6;
                 }
@@ -1554,7 +1646,7 @@ export class SceneInitializer extends Component {
                         // 升星：随机座，并记录已升星的塔，避免降星命中同一座导致效果空转
                         const upgraded: typeof pool = [];
                         for (let i = 0; i < upCount && pool.length > 0; i++) {
-                            const at = Math.floor(Math.random() * pool.length);
+                            const at = rng.int(pool.length);
                             const t = pool[at];
                             pool.splice(at, 1);
                             t.star = (t.star ?? 1) + 1;
@@ -1565,7 +1657,7 @@ export class SceneInitializer extends Component {
                         // 降星：只从「未被升星的塔」中随机，保证收益与代价落在不同塔上
                         const downPool = this.towers.filter(t => t.node.isValid && upgraded.indexOf(t) < 0);
                         for (let i = 0; i < downCount && downPool.length > 0; i++) {
-                            const at = Math.floor(Math.random() * downPool.length);
+                            const at = rng.int(downPool.length);
                             const t = downPool[at];
                             downPool.splice(at, 1);
                             const nextStar = (t.star ?? 1) - 1;
@@ -1698,7 +1790,7 @@ export class SceneInitializer extends Component {
     }
 
     private selectWavePattern(): void {
-        this.wavePattern = Math.random() < 0.5 ? 'steady' : 'packs';
+        this.wavePattern = rng.chance(0.5) ? 'steady' : 'packs';
         this.playtest.recordRunVariant(this.wavePattern, this.wavePatternName());
         console.log(`敌群变体：${this.wavePatternName()}`);
     }
@@ -2152,14 +2244,14 @@ export class SceneInitializer extends Component {
         // 2) 没有可合并目标时，从一星塔中随机选一座（倒计时结束停火 8 秒）
         const oneStars = this.towers.filter(t => t.star === 1);
         if (oneStars.length > 0) {
-            const target = oneStars[Math.floor(Math.random() * oneStars.length)];
+            const target = rng.pick(oneStars);
             this.lockTower(target, 'ceasefire');
             return;
         }
         // 3) 全是二星塔 → 从二星塔中随机选一座（倒计时结束降为一星并清词缀）
         const twoStars = this.towers.filter(t => t.star === 2);
         if (twoStars.length > 0) {
-            const target = twoStars[Math.floor(Math.random() * twoStars.length)];
+            const target = rng.pick(twoStars);
             this.lockTower(target, 'downgrade');
         }
     }
@@ -2172,7 +2264,7 @@ export class SceneInitializer extends Component {
         }
         const candidates = this.towers.filter(t => t.star === 1 && (counts[t.def.id] ?? 0) >= 2);
         if (candidates.length === 0) return null;
-        return candidates[Math.floor(Math.random() * candidates.length)];
+        return rng.pick(candidates);
     }
 
     /** 锁定一座塔并进入倒计时（玩家在倒计时内成功应对可解除） */
@@ -2689,7 +2781,7 @@ export class SceneInitializer extends Component {
                     // Roguelike 出血 buff：攻击出血敌人有概率暴击
                     const ts = this.towerStats;
                     let isCrit = false;
-                    if (ts.bleedLevel > 0 && e.buffs['bleed'] && Math.random() < ts.critChance) {
+                    if (ts.bleedLevel > 0 && e.buffs['bleed'] && rng.random() < ts.critChance) {
                         dmg *= ts.critMultiplier;
                         isCrit = true;
                     }
@@ -2712,7 +2804,7 @@ export class SceneInitializer extends Component {
                     EffectManager.instance?.playHit(e.node);
                     EffectManager.instance?.playDamageNumber(e.node.position, dmg, isCrit);
                     // Roguelike 出血 buff：概率施加出血状态（2秒，dps=0 纯标记）
-                    if (ts.bleedLevel > 0 && Math.random() < ts.bleedChance) {
+                    if (ts.bleedLevel > 0 && rng.random() < ts.bleedChance) {
                         e.buffs['bleed'] = { timer: ts.bleedDuration, dps: 0 };
                     }
                     // 杀虫喷雾：命中施加毒 buff（受二星 + 词缀影响）
@@ -3179,7 +3271,7 @@ export class SceneInitializer extends Component {
     }
 
     private rollTowerCrit(p: TowerParams): boolean {
-        return p.critChance > 0 && Math.random() < p.critChance;
+        return p.critChance > 0 && rng.random() < p.critChance;
     }
 
     private critDamage(amount: number, p: TowerParams): number {
@@ -3994,7 +4086,7 @@ export class SceneInitializer extends Component {
         // ===== 复活按钮（未用过复活时显示）=====
         // 商业化为唯一广告点位：失败瞬间情绪峰值 + 沉没成本最高，转化优于局中插广告。
         let reviveBtnNode: Node | null = null;
-        const canRevive = !this.reviveUsed;
+        const canRevive = !this.reviveUsed && this.reviveEnabled;
         if (canRevive) {
             reviveBtnNode = this.createReviveButton(panel);
         }
@@ -4058,7 +4150,7 @@ export class SceneInitializer extends Component {
      * 注意：不调用 restart，restart 会清空塔与格子。
      */
     private revive(): void {
-        if (this.reviveUsed) return;
+        if (this.reviveUsed || !this.reviveEnabled) return;
         this.reviveUsed = true;
         console.log(`[Revive] 复活生效：回满血 +${this.reviveGoldBonus} 金币，重打第 ${this.currentWave} 波`);
 
@@ -4223,6 +4315,7 @@ export class SceneInitializer extends Component {
 
         // 关卡开始倒计时
         this.playtest.beginRun(this.playtestMetadata);
+        this.resetRunRandom();
         this.selectWavePattern();
         this.startLevelCountdown();
         console.log('游戏重新开始');
@@ -4550,7 +4643,7 @@ export class SceneInitializer extends Component {
                 hammerCount = 1;   // 兜底：无可用位置且可能无锤子时强制给锤子
             } else if (this.drawsWithoutShovel >= 2) {
                 hammerCount = 1;   // 连续两轮未出锤子 → 第三轮强制出
-            } else if (Math.random() < 0.4) {
+            } else if (rng.chance(0.4)) {
                 hammerCount = 1;
             }
         }
@@ -4564,7 +4657,7 @@ export class SceneInitializer extends Component {
         if (this.drawCount < 1 && towerCount >= 3) {
             // 从3个流派入口中随机选1个
             const entryTowers = ['bubble_tea_straw', 'poison', 'slow'];
-            const chosenId = entryTowers[Math.floor(Math.random() * entryTowers.length)];
+            const chosenId = rng.pick(entryTowers);
             const c = towerCands.find(x => x.towerId === chosenId);
             if (c) {
                 result.push(this.makeCardFromDef(c));
@@ -4594,7 +4687,7 @@ export class SceneInitializer extends Component {
                 });
             const total = pool.reduce((s, x) => s + Math.max(0, x.w), 0);
             if (total <= 0) break;
-            let r = Math.random() * total;
+            let r = rng.random() * total;
             let pick = pool[0].c;
             for (const x of pool) { r -= Math.max(0, x.w); if (r <= 0) { pick = x.c; break; } }
             result.push(this.makeCardFromDef(pick));
@@ -4617,7 +4710,7 @@ export class SceneInitializer extends Component {
         }
         // 打乱顺序（避免锤子总在末尾）
         for (let i = result.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
+            const j = rng.int(i + 1);
             [result[i], result[j]] = [result[j], result[i]];
         }
         return result;
@@ -4963,7 +5056,7 @@ export class SceneInitializer extends Component {
         if (targetTower.star === 2) {
             const affixes = TOWER_AFFIXES[targetTower.def.id] ?? [];
             targetTower.affix = affixes.length > 0
-                ? affixes[Math.floor(Math.random() * affixes.length)].id
+                ? rng.pick(affixes).id
                 : null;
         }
         this.setTowerBadge(targetTower);
@@ -5317,7 +5410,7 @@ export class SceneInitializer extends Component {
         if (!dead.buffs['poison']) return;
         const source = this.towers.find(t => t.def.id === 'poison' && t.affix === 'contagious');
         if (!source) return;
-        if (Math.random() < 0.5) return;  // 50% 概率
+        if (rng.chance(0.5)) return;  // 50% 概率
         const p = this.getTowerParams(source);
         const radius = 60;
         let spreadCount = 0;

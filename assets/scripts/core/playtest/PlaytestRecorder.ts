@@ -124,6 +124,12 @@ export interface PlaytestMetadata {
     testGroup: PlaytestGroup;
     playStrategy: PlayStrategy;
     buildCommit: string;
+    /** 本局随机种子；未提供则为纯随机（不可复现）。基线测试建议显式指定。 */
+    seed?: number;
+    /** 本局计划测试的流派（纯标注，不影响玩法），会打印在导出报告头部便于汇总。 */
+    targetBuild?: string;
+    /** 是否允许看广告复活。基线测试用 false 关闭，避免复活改写金币/血量污染统计。 */
+    reviveEnabled?: boolean;
 }
 
 interface PlaytestSession {
@@ -519,6 +525,9 @@ export class PlaytestRecorder {
             testGroup: 'A',
             playStrategy: '人工试玩',
             buildCommit: 'unknown',
+            seed: undefined,
+            reviveEnabled: true,
+            targetBuild: undefined,
         };
     }
 
@@ -548,6 +557,18 @@ export class PlaytestRecorder {
         const validGroup = testGroup === 'A' || testGroup === 'B' || testGroup === 'C';
         const validStrategy = playStrategy === '认真构筑' || playStrategy === '乱选' || playStrategy === '强追流派' || playStrategy === '自动试玩' || playStrategy === '人工试玩';
         const validCommit = /^[0-9a-f]{7,40}$/i.test(buildCommit);
+        const rawSeed = metadata.seed;
+        const seed = typeof rawSeed === 'number' && Number.isFinite(rawSeed) && rawSeed >= 0
+            ? Math.floor(rawSeed)
+            : undefined;
+        const reviveEnabled = metadata.reviveEnabled !== false;
+
+        if (rawSeed !== undefined && seed === undefined) {
+            console.warn('[PlaytestMetadata] seed 应为非负整数，已忽略（本局为纯随机）/ seed must be a non-negative integer; ignored.');
+        }
+        if (!reviveEnabled) {
+            console.log('[PlaytestMetadata] 复活已关闭（revive=0），失败面板不显示复活按钮 / Revive disabled.');
+        }
 
         if (!balanceVersion) {
             console.warn('[PlaytestMetadata] 缺少 balanceVersion，已使用 unversioned / Missing balanceVersion; using unversioned.');
@@ -569,6 +590,9 @@ export class PlaytestRecorder {
                 ? playStrategy
                 : defaults.playStrategy,
             buildCommit: validCommit ? buildCommit : defaults.buildCommit,
+            seed,
+            reviveEnabled,
+            targetBuild: metadata.targetBuild?.trim() || undefined,
         };
     }
 
@@ -658,6 +682,9 @@ export class PlaytestRecorder {
             `- 测试组：${s.metadata.testGroup}`,
             `- 游玩策略：${s.metadata.playStrategy}`,
             `- Git Commit：${s.metadata.buildCommit}`,
+            `- 目标流派：${s.metadata.targetBuild ?? '-'}`,
+            `- 随机种子：${s.metadata.seed ?? '随机（未指定）'}`,
+            `- 复活：${s.metadata.reviveEnabled === false ? '已关闭' : '开启'}`,
             `- 结果：${s.result ?? '进行中'}`,
             `- 最终波次：${s.finalWave ?? '-'}`,
             `- 总抽牌次数：${s.draws.length}`,

@@ -1,3 +1,4 @@
+import { rng } from '../utils/SeededRandom';
 import { Color, Graphics, Vec3 } from 'cc';
 import { EnemyDef } from '../GameBalance';
 import { EnemyRuntime, TowerParams, TowerRuntime } from '../RuntimeTypes';
@@ -190,7 +191,7 @@ export class ThrustSystem {
                 ctx.playThrustHitRing(best, st.strikeIndex > 1 ? 1.18 : 1);
             }
             ctx.playTowerRecoil(tower, st.dirX, st.dirY, isOverload ? 1.9 : (st.strikeIndex > 1 ? 1.25 : 1));
-            if (ctx.hasBleedBuff() && Math.random() < ctx.bleedChance()) {
+            if (ctx.hasBleedBuff() && rng.random() < ctx.bleedChance()) {
                 best.buffs['bleed'] = { timer: ctx.bleedDuration(), dps: 0 };
             }
         }

@@ -8,6 +8,7 @@
     },
     "scripts": {
         "build:wechat": "/Applications/Cocos/Creator/3.8.8/CocosCreator.app/Contents/MacOS/CocosCreator --project . --build \"platform=wechatgame;debug=true;md5Cache=false\"",
+        "playtest:launch": "node tools/playtest-launch.js",
         "check:layout": "node tools/check-layout.js",
         "check:layout:watch": "node tools/check-layout.js --watch"
     },
