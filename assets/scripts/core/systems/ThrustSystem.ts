@@ -31,6 +31,8 @@ export interface ThrustSystemContext {
     bleedDuration(): number;
     hasBleedBuff(): boolean;
     forceSecondStrikeCrit(tower: TowerRuntime, strikeIndex: number): boolean;
+    /** 检查射程内是否仍有有效目标（用于目标死亡时提前缩回） */
+    hasValidTargetInRange(towerPos: Vec3, range: number): boolean;
 }
 
 export class ThrustSystem {
@@ -70,6 +72,13 @@ export class ThrustSystem {
             st.timer += dt;
             const rangeScale = ctx.getTowerParams(tower).range / tower.def.attack.range;
             const restScale = THRUST_REST_SCALE * rangeScale;
+
+            // 目标死亡检测：extend/pause 阶段若射程内已无有效目标，立即强制缩回
+            if ((st.phase === 'extend' || st.phase === 'pause') && !ctx.hasValidTargetInRange(tower.node.position, ctx.getTowerParams(tower).range)) {
+                st.phase = 'retract';
+                st.timer = 0;   // 从当前进度开始缩回
+            }
+
             if (st.phase === 'extend') {
                 const f = Math.min(1, st.timer / THRUST_EXTEND);
                 const scaleY = this.strikeScaleY(st.strikeIndex);

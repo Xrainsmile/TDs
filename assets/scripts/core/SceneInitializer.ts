@@ -1,5 +1,5 @@
 import { rng } from './utils/SeededRandom';
-import { _decorator, Component, Node, view, UITransform, Layers, Vec3, Graphics, Color, Label, EventTouch, v3, UIOpacity } from 'cc';
+import { _decorator, Component, Node, view, UITransform, Layers, Vec3, Graphics, Color, Label, EventTouch, v3, UIOpacity, MaskComponent, MaskType } from 'cc';
 import { HUD } from '../ui/HUD';
 import { EffectManager } from './EffectManager';
 import { EnemyType } from './Constants';
@@ -16,6 +16,7 @@ import { WaveBuffDefinition, GameSnapshot, EffectDefinition, DrawCardDefinition 
 import { TowerParamResolver } from './systems/TowerParamResolver';
 import { ThrustSystem, ThrustSystemContext } from './systems/ThrustSystem';
 import { PlaytestMetadata, PlaytestRecorder, PlaytestSnapshot } from './playtest/PlaytestRecorder';
+import { DEFAULT_LEVEL_ID, getLevel, LEVELS, LevelConfig } from './levels/LevelConfig';
 import {
     ENEMY_SPEED, BULLET_SPEED,
     INITIAL_GOLD, KILL_REWARD, WAVE_BONUSES,
@@ -29,10 +30,12 @@ import {
 import {
     MAP_DESIGN_WIDTH, MAP_DESIGN_HEIGHT, PATH_WAYPOINTS,
     PATH_BRANCHES, PATH_BRANCH_WAYPOINTS, BRANCH_COUNT,
-    BUILD_CELLS, LOCKED_BUILD_CELL_KEYS,
+    BUILD_CELLS,
     gridToLocal, CELL_SIZE, ROAD_WIDTH_RATIO, SLOT_SIZE_RATIO, GRID_COLS, GRID_ROWS,
+    CellType, generateAvailableCells, getCellType, ALL_BUILDABLE_CELLS, cellKey as mapCellKey,
+    PATH_CELL_KEYS, BLOCKED_CELL_KEYS,
 } from './MapConfig';
-import { buildMapArt, drawSlotMat, drawTowerBase } from './visuals/MapArt';
+import { buildMapArt, drawSlotMat, drawTile, drawTowerBase } from './visuals/MapArt';
 import * as VisualFactory from './visuals/VisualFactory';   // 表现层：按 visualEffectId 构建攻击视觉
 import type { AffixId, DamageAttribution, EnemyRuntime, PierceShot, TowerParams, TowerRuntime } from './RuntimeTypes';
 
@@ -475,14 +478,36 @@ export class SceneInitializer extends Component {
     }
 
     // 波次配置（从 GameBalance 引用）
-    private get WAVES() { return WAVES; }
+    /**
+     * 当前关卡 id。可用 URL / 微信启动参数 `level=1` 直接指定，缺省第 6 关（原 Demo 基线）。
+     * 必须支持参数化：否则只能靠控制台 gotoLevel 切关，且界面上看不出当前在第几关。
+     */
+    private levelId = this.readLevelId();
+
+    private readLevelId(): number {
+        const root = globalThis as unknown as Record<string, any>;
+        const search = typeof root.location?.search === 'string' ? root.location.search : '';
+        const fromUrl = /[?&]level=(\d+)/.exec(search)?.[1];
+        const fromWx = (root.wx?.getLaunchOptionsSync?.()?.query as Record<string, string> | undefined)?.level;
+        const id = Number(fromUrl ?? fromWx);
+        if (!Number.isFinite(id)) return DEFAULT_LEVEL_ID;
+        if (!LEVELS.some(l => l.id === id)) {
+            console.warn(`[Level] level=${id} 未配置，已回退第 ${DEFAULT_LEVEL_ID} 关`);
+            return DEFAULT_LEVEL_ID;
+        }
+        return id;
+    }
+    private get levelConfig(): LevelConfig { return getLevel(this.levelId); }
+    private get WAVES() { return this.levelConfig.waves; }
 
     // 建造点（直接从 GameBalance 引用，固定逻辑坐标）
     private slotNodes: Node[] = [];
     private slotCells: { col: number; row: number }[] = [];  // 塔位对应的网格坐标（用于匹配封闭格）
     private slotPositions: Vec3[] = [];
     private slotOccupied: boolean[] = [];
-    private lockedSlots: boolean[] = [];    // 第二类锁定格：初始灰色，需锤子敲开才能放塔（坐标由 MapConfig 配置）
+    private lockedSlots: boolean[] = [];    // 初始灰色，需起子卡激活才能放塔
+    /** 本局随机可用格集合（每局生成 6 个，其余非路径格为 LOCKED） */
+    private availableCellKeys: Set<string> = new Set();
     /** 甜品台地图美术层节点（桌布/糖渍/装饰/虫洞/蛋糕） */
     private mapArt: ReturnType<typeof buildMapArt> | null = null;
     /** 双路分叉：出怪时的分支轮换游标（交替分配，保证两路压力均衡） */
@@ -497,8 +522,12 @@ export class SceneInitializer extends Component {
         50, 55, 60, 65, 70, 75,
     ];                                                   // 抽卡花费曲线（0.3.2：前3档 30→25），之后按最后一档封顶
     private static readonly MAX_CARD_USES_PER_DRAW = 2;  // 每轮发牌最多使用卡数
+    /** 波次间缓冲秒数：给玩家规划时间，倒计时结束自动开战，点 GO 可提前开战 */
+    private static readonly WAVE_GATE_SECONDS = 8;
+    /** 每局随机放开的可用格数量（其余非路径格为灰格，需起子激活） */
+    private static readonly AVAILABLE_TILE_COUNT = 6;
     private drawCount = 0;                         // 刷新次数（前两次保证基础塔完整）
-    private drawsWithoutShovel = 0;                // 有灰格且连续未出锤子的轮数（第三轮强制出）
+    private drawsWithoutShovel = 0;                // 有灰格且连续未出起子的轮数（第三轮强制出）
     private cardMode = false;                      // 是否处于用卡阶段
     private handCards: CardDef[] = [];             // 当前手牌
     private handCardNodes: Node[] = [];            // 当前激活的手牌卡 UI 节点（与 handCards 平行）
@@ -660,6 +689,73 @@ export class SceneInitializer extends Component {
         this.restart();
     }
 
+    /**
+     * 调试：直接跳到指定波次，可自动铺塔，用于 30 秒验证一次后期平衡。
+     * 例：jumpToWave(7, { towerId: 'bubble_tea_straw', towerCount: 15, gold: 0 })
+     *     → 直接检验「15 座奶茶吸管能否守住第 7 波」，不必从头打十分钟。
+     */
+    private jumpToWave(wave: number, opts: { towerId?: string; towerCount?: number; gold?: number } = {}): void {
+        if (!Number.isFinite(wave) || wave < 1 || wave > this.WAVES.length) {
+            console.warn(`[Baseline] 波次必须是 1-${this.WAVES.length}`);
+            return;
+        }
+
+        // 清场：上一波残留的敌人/子弹/减速区会干扰本波判定
+        for (const e of this.enemies) if (e.node.isValid) e.node.destroy();
+        this.enemies.length = 0;
+        for (const b of this.bullets) if (b.node.isValid) b.node.destroy();
+        this.bullets.length = 0;
+        for (const z of this.groundZones) if (z.node.isValid) z.node.destroy();
+        this.groundZones.length = 0;
+        this.waveActive = false;
+        this.isWavePaused = false;
+        this.isGameOver = false;   // 失败后也能直接跳波，不必先重开一局
+
+        if (opts.gold !== undefined) {
+            this.gold = Math.max(0, Math.floor(opts.gold));
+            this.updateGoldLabel();
+        }
+
+        // 自动铺塔：免费且不占抽卡，纯粹为了快速验证强度
+        const want = Math.floor(opts.towerCount ?? 0);
+        if (opts.towerId && want > 0) {
+            const def = this.TOWER_REGISTRY.find(t => t.id === opts.towerId);
+            if (!def) {
+                console.warn(`[Baseline] 未知塔 id：${opts.towerId}`);
+            } else {
+                let placed = 0;
+                for (let i = 0; i < this.slotPositions.length && placed < want; i++) {
+                    if (this.slotOccupied[i] || this.lockedSlots[i]) continue;
+                    this.placeTower(i, def, 0);
+                    placed++;
+                }
+                console.log(`[Baseline] 自动铺塔 ${def.name} ×${placed}（免费）`);
+            }
+        }
+
+        this.currentWave = wave - 1;
+        this.startNextWave();
+    }
+
+    /** 切换关卡并重开：gotoLevel(1) 进教学关，gotoLevel(6) 回正常节奏 */
+    /** 关卡推进：本关之后的下一关 id；已是最后一关则返回 null */
+    private nextLevelId(): number | null {
+        const sorted = LEVELS.slice().sort((a, b) => a.id - b.id);
+        const idx = sorted.findIndex(l => l.id === this.levelId);
+        if (idx < 0 || idx + 1 >= sorted.length) return null;
+        return sorted[idx + 1].id;
+    }
+
+    private gotoLevel(id: number): void {
+        if (!LEVELS.some(l => l.id === id)) {
+            console.warn(`[Level] 未配置的关卡：${id}`);
+            return;
+        }
+        this.levelId = id;
+        console.log(`[Level] 切换到 ${this.levelConfig.name}（${this.WAVES.length} 波）`);
+        this.restart();
+    }
+
     /** 控制台基线测试入口：__TD_BASELINE__ */
     private installBaselineBridge(): void {
         (globalThis as unknown as Record<string, any>).__TD_BASELINE__ = {
@@ -667,6 +763,19 @@ export class SceneInitializer extends Component {
             setMeta: (patch: Partial<PlaytestMetadata>) => this.applyBaselineMeta(patch),
             /** 以指定种子重开本局 */
             run: (seed: number, targetBuild?: string) => this.startSeededRun(seed, targetBuild),
+            /** 切关卡：gotoLevel(1) 教学关，gotoLevel(6) 正常节奏 */
+            gotoLevel: (id: number) => this.gotoLevel(id),
+            /** 查看当前关卡配置 */
+            level: () => ({
+                id: this.levelConfig.id,
+                name: this.levelConfig.name,
+                waves: this.WAVES.length,
+                branchCount: this.levelConfig.branchCount,
+                systems: this.levelConfig.systems,
+            }),
+            /** 调试跳波：jumpToWave(7, {towerId:'bubble_tea_straw', towerCount:15, gold:0}) */
+            jumpToWave: (wave: number, opts?: { towerId?: string; towerCount?: number; gold?: number }) =>
+                this.jumpToWave(wave, opts ?? {}),
             /** 查看当前配置 */
             info: () => ({ ...this.playtestMetadata, reviveEnabled: this.reviveEnabled }),
             /** 清除持久化配置，回到纯 URL 参数 */
@@ -769,6 +878,13 @@ export class SceneInitializer extends Component {
         // 启动时校验卡牌配置（仅 console.error 报告，不修改数据）
         SceneInitializer.validateBuffConfigs();
         this.setupScene();
+        // 格子在 setupScene 内生成，故日志放在其后才能读到真实分布
+        const lockedCount = this.lockedSlots.filter(l => l).length;
+        console.log(
+            `[Level] ${this.levelConfig.name}：${this.WAVES.length} 波 / 分支 ${this.levelConfig.branchCount} / ` +
+            `牌池 ${this.levelConfig.cardWhitelist.length || '全部'} / ` +
+            `可用格 ${this.availableCellKeys.size} · 灰格 ${lockedCount} / 起子 ${this.levelConfig.systems.hammer ? '开' : '关'}`,
+        );
     }
 
     private setupScene(): void {
@@ -791,8 +907,9 @@ export class SceneInitializer extends Component {
         const battleHeight = battleTop - battleBottom;
         const battleCenterX = (battleLeft + battleRight) / 2;
         const battleCenterY = (battleTop + battleBottom) / 2;
-        // 倒计时圆环位置：与抽卡按钮水平对齐（同高，置于按钮左侧，不遮挡卡牌）
-        this.countdownPos = new Vec3(-220, -halfH + 48, 0);
+        // 倒计时圆环位置：与抽卡按钮水平对齐（同高，置于按钮左侧安全区域内）
+        // 按钮在 (0, btnY)，圆环半径约 32px，留 10px 边距 → x ≈ -(180/2 + 32 + 10) = -132
+        this.countdownPos = new Vec3(-132, -halfH + 48, 0);
 
         // 屏幕适配：地图等比缩放填满战场（新地图 576×640 已按战场比例设计，
         // 允许放大不再限制 scale<=1，避免地图周围留大片空白）。
@@ -804,7 +921,7 @@ export class SceneInitializer extends Component {
 
         this._visibleSize = visible;
 
-        // === BattleRoot（固定逻辑尺寸 + 等比缩放）===
+        // === BattleRoot（固定逻辑尺寸 + 等比缩放 + 裁剪蒙版）===
         this.battleRoot = new Node('BattleRoot');
         this.battleRoot.layer = Layers.Enum.UI_2D;
         this.battleRoot.setParent(canvas);
@@ -813,6 +930,13 @@ export class SceneInitializer extends Component {
         this.gameTransform.setAnchorPoint(0.5, 0.5);
         this.battleRoot.setPosition(battleCenterX, battleCenterY, 0);
         this.battleRoot.setScale(mapScale, mapScale, 1);
+
+        // 裁剪蒙版：防止蕾丝花边 / 路径描边等 Graphics 绘制溢出地图边界
+        // （Cocos Graphics 不自动裁剪到父 UITransform，必须显式加 MaskComponent）
+        // GRAPHICS_RECT 直接按节点 UITransform.contentSize（576×640）裁剪，无需外部图片
+        const maskComp = this.battleRoot.addComponent(MaskComponent);
+        maskComp.type = MaskType.GRAPHICS_RECT;
+
         // 挂载特效管理器
         this.battleRoot.addComponent(EffectManager);
         // === 甜品台地图美术（桌布 → 糖霜点缀 → 糖渍双路 → 虫洞入口 → 奶油蛋糕基地）===
@@ -820,19 +944,36 @@ export class SceneInitializer extends Component {
         // 6×8 调试网格（可开关，随 BattleRoot 整体缩放）
         if (SHOW_GRID) this.drawGridDebug(this.battleRoot);
 
-        // === 塔位（仅 GridCell，由 gridToLocal 计算位置；与手机尺寸无关，仅供适配缩放）===
-        this.slotCells = BUILD_CELLS.map(c => ({ col: c.col, row: c.row }));
-        this.slotPositions = BUILD_CELLS.map(c => gridToLocal(c));
-        this.slotOccupied = new Array(this.slotPositions.length).fill(false);
-        // 第二类锁定格：由 MapConfig 的 LOCKED_BUILD_CELL_KEYS 显式按网格坐标匹配，
-        // 不受 BUILD_CELLS 排序/数量变化影响（元素融合阶段调整布局时集中在 MapConfig 改）
-        this.lockedSlots = this.slotCells.map(cell => LOCKED_BUILD_CELL_KEYS.has(`${cell.col},${cell.row}`));
+        // === 全量格子瓷砖系统（非路径格全部渲染为方块）===
+        // 每局随机生成 6 个可用格，其余非路径非封锁格为 LOCKED
+        this.availableCellKeys = generateAvailableCells(
+            SceneInitializer.AVAILABLE_TILE_COUNT, () => rng.random());
 
-        // === 建造点 ===
+        // 收集所有需要渲染的非路径格：可建造 + 封锁
+        const allTileCells = [...ALL_BUILDABLE_CELLS];
+        // 也加入封锁格用于视觉展示（白色方块）
+        for (const bc of BLOCKED_CELL_KEYS) {
+            const [c, r] = bc.split(',').map(Number);
+            allTileCells.push({ col: c, row: r });
+        }
+
+        this.slotCells = allTileCells.map(c => ({ col: c.col, row: c.row }));
+        this.slotPositions = allTileCells.map(c => gridToLocal(c));
+        this.slotOccupied = new Array(this.slotPositions.length).fill(false);
+        // lockedSlots: 非 available 且非 blocked 的格子就是 LOCKED
+        this.lockedSlots = this.slotCells.map(cell => {
+            const key = mapCellKey(cell);
+            if (BLOCKED_CELL_KEYS.has(key)) return false;   // 封锁格不算"需激活"
+            return !this.availableCellKeys.has(key);         // 非可用 → 需起子
+        });
+
+        // === 创建所有瓷砖节点 ===
         for (let i = 0; i < this.slotPositions.length; i++) {
-            const slot = this.createTowerSlot(this.slotPositions[i], i, this.lockedSlots[i]);
-            slot.setParent(this.battleRoot);
-            this.slotNodes.push(slot);
+            const cell = this.slotCells[i];
+            const cellType = getCellType(cell, this.availableCellKeys);
+            const tile = this.createTile(this.slotPositions[i], i, cellType);
+            tile.setParent(this.battleRoot);
+            this.slotNodes.push(tile);
         }
 
         // === 拖拽幽灵塔 ===
@@ -975,7 +1116,7 @@ export class SceneInitializer extends Component {
             const ci = this.findHandCardAt(buttonLocal);
             if (ci >= 0) {
                 const card = this.handCards[ci];
-                // 非选牌阶段仅放行即时改造卡；塔卡/锤子涉及建塔与格子，仍需在选牌阶段使用
+                // 非选牌阶段仅放行即时改造卡；塔卡/起子涉及建塔与格子，仍需在选牌阶段使用
                 if (this.cardMode || card.kind === 'modifier' || card.kind === 'tactic') {
                     if (this.isHandCardUsable(card)) {
                         this.dragCardIndex = ci;
@@ -1000,10 +1141,10 @@ export class SceneInitializer extends Component {
                 return;
             }
 
-            // 1.7 点击锁定格（非卡牌阶段）：提示用锤子卡敲开
+            // 1.7 点击锁定格（非卡牌阶段）：提示用起子卡敲开
             const hitSlot = this.findSlotAt(gameLocal);
             if (hitSlot >= 0 && this.lockedSlots[hitSlot]) {
-                if (this.statusLabel) this.statusLabel.string = '用锤子卡敲开此格';
+                if (this.statusLabel) this.statusLabel.string = '用起子卡敲开此格';
                 return;
             }
 
@@ -1058,7 +1199,7 @@ export class SceneInitializer extends Component {
                 const slot = this.targetSlot;
 
                 if (this.lockedSlots[slot]) {
-                    if (this.statusLabel) this.statusLabel.string = '该格被封锁，需用锤子敲开';
+                    if (this.statusLabel) this.statusLabel.string = '该格被封锁，需用起子敲开';
                 } else if (this.dragMode === 'place') {
                     this.placeTower(slot, this.dragTowerDef!);
                 } else if (this.dragMode === 'move' && this.moveFromSlot >= 0 && this.moveFromSlot !== slot) {
@@ -1076,7 +1217,9 @@ export class SceneInitializer extends Component {
                             );
                             if (targetTowerIdx >= 0) {
                                 const targetTower = this.towers[targetTowerIdx];
-                                const canUpgrade = movingTower.def.id === targetTower.def.id
+                                // 教学关未开放合并 → 同型塔拖到一起只换位，不升星
+                                const canUpgrade = this.levelConfig.systems.merge
+                                    && movingTower.def.id === targetTower.def.id
                                     && movingTower.star === targetTower.star
                                     && targetTower.star < SceneInitializer.MAX_STAR;
                                 if (canUpgrade) {
@@ -1165,7 +1308,7 @@ export class SceneInitializer extends Component {
         this.waveLabel = this.hud.waveLabel;
         this.livesLabel = this.hud.livesLabel;
         this.statusLabel = this.hud.statusLabel;
-        this.gold = this.INITIAL_GOLD;
+        this.gold = this.levelConfig.initialGold;
         // 统一同步 HUD 顶部金币与按钮上方常驻金币（避免开局按钮上方显示 0）
         this.updateGoldLabel();
         this.hud.setWave(0, this.WAVES.length);
@@ -1174,6 +1317,9 @@ export class SceneInitializer extends Component {
 
         // === 关卡开始倒计时 ===
         this.startLevelCountdown();
+
+        // 首次自动抽卡：开局直接发牌并扣金币，玩家无需手动点「抽卡」按钮
+        this.drawCards();
 
         console.log('SceneInitializer: 极简版启动');
         console.log(`波次配置: ${this.WAVES.length} 波`);
@@ -1192,6 +1338,25 @@ export class SceneInitializer extends Component {
         if (this.isUserPaused) this.showGlobalBuffPanel();
         else this.hideGlobalBuffPanel();
         this.refreshSpendButton();   // 暂停/继续切换后刷新抽卡按钮可用性
+    }
+
+    /**
+     * 波次门控：波次之间给一段可规划的缓冲，倒计时结束自动开战，
+     * 点倒计时圆环（中心 "GO"）可提前开战。
+     *
+     * 目的：把「时间压力」从卡牌决策中剥离。只有先拿掉压力，才能判断
+     * 玩家快速决策究竟是因为「看懂了」，还是因为「敌人马上出现，只能赶紧点一个」。
+     */
+    private beginWaveGate(): void {
+        this.isWavePaused = true;
+        // 标记强化阶段已结束（教学关没有三选一，不置 true 会误判为「正在选强化」并禁用抽卡）
+        this.buffSelected = true;
+        this.hideBuffCards();
+        this.refreshSpendButton();
+        this.startCountdown(SceneInitializer.WAVE_GATE_SECONDS, () => {
+            this.isWavePaused = false;
+            this.startNextWave();
+        });
     }
 
     /** 关卡开始倒计时：给玩家时间建塔布防，结束后启动第一波 */
@@ -1570,9 +1735,8 @@ export class SceneInitializer extends Component {
         if (this.statusLabel) {
             this.statusLabel.string = `已选: ${display.name}  塔: ${this.towers.length}`;
         }
-        // 选完 buff 直接开始下一波（不再有波次间倒计时）
-        this.isWavePaused = false;
-        this.startNextWave();
+        // 波次门控：先给一段规划时间（点倒计时圆环 GO 可提前开战），不再选完立刻开打
+        this.beginWaveGate();
         console.log(`Roguelike 选择: ${display.name}`);
     }
 
@@ -1609,7 +1773,7 @@ export class SceneInitializer extends Component {
                 this.refreshTowerBadges(keyTowerId);
                 if (modifierId === 'double_straw') this.refreshDoubleStrawMarkers(keyTowerId);
             },
-            // 锤子：兜底解锁第一个灰格（手牌拖放的精确解锁仍走 useHammer）
+            // 起子：兜底解锁第一个灰格（手牌拖放的精确解锁仍走 useScrewdriver）
             unlockTile: () => {
                 const i = this.lockedSlots.findIndex(l => l);
                 if (i >= 0) { this.lockedSlots[i] = false; this.redrawSlot(i, false); }
@@ -1846,7 +2010,7 @@ export class SceneInitializer extends Component {
 
         console.log(`Wave ${this.currentWave} 开始: ${this.waveTotalCount} 只`);
         if (this.waveLabel) {
-            this.waveLabel.string = `Wave: ${this.currentWave}/${this.WAVES.length}`;
+            this.waveLabel.string = `L${this.levelConfig.id}｜Wave: ${this.currentWave}/${this.WAVES.length}`;
         }
         this.playtest.startWave(this.currentWave, this.buildPlaytestSnapshot());
     }
@@ -1865,20 +2029,24 @@ export class SceneInitializer extends Component {
         this.resetCardSystem();   // 胜利清除手牌，避免结算弹窗下残留
         this.hideTowerInfo();     // 0.3.1：隐藏塔信息面板，防止遮挡结算弹窗导出按钮
 
+        // 关卡推进：还有下一关时面板加宽以容纳「下一关」，体验保持连续（不做独立教程入口）
+        const nextId = this.nextLevelId();
+        const panelW = nextId !== null ? 470 : 400;
+
         const canvas = this.node;
         const panel = new Node('VictoryPanel');
         panel.layer = Layers.Enum.UI_2D;
         panel.setParent(canvas);
         const panelTransform = panel.addComponent(UITransform);
-        panelTransform.setContentSize(400, 200);
+        panelTransform.setContentSize(panelW, 200);
 
         const gfx = panel.addComponent(Graphics);
         gfx.fillColor = new Color(40, 40, 50, 230);
-        gfx.roundRect(-200, -100, 400, 200, 12);
+        gfx.roundRect(-panelW / 2, -100, panelW, 200, 12);
         gfx.fill();
         gfx.strokeColor = new Color(80, 255, 80, 255);
         gfx.lineWidth = 3;
-        gfx.roundRect(-200, -100, 400, 200, 12);
+        gfx.roundRect(-panelW / 2, -100, panelW, 200, 12);
         gfx.stroke();
 
         // 标题
@@ -1888,7 +2056,7 @@ export class SceneInitializer extends Component {
         titleNode.addComponent(UITransform);
         titleNode.setPosition(0, 40, 0);
         const titleLabel = titleNode.addComponent(Label);
-        titleLabel.string = '胜利！';
+        titleLabel.string = nextId !== null ? `第 ${this.levelId} 关完成` : '胜利！';
         titleLabel.fontSize = 36;
         titleLabel.color = new Color(80, 255, 80, 255);
 
@@ -1899,7 +2067,7 @@ export class SceneInitializer extends Component {
         const btnTransform = btnNode.addComponent(UITransform);
         btnTransform.setContentSize(140, 44);
         btnTransform.setAnchorPoint(0.5, 0.5);
-        btnNode.setPosition(-82, -40, 0);
+        btnNode.setPosition(nextId !== null ? 0 : -82, nextId !== null ? -45 : -40, 0);
 
         const btnGfx = btnNode.addComponent(Graphics);
         btnGfx.fillColor = new Color(80, 160, 80, 255);
@@ -1919,11 +2087,21 @@ export class SceneInitializer extends Component {
             event.propagationStopped = true;
             this.restart();
         });
-        this.createPlaytestExportButton(panel, new Vec3(82, -40, 0));
+
+        // 下一关：主操作，直接切关卡重开（不做关卡选择界面）
+        if (nextId !== null) {
+            this.createMenuButton(
+                panel, `下一关 · 第 ${nextId} 关`, new Vec3(-152, -45, 0),
+                new Color(70, 130, 210, 255), () => this.gotoLevel(nextId),
+            );
+        }
+        this.createPlaytestExportButton(panel, new Vec3(nextId !== null ? 152 : 82, nextId !== null ? -45 : -40, 0));
 
         this.gameOverPanel = panel;
 
-        if (this.statusLabel) this.statusLabel.string = '胜利！';
+        if (this.statusLabel) {
+            this.statusLabel.string = nextId !== null ? `第 ${this.levelId} 关完成 · 可继续下一关` : '胜利！';
+        }
         if (this.waveLabel) this.waveLabel.string = 'Victory!';
         console.log('所有波次完成，胜利！');
     }
@@ -1958,6 +2136,36 @@ export class SceneInitializer extends Component {
             const result = this.playtest.exportLatest();
             if (this.statusLabel) this.statusLabel.string = result.message;
             console.log(`[Playtest] ${result.message}`);
+        });
+        return node;
+    }
+
+    /** 结算面板通用按钮（「下一关」等额外操作复用导出按钮的样式与排版） */
+    private createMenuButton(parent: Node, text: string, pos: Vec3, color: Color, onClick: () => void): Node {
+        const node = new Node('MenuBtn');
+        node.layer = Layers.Enum.UI_2D;
+        node.setParent(parent);
+        node.setPosition(pos);
+        node.addComponent(UITransform).setContentSize(140, 44);
+        const gfx = node.addComponent(Graphics);
+        gfx.fillColor = color;
+        gfx.roundRect(-70, -22, 140, 44, 8);
+        gfx.fill();
+
+        const labelNode = new Node('Label');
+        labelNode.layer = Layers.Enum.UI_2D;
+        labelNode.setParent(node);
+        labelNode.addComponent(UITransform).setContentSize(136, 40);
+        const label = labelNode.addComponent(Label);
+        label.string = text;
+        label.fontSize = 18;
+        label.color = new Color(255, 255, 255, 255);
+        label.horizontalAlign = Label.HorizontalAlign.CENTER;
+        label.verticalAlign = Label.VerticalAlign.CENTER;
+
+        node.on(Node.EventType.TOUCH_END, (event: EventTouch) => {
+            event.propagationStopped = true;
+            onClick();
         });
         return node;
     }
@@ -2236,7 +2444,8 @@ export class SceneInitializer extends Component {
 
         // 先构造候选数组，再随机选取（避免总是取数组第一座）
         // 1) 优先：真正可合并的一星塔（存在同类型另一座一星塔）
-        const mergeable = this.findMergeableOneStar();
+        //    教学关未开放合并 → 跳过，避免 BOSS 要求玩家做还没学过的操作
+        const mergeable = this.levelConfig.systems.merge ? this.findMergeableOneStar() : null;
         if (mergeable) {
             this.lockTower(mergeable, 'merge');
             return;
@@ -2562,7 +2771,8 @@ export class SceneInitializer extends Component {
                     console.log('BOSS 半血狂暴：移动速度提升35%');
                 }
                 const phaseSpeedMultiplier = e.bossEnraged ? 1.35 : 1;
-                const speed = this.ENEMY_SPEED * speedMult * phaseSpeedMultiplier * e.slowMultiplier;
+                const speed = this.ENEMY_SPEED * speedMult * phaseSpeedMultiplier
+                    * e.slowMultiplier * this.levelConfig.enemySpeedMultiplier;
                 const wps = this.waypointsOf(e);
                 if (e.pathIdx >= wps.length) e.pathIdx = wps.length - 1;
 
@@ -2597,6 +2807,9 @@ export class SceneInitializer extends Component {
             } else if (this.cardMode) {
                 // 手牌阶段：固定显示，避免每帧被战斗分支覆盖
                 this.statusLabel.string = `选牌中：已用 ${this.usedCardCount}/${SceneInitializer.MAX_CARD_USES_PER_DRAW}，剩余${this.handCards.length}张｜点击底部按钮可结束`;
+            } else if (this.isWavePaused && this.countdownActive) {
+                // 波次门控：明确告知可点 GO 提前开战，否则玩家不知道能跳过等待
+                this.statusLabel.string = `第 ${this.currentWave + 1} 波准备中 · 点 GO 立即开战  塔: ${this.towers.length}`;
             } else if (this.isWavePaused) {
                 this.statusLabel.string = `布防阶段 - 可建塔/移塔  塔: ${this.towers.length}`;
             } else if (this.isUserPaused) {
@@ -2982,7 +3195,12 @@ export class SceneInitializer extends Component {
                 if (this.currentWave < this.WAVES.length) {
                     this.isWavePaused = true;
                     this.updatePauseButton();
-                    this.showBuffSelection();
+                    if (this.levelConfig.systems.waveBuff) {
+                        this.showBuffSelection();
+                    } else {
+                        // 教学关不做波后强化，直接进入下一波准备
+                        this.beginWaveGate();
+                    }
                     console.log(`Wave ${this.currentWave} 完成（${this.waveTotalCount} 只全部消灭），已自动暂停`);
                 } else {
                     this.victory();
@@ -3001,12 +3219,13 @@ export class SceneInitializer extends Component {
             return;
         }
 
-        // 实际血量 = 配置 hp × 注册表 hpMultiplier
-        const actualHp = Math.floor(hp * def.hpMultiplier);
+        // 实际血量 = 配置 hp × 注册表 hpMultiplier × 关卡倍率
+        const actualHp = Math.max(1, Math.floor(hp * def.hpMultiplier * this.levelConfig.hpMultiplier));
 
-        // 双路分叉：交替分配左右两路，保证两路压力均衡（不随机，避免某路运气性过载）
-        const branch = this.spawnBranchToggle;
-        this.spawnBranchToggle = (this.spawnBranchToggle + 1) % BRANCH_COUNT;
+        // 出怪分支：教学关单路（branchCount=1），正常关双路交替保证压力均衡
+        const branchCount = Math.max(1, Math.min(this.levelConfig.branchCount, BRANCH_COUNT));
+        const branch = this.spawnBranchToggle % branchCount;
+        this.spawnBranchToggle = (this.spawnBranchToggle + 1) % branchCount;
         const waypoints = PATH_BRANCH_WAYPOINTS[branch];
 
         const enemy = new Node(def.name);
@@ -3361,6 +3580,7 @@ export class SceneInitializer extends Component {
             playThrustHitRing: (enemy, scale) => EffectManager.instance?.playThrustHitRing(enemy.node.position, scale),
             playOverloadThrustHit: enemy => EffectManager.instance?.playOverloadThrustHit(enemy.node.position),
             playTowerRecoil: (tower, dirX, dirY, strength) => EffectManager.instance?.playTowerRecoil(tower.node, dirX, dirY, strength),
+            hasValidTargetInRange: (towerPos, range) => this.findFirstTarget(towerPos, range) >= 0,
         };
     }
 
@@ -3847,7 +4067,7 @@ export class SceneInitializer extends Component {
     private placeTower(slotIndex: number, def: TowerDef, cost: number = def.cost): void {
         if (this.slotOccupied[slotIndex] || !this.battleRoot) return;
         if (this.lockedSlots[slotIndex]) {
-            if (this.statusLabel) this.statusLabel.string = '该格被封锁，需用锤子敲开';
+            if (this.statusLabel) this.statusLabel.string = '该格被封锁，需用起子敲开';
             return;
         }
         if (this.gold < cost) {
@@ -3962,12 +4182,14 @@ export class SceneInitializer extends Component {
         if (this.statusLabel) this.statusLabel.string = '已结束选牌';
     }
 
-    /** 单张手牌是否可用：塔牌=空格或同型可升级塔；锤子=灰格；改造=有兼容目标；战术=随时 */
+    /** 单张手牌是否可用：塔牌=空格或同型可升级塔；起子=灰格；改造=有兼容目标；战术=随时 */
     private isHandCardUsable(card: CardDef): boolean {
         if (card.kind === 'hammer') return this.lockedSlots.some(l => l);
         if (card.kind === 'tower') {
             const hasFreeSlot = this.slotPositions.some((_, i) => !this.slotOccupied[i] && !this.lockedSlots[i]);
             if (hasFreeSlot) return true;
+            // 教学关未开放合并 → 不能靠「给同型塔升星」判定塔卡仍可用
+            if (!this.levelConfig.systems.merge) return false;
             return this.towers.some(t => t.def.id === card.towerId && t.star < SceneInitializer.MAX_STAR);
         }
         if (card.kind === 'modifier') return this.hasCompatibleModifierTarget(card.sourceId);
@@ -4252,14 +4474,6 @@ export class SceneInitializer extends Component {
         // 取消任何进行中的长按拖拽调度
         this.unschedule(this.onLongPressMove);
 
-        // 恢复建造点（含重置锁定格）
-        for (let i = 0; i < this.slotPositions.length; i++) {
-            this.slotOccupied[i] = false;
-            this.slotNodes[i].active = true;
-            // 锁定格按 MapConfig 显式坐标匹配，不受排序/数量变化影响
-            this.lockedSlots[i] = LOCKED_BUILD_CELL_KEYS.has(`${this.slotCells[i].col},${this.slotCells[i].row}`);
-            this.redrawSlot(i, this.lockedSlots[i]);
-        }
         // 重置卡牌系统（统一方法）
         this.resetCardSystem();
 
@@ -4275,7 +4489,7 @@ export class SceneInitializer extends Component {
 
         // 重置状态
         this.isGameOver = false;
-        this.gold = this.INITIAL_GOLD;
+        this.gold = this.levelConfig.initialGold;
         this.allyMaxHp = this.ALLY_MAX_HP_BASE;
         this.allyHp = this.allyMaxHp;
         this.waveHasBoss = false;
@@ -4307,10 +4521,27 @@ export class SceneInitializer extends Component {
         this.updatePauseButton();
         this.hideGlobalBuffPanel();
 
+        // 重新生成随机可用格（每局不同布局）
+        this.availableCellKeys = generateAvailableCells(
+            SceneInitializer.AVAILABLE_TILE_COUNT, () => rng.random());
+        this.slotOccupied.fill(false);
+        this.lockedSlots = this.slotCells.map(cell => {
+            const key = mapCellKey(cell);
+            if (BLOCKED_CELL_KEYS.has(key)) return false;
+            return !this.availableCellKeys.has(key);
+        });
+        // 重绘所有瓷砖
+        for (let i = 0; i < this.slotNodes.length; i++) {
+            if (this.slotNodes[i]) {
+                this.slotNodes[i].active = true;
+                this.redrawTile(i);
+            }
+        }
+
         // 更新 HUD
         this.updateGoldLabel();
         if (this.livesLabel) this.livesLabel.string = `Base: ${this.allyHp}/${this.allyMaxHp}`;
-        if (this.waveLabel) this.waveLabel.string = `Wave: 0/${this.WAVES.length}`;
+        if (this.waveLabel) this.waveLabel.string = `L${this.levelConfig.id}｜Wave: 0/${this.WAVES.length}`;
         if (this.statusLabel) this.statusLabel.string = `点击「${this.currentDrawCost()}金抽卡」，5张牌最多使用2张`;
 
         // 关卡开始倒计时
@@ -4318,6 +4549,8 @@ export class SceneInitializer extends Component {
         this.resetRunRandom();
         this.selectWavePattern();
         this.startLevelCountdown();
+        // 首次自动抽卡（与开局一致）
+        this.drawCards();
         console.log('游戏重新开始');
     }
 
@@ -4449,59 +4682,85 @@ export class SceneInitializer extends Component {
     }
 
     /** 餐垫塔位：圆形垫子，尺寸与旧方块视觉体量一致（半径 = 格子的 36%） */
-    private createTowerSlot(pos: Vec3, index: number, locked: boolean): Node {
-        const node = new Node(`Slot_${index}`);
+    /** 创建方块瓷砖节点（替代旧版圆形餐垫） */
+    private createTile(pos: Vec3, index: number, cellType: CellType): Node {
+        const node = new Node(`Tile_${index}`);
         node.layer = Layers.Enum.UI_2D;
         node.setPosition(pos);
 
         const transform = node.addComponent(UITransform);
-        const slotSize = CELL_SIZE * SLOT_SIZE_RATIO;
-        transform.setContentSize(slotSize, slotSize);
+        const tileSize = CELL_SIZE * SLOT_SIZE_RATIO;
+        transform.setContentSize(tileSize, tileSize);
 
         const gfx = node.addComponent(Graphics);
-        drawSlotMat(gfx, locked);
+        drawTile(gfx, cellType);
 
+        // BLOCKED 格不响应点击（完全不可用）
+        // AVAILABLE / LOCKED 格可交互
         return node;
     }
 
+    /** @deprecated 旧版圆形餐垫接口，保留兼容 */
+    private createTowerSlot(pos: Vec3, index: number, locked: boolean): Node {
+        return this.createTile(pos, index, locked ? CellType.LOCKED : CellType.AVAILABLE);
+    }
 
-    /** 重绘某个建造点（用于解锁后由灰变亮） */
-    private redrawSlot(index: number, locked: boolean): void {
+
+    /** 重绘某个瓷砖（用于解锁后由灰变亮，或状态变化） */
+    private redrawTile(index: number): void {
         const node = this.slotNodes[index];
         if (!node) return;
         const gfx = node.getComponent(Graphics);
         if (!gfx) return;
-        drawSlotMat(gfx, locked);
+        const cellType = getCellType(this.slotCells[index], this.availableCellKeys);
+        drawTile(gfx, cellType);
     }
 
-    /** 根据占用/锁定状态同步地基显示，修复拖拽异常导致的空格隐藏。 */
+    /** @deprecated 旧版接口兼容 */
+    private redrawSlot(index: number, locked: boolean): void {
+        this.redrawTile(index);
+    }
+
+    /** 根据占用/锁定状态同步瓷砖显示 */
     private refreshSlotVisuals(): void {
         for (let i = 0; i < this.slotNodes.length; i++) {
             const node = this.slotNodes[i];
             if (!node) continue;
+            // BLOCKED 格始终可见但不可交互；AVAILABLE/LOCKED 被占用后隐藏
+            const isBlocked = BLOCKED_CELL_KEYS.has(mapCellKey(this.slotCells[i]));
             node.active = !this.slotOccupied[i];
-            if (!this.slotOccupied[i]) this.redrawSlot(i, this.lockedSlots[i]);
+            if (!this.slotOccupied[i]) this.redrawTile(i);
         }
     }
 
-    /** 返回点击位置命中的建造点索引（距离阈值内），未命中返回 -1 */
+    /** 返回点击位置命中的建造点索引（距离阈值内），封锁格跳过，未命中返回 -1 */
     private findSlotAt(local: Vec3): number {
         let best = -1;
         let bestDist = CELL_SIZE * 0.5;
         for (let i = 0; i < this.slotPositions.length; i++) {
+            // 封锁格不可交互
+            if (BLOCKED_CELL_KEYS.has(mapCellKey(this.slotCells[i]))) continue;
             const d = Vec3.distance(local, this.slotPositions[i]);
             if (d < bestDist) { bestDist = d; best = i; }
         }
         return best;
     }
 
-    /** 用锤子卡敲开锁定格 */
-    private useHammer(index: number): void {
+    /** 用起子卡敲开锁定格 */
+    private useScrewdriver(index: number): void {
         if (!this.lockedSlots[index] || this.slotOccupied[index]) return;
         this.lockedSlots[index] = false;
-        this.redrawSlot(index, false);
-        if (this.statusLabel) this.statusLabel.string = `已敲开格 ${index + 1}，可放塔`;
-        this.refreshHandCardUsability();   // 敲开灰格后刷新手牌可用性（锤子/塔卡可能转为可用）
+        // 解锁后该格变为 AVAILABLE
+        const key = mapCellKey(this.slotCells[index]);
+        this.availableCellKeys.add(key);
+        this.redrawTile(index);
+        if (this.statusLabel) this.statusLabel.string = `已激活格 ${index + 1}，可放塔`;
+        this.refreshHandCardUsability();
+    }
+
+    /** @deprecated 旧版接口兼容 */
+    private useHammer(index: number): void {
+        this.useScrewdriver(index);
     }
 
     /** 取改造卡对应的 modifierId（从 effects 的 addModifier 参数解析） */
@@ -4620,10 +4879,19 @@ export class SceneInitializer extends Component {
         const evaluationWave = Math.max(1, this.currentWave);
         const snap = this.buildSnapshot();
         snap.currentWave = evaluationWave;
-        const hasLocked = this.lockedSlots.some(l => l);
+        // 起子发放条件：关卡开放起子系统 且 场上还有灰格（无灰格则起子退出牌池）
+        const hasLocked = this.levelConfig.systems.hammer && this.lockedSlots.some(l => l);
 
         // 候选卡：按新数据层条件过滤（波次/次数/前置/互斥/场景）
+        const whitelist = this.levelConfig.cardWhitelist;
         const candidates = DRAW_CARDS.filter(c => {
+            // 关卡牌池白名单：教学关只出现指定的基础塔卡
+            if (whitelist.length > 0 && whitelist.indexOf(c.id) < 0) return false;
+            // 关卡未开放的系统：对应类型的卡不进牌池（改造 / 战术 / 工具）
+            const sys = this.levelConfig.systems;
+            if (c.contentType === 'modifier' && !sys.modifier) return false;
+            if (c.contentType === 'tactic' && !sys.tactic) return false;
+            if (c.contentType === 'tool' && !sys.hammer) return false;
             if (evaluationWave < c.minWave) return false;
             if (c.maxWave !== undefined && evaluationWave > c.maxWave) return false;
             if (this.runBuild.drawStacksOf(c.id) >= c.maxStacks) return false;
@@ -4635,14 +4903,14 @@ export class SceneInitializer extends Component {
             return true;
         });
 
-        // 锤子数量（0 或 1）：最多一张；无锁定格则退出牌池并清零计数
+        // 起子数量（0 或 1）：最多一张；无锁定格则退出牌池并清零计数
         let hammerCount = 0;
         if (hasLocked) {
             const usable = this.slotPositions.filter((_, i) => !this.slotOccupied[i] && !this.lockedSlots[i]).length;
             if (usable === 0) {
-                hammerCount = 1;   // 兜底：无可用位置且可能无锤子时强制给锤子
+                hammerCount = 1;   // 兜底：无可用位置且可能无起子时强制给起子
             } else if (this.drawsWithoutShovel >= 2) {
-                hammerCount = 1;   // 连续两轮未出锤子 → 第三轮强制出
+                hammerCount = 1;   // 连续两轮未出起子 → 第三轮强制出
             } else if (rng.chance(0.4)) {
                 hammerCount = 1;
             }
@@ -4652,13 +4920,14 @@ export class SceneInitializer extends Component {
         const result: CardDef[] = [];
         const usedSourceIds = new Set<string>();  // 同手牌去重
 
-        // 开局保底：仅第一次抽牌给1个入口塔+1个充电宝
+        // 开局保底：仅第一次抽牌给 1 个入口塔 + 1 个充电宝。
+        // 两者都只在「本关牌池内确实存在」时才发——教学关牌池较小且不含充电宝，不应静默少发。
         const towerCands = candidates.filter(c => c.contentType === 'tower');
         if (this.drawCount < 1 && towerCount >= 3) {
-            // 从3个流派入口中随机选1个
+            // 从 3 个流派入口中随机选 1 个（只在本关牌池里存在的入口中选）
             const entryTowers = ['bubble_tea_straw', 'poison', 'slow'];
-            const chosenId = rng.pick(entryTowers);
-            const c = towerCands.find(x => x.towerId === chosenId);
+            const entryCands = towerCands.filter(x => entryTowers.indexOf(x.towerId ?? '') >= 0);
+            const c = entryCands.length > 0 ? rng.pick(entryCands) : null;
             if (c) {
                 result.push(this.makeCardFromDef(c));
                 usedSourceIds.add(c.id);
@@ -4697,10 +4966,10 @@ export class SceneInitializer extends Component {
         if (hammerCount > 0) {
             const hammer = candidates.find(c => c.contentType === 'tool' && c.targetType === 'lockedTile');
             result.push(hammer ? this.makeCardFromDef(hammer)
-                : { sourceId: 'hammer', kind: 'hammer', name: '锤子', desc: '敲开一个灰色格', color: new Color(200, 200, 210, 255) });
+                : { sourceId: 'screwdriver', kind: 'hammer', name: '起子', desc: '激活一个灰色格', color: new Color(200, 200, 210, 255) });
         }
 
-        // 锤子计数规则：有灰格且本轮没出锤子 → +1；出了锤子 → 0；无灰格 → 0（退出牌池）
+        // 起子计数规则：有灰格且本轮没出起子 → +1；出了起子 → 0；无灰格 → 0（退出牌池）
         if (!hasLocked) {
             this.drawsWithoutShovel = 0;
         } else if (hammerCount > 0) {
@@ -4708,7 +4977,7 @@ export class SceneInitializer extends Component {
         } else {
             this.drawsWithoutShovel++;
         }
-        // 打乱顺序（避免锤子总在末尾）
+        // 打乱顺序（避免起子总在末尾）
         for (let i = result.length - 1; i > 0; i--) {
             const j = rng.int(i + 1);
             [result[i], result[j]] = [result[j], result[i]];
@@ -4900,7 +5169,7 @@ export class SceneInitializer extends Component {
         gfx.stroke();
         gfx.fillColor = card.color;
         if (card.kind === 'hammer') {
-            // 锤子占位图形随图标区上移：图标中心 y=-1 → 26，图形中心同步到 26
+            // 起子占位图形随图标区上移：图标中心 y=-1 → 26，图形中心同步到 26
             gfx.rect(-7, 20, 14, 12);
             gfx.fill();
         } else if (!hasIcon) {
@@ -4998,7 +5267,7 @@ export class SceneInitializer extends Component {
         this.cardMode = false;
         this.usedCardCount = 0;
         this.drawCount = 0;
-        this.drawsWithoutShovel = 0;   // 重开清零连续未出锤子计数
+        this.drawsWithoutShovel = 0;   // 重开清零连续未出起子计数
         this.cancelCardDrag();   // cardGhost.active=false + dragCardIndex=-1 + isDragging=false
         this.refreshSpendButton();
     }
@@ -5124,14 +5393,14 @@ export class SceneInitializer extends Component {
                     // 3) 命中灰色（锁定）坑位：提示并自动复位卡牌
                     const hit = this.findSlotAt(local);
                     if (hit >= 0 && this.lockedSlots[hit]) {
-                        if (this.statusLabel) this.statusLabel.string = '坑位还未敲开（用锤子卡敲开）';
+                        if (this.statusLabel) this.statusLabel.string = '坑位还未敲开（用起子卡敲开）';
                     }
                 }
             }
         } else if (card.kind === 'hammer') {
             const slot = this.findSlotAt(local);
             if (slot >= 0 && this.lockedSlots[slot]) {
-                this.useHammer(slot);
+                this.useScrewdriver(slot);
                 used = true;
                 usedTarget = `解锁格${slot + 1}`;
             }

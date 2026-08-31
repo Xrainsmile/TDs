@@ -6,7 +6,7 @@ import { Vec3 } from 'cc';
 //  美术主题：甜品台保卫战（Dessert Table Defense）
 //    桌布台面 = 地图底板
 //    糖渍痕迹 = 敌人路径（虫子爬过留下的黏痕）
-//    圆形餐垫 = 塔位（摆放厨具的位置）
+//    方块格 = 塔位（可放置 / 需起子激活 / 完全不可用）
 //    奶油蛋糕 = 基地（需要保卫的目标）
 //    台面裂缝 = 入口（虫子从这里爬上来）
 //
@@ -25,6 +25,14 @@ export const CELL_SIZE = 64;   // 目标棋盘 576×640，铺满 640×960 下的
 
 export const MAP_DESIGN_WIDTH = GRID_COLS * CELL_SIZE;   // 576
 export const MAP_DESIGN_HEIGHT = GRID_ROWS * CELL_SIZE;  // 640
+
+/** 格子类型 */
+export enum CellType {
+    PATH = 'path',           // 敌人路径（糖渍覆盖）
+    AVAILABLE = 'available',  // 可放置（浅棕黄 + 加号，每局随机 6 个）
+    LOCKED = 'locked',       // 需起子激活（灰色 + 起子图标）
+    BLOCKED = 'blocked',     // 完全不可放置（白色，无图标）
+}
 
 export interface GridCell {
     col: number; // 0~8，左到右
@@ -144,57 +152,102 @@ export const PATH_CELL_KEYS: Set<string> = (() => {
 })();
 
 // ============================================================
-//  塔位：显式配置的 30 个餐垫位
+//  全量格子类型表（9×10 = 90 格）
 //
-//  全部满足：非路径格 且 到最近路径格曼哈顿距离 = 1（紧邻糖渍，射程收益最高）。
-//  刻意排除 col=0 / col=8 的最外圈（(0,2)(0,3)(0,4)(0,5)(8,2)(8,3)(8,4)(8,5)），
-//  避免塔贴在地图最边缘、视觉上"浮在桌布外"。
+//  默认规则：
+//    PATH_CELL_KEYS 内的 → CellType.PATH
+//    其余非路径格 → 默认 CellType.LOCKED（需起子激活）
+//    四角边缘 → CellType.BLOCKED（完全不可用，视觉白色）
+//    每局随机 6 个 → CellType.AVAILABLE（浅棕黄 + 加号）
 // ============================================================
-export const BUILD_CELLS: GridCell[] = [
-    // 顶部：入口两侧（拦截第一波）
-    { col: 3, row: 0 }, { col: 5, row: 0 },
-    // 上段分叉前
-    { col: 1, row: 1 }, { col: 2, row: 1 }, { col: 3, row: 1 },
-    { col: 5, row: 1 }, { col: 6, row: 1 }, { col: 7, row: 1 },
-    // 中段：两路之间的"中央岛"（一座塔可兼顾左右）
-    { col: 2, row: 3 }, { col: 3, row: 3 }, { col: 4, row: 3 },
-    { col: 5, row: 3 }, { col: 6, row: 3 },
-    { col: 2, row: 4 }, { col: 6, row: 4 },
-    { col: 3, row: 5 }, { col: 5, row: 5 },
-    // 下段：汇合前的最后拦截
-    { col: 1, row: 6 }, { col: 3, row: 6 }, { col: 4, row: 6 },
-    { col: 5, row: 6 }, { col: 7, row: 6 },
-    { col: 1, row: 7 }, { col: 7, row: 7 },
-    // 底部：基地前最后防线
-    { col: 2, row: 8 }, { col: 3, row: 8 }, { col: 5, row: 8 }, { col: 6, row: 8 },
-    { col: 3, row: 9 }, { col: 5, row: 9 },
+
+/** 完全不可用的角落/边缘格（白色，不放塔也不需激活） */
+export const BLOCKED_CELLS: GridCell[] = [
+    // 左上角区域
+    { col: 0, row: 0 }, { col: 0, row: 1 },
+    // 右上角区域
+    { col: 8, row: 0 }, { col: 8, row: 1 },
+    // 左下角区域
+    { col: 0, row: 8 }, { col: 0, row: 9 }, { col: 1, row: 9 },
+    // 右下角区域
+    { col: 7, row: 9 }, { col: 8, row: 8 }, { col: 8, row: 9 },
 ];
 
-// ============================================================
-//  封闭格（灰色餐垫，需锤子敲开才能放塔）
-//
-//  显式以网格坐标配置，避免地图排序/塔位数量变化后封闭位置漂移。
-//  12/30 锁定（40%）：左右两路各 5 个、中路 2 个，均匀分散，
-//  保证玩家无论主攻哪一路都要为"好位置"付出锤子。
-//  注意：只有落在 BUILD_CELLS 内的坐标才会生效，配在集合外会被静默忽略。
-// ============================================================
-export const LOCKED_BUILD_CELLS: GridCell[] = [
-    // 顶部
-    { col: 3, row: 0 },
-    // 上段
-    { col: 2, row: 1 }, { col: 6, row: 1 },
-    // 中段
-    { col: 3, row: 3 }, { col: 5, row: 3 }, { col: 2, row: 4 }, { col: 5, row: 5 },
-    // 下段
-    { col: 1, row: 6 }, { col: 4, row: 6 }, { col: 7, row: 6 },
-    // 底部
-    { col: 3, row: 8 }, { col: 5, row: 9 },
-];
+export const BLOCKED_CELL_KEYS: Set<string> = new Set(BLOCKED_CELLS.map(cellKey));
 
-export const LOCKED_BUILD_CELL_KEYS: Set<string> = new Set(
-    LOCKED_BUILD_CELLS.map(cellKey)
-);
+/**
+ * 所有潜在可建造格（非路径、非封锁）：从中随机选 6 个作为 AVAILABLE，
+ * 其余默认为 LOCKED。
+ * 这些是旧版 BUILD_CELLS 的超集——覆盖所有非路径非封锁格。
+ */
+export const ALL_BUILDABLE_CELLS: GridCell[] = (() => {
+    const cells: GridCell[] = [];
+    for (let r = 0; r < GRID_ROWS; r++) {
+        for (let c = 0; c < GRID_COLS; c++) {
+            const key = `${c},${r}`;
+            if (!PATH_CELL_KEYS.has(key) && !BLOCKED_CELL_KEYS.has(key)) {
+                cells.push({ col: c, row: r });
+            }
+        }
+    }
+    return cells;
+})();
+
+/** 兼容旧代码：所有可建造格 = ALL_BUILDABLE_CELLS */
+export const BUILD_CELLS: GridCell[] = ALL_BUILDABLE_CELLS;
+
+/**
+ * 每局生成随机可用格（从 ALL_BUILDABLE_CELLS 中随机选 count 个）。
+ * 使用 Fisher-Yates 洗牌保证均匀分布。
+ *
+ * @param count 可用格数量（默认 6）
+ * @param rngRandom 随机函数（默认 Math.random，测试时可注入固定种子）
+ * @returns 可用格的 cellKey Set
+ */
+export function generateAvailableCells(
+    count: number = 6,
+    rngRandom: () => number = Math.random
+): Set<string> {
+    const pool = [...ALL_BUILDABLE_CELLS];
+    // Fisher-Yates 洗牌前 count 个
+    for (let i = 0; i < Math.min(count, pool.length); i++) {
+        const j = i + Math.floor(rngRandom() * (pool.length - i));
+        [pool[i], pool[j]] = [pool[j]!, pool[i]!];
+    }
+    return new Set(pool.slice(0, count).map(cellKey));
+}
+
+/**
+ * 获取某格的类型（静态配置，不含运行时随机状态）。
+ * 返回 PATH / BLOCKED 或 null（表示可能是 AVAILABLE 或 LOCKED，需查运行时 availableSet）。
+ */
+export function getStaticCellType(cell: GridCell): CellType | null {
+    if (PATH_CELL_KEYS.has(cellKey(cell))) return CellType.PATH;
+    if (BLOCKED_CELL_KEYS.has(cellKey(cell))) return CellType.BLOCKED;
+    return null;  // 需要运行时判断 AVAILABLE vs LOCKED
+}
+
+/**
+ * 获取某格的完整类型（含运行时随机状态）。
+ * @param cell 网格坐标
+ * @param availableSet 本局随机可用格集合
+ */
+export function getCellType(cell: GridCell, availableSet: Set<string>): CellType {
+    const staticType = getStaticCellType(cell);
+    if (staticType !== null) return staticType;
+    return availableSet.has(cellKey(cell)) ? CellType.AVAILABLE : CellType.LOCKED;
+}
+
+// ============================================================
+//  旧版兼容：锁定格列表（用于关卡配置 lockedSlotCount）
+//  新版逻辑已迁移到 generateAvailableCells + getCellType
+// ============================================================
+
+/** 所有非路径非封锁格中，除随机 available 外的都是 locked */
+export const LOCKED_BUILD_CELLS: GridCell[] = [];  // 不再静态定义，由运行时动态决定
+
+export const LOCKED_BUILD_CELL_KEYS: Set<string> = new Set();
 
 // ===== 渲染参数 =====
 export const ROAD_WIDTH_RATIO = 0.72;   // 糖渍宽度 = CELL_SIZE 的 72%
-export const SLOT_SIZE_RATIO = 0.72;    // 餐垫直径 = CELL_SIZE 的 72%
+export const SLOT_SIZE_RATIO = 0.88;    // 方块填充比例（几乎填满格子，留小间隙）

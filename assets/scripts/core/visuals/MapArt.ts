@@ -2,7 +2,7 @@ import { Node, Graphics, Color, Layers, UITransform, Vec3 } from 'cc';
 import {
     MAP_DESIGN_WIDTH, MAP_DESIGN_HEIGHT, CELL_SIZE,
     PATH_BRANCH_WAYPOINTS, PATH_CELL_KEYS, GRID_COLS, GRID_ROWS,
-    gridToLocal, ENTRANCE, BASE, ROAD_WIDTH_RATIO, SLOT_SIZE_RATIO, cellKey,
+    gridToLocal, ENTRANCE, BASE, ROAD_WIDTH_RATIO, SLOT_SIZE_RATIO, cellKey, CellType,
 } from '../MapConfig';
 
 // ============================================================
@@ -80,22 +80,27 @@ export function drawTablecloth(parent: Node): Node {
     }
 
     // 四周蕾丝花边（半圆波浪）
+    // 圆心内收 laceR，确保 Graphics 绘制不溢出 MAP_DESIGN_WIDTH/HEIGHT 边界
+    // （Cocos Graphics 不自动裁剪到父 UITransform，溢出会渲染到地图外层）
     const laceR = 7;
     const step = laceR * 2;
     gfx.fillColor = P.clothLace;
     for (let x = -halfW + laceR; x <= halfW - laceR + 0.01; x += step) {
-        gfx.circle(x, halfH, laceR); gfx.fill();
-        gfx.circle(x, -halfH, laceR); gfx.fill();
+        gfx.circle(x, halfH - laceR, laceR); gfx.fill();
+        gfx.circle(x, -halfH + laceR, laceR); gfx.fill();
     }
     for (let y = -halfH + laceR; y <= halfH - laceR + 0.01; y += step) {
-        gfx.circle(-halfW, y, laceR); gfx.fill();
-        gfx.circle(halfW, y, laceR); gfx.fill();
+        gfx.circle(-halfW + laceR, y, laceR); gfx.fill();
+        gfx.circle(halfW - laceR, y, laceR); gfx.fill();
     }
 
     // 外框描边（压住花边，形成桌布边缘）
+    // 内收半个线宽，防止 stroke 溢出边界
+    const edgeInset = 1.5;   // = lineWidth / 2
     gfx.lineWidth = 3;
     gfx.strokeColor = P.clothEdge;
-    gfx.rect(-halfW, -halfH, MAP_DESIGN_WIDTH, MAP_DESIGN_HEIGHT);
+    gfx.rect(-halfW + edgeInset, -halfH + edgeInset,
+        MAP_DESIGN_WIDTH - edgeInset * 2, MAP_DESIGN_HEIGHT - edgeInset * 2);
     gfx.stroke();
 
     return gfx.node;
@@ -140,52 +145,99 @@ function strokePolyline(gfx: Graphics, pts: Vec3[]): void {
 // ============================================================
 //  3. 餐垫塔位（圆形垫子）
 // ============================================================
-export function drawSlotMat(gfx: Graphics, locked: boolean): void {
+/**
+ * 绘制方块瓷砖（替代旧版圆形餐垫）。
+ * 三种状态：
+ *   AVAILABLE — 浅棕黄 + 中心加号（可放置）
+ *   LOCKED    — 灰色 + 起子图标（需起子卡激活）
+ *   BLOCKED   — 白色/极浅（完全不可用，无图标）
+ *
+ * 方块几乎填满 CELL_SIZE（SLOT_SIZE_RATIO=0.88），留 4px 间隙形成网格线效果。
+ */
+export function drawTile(gfx: Graphics, type: CellType): void {
     gfx.clear();
     const P = DESSERT_PALETTE;
-    const r = (CELL_SIZE * SLOT_SIZE_RATIO) / 2;
+    const size = CELL_SIZE * SLOT_SIZE_RATIO;
+    const half = size / 2;
 
-    const fill = locked ? P.matLocked : P.matOpen;
-    const edge = locked ? P.matLockedEdge : P.matOpenEdge;
-
-    // 垫子主体（圆形，模拟餐垫）
-    gfx.fillColor = fill;
-    gfx.circle(0, 0, r);
-    gfx.fill();
-
-    // 外圈描边
-    gfx.lineWidth = 2.5;
-    gfx.strokeColor = edge;
-    gfx.circle(0, 0, r);
-    gfx.stroke();
-
-    // 内圈压线（餐垫的缝线装饰）
-    gfx.lineWidth = 1.5;
-    gfx.strokeColor = locked ? P.matLockedEdge : new Color(214, 186, 142, 200);
-    gfx.circle(0, 0, r - 5);
-    gfx.stroke();
-
-    if (locked) {
-        // 锁定：灰色挂锁（锁身 + 锁梁）
-        gfx.fillColor = new Color(228, 228, 234, 235);
-        gfx.rect(-7.5, -3, 15, 13);
-        gfx.fill();
-        gfx.lineWidth = 2.6;
-        gfx.strokeColor = new Color(228, 228, 234, 235);
-        gfx.arc(0, -3, 6.5, Math.PI, 0, false);
-        gfx.stroke();
-        // 锁孔
-        gfx.fillColor = new Color(120, 116, 112, 255);
-        gfx.circle(0, 2, 2.2);
-        gfx.fill();
-    } else {
-        // 可用：中心十字（表示"可放置"）
-        gfx.strokeColor = P.matOpenEdge;
-        gfx.lineWidth = 2.8;
-        gfx.moveTo(-11, 0); gfx.lineTo(11, 0);
-        gfx.moveTo(0, -11); gfx.lineTo(0, 11);
-        gfx.stroke();
+    switch (type) {
+        case CellType.AVAILABLE: {
+            // 浅棕黄方块（可放置）
+            gfx.fillColor = new Color(235, 220, 185, 255);
+            gfx.rect(-half, -half, size, size);
+            gfx.fill();
+            // 边框
+            gfx.lineWidth = 1.5;
+            gfx.strokeColor = new Color(196, 172, 130, 200);
+            gfx.rect(-half, -half, size, size);
+            gfx.stroke();
+            // 中心加号
+            gfx.strokeColor = new Color(180, 155, 110, 230);
+            gfx.lineWidth = 2.5;
+            const cLen = 10;
+            gfx.moveTo(-cLen, 0); gfx.lineTo(cLen, 0);
+            gfx.moveTo(0, -cLen); gfx.lineTo(0, cLen);
+            gfx.stroke();
+            break;
+        }
+        case CellType.LOCKED: {
+            // 灰色方块（需激活）
+            gfx.fillColor = new Color(165, 160, 155, 255);
+            gfx.rect(-half, -half, size, size);
+            gfx.fill();
+            // 边框
+            gfx.lineWidth = 1.5;
+            gfx.strokeColor = new Color(130, 125, 120, 200);
+            gfx.rect(-half, -half, size, size);
+            gfx.stroke();
+            // 起子图标（深灰色 L 形手柄 + 尖端）
+            drawScrewdriverIcon(gfx);
+            break;
+        }
+        case CellType.BLOCKED: {
+            // 白色/极浅方块（不可用，视觉上"空"）
+            gfx.fillColor = new Color(248, 245, 240, 180);
+            gfx.rect(-half, -half, size, size);
+            gfx.fill();
+            // 极淡边框
+            gfx.lineWidth = 1;
+            gfx.strokeColor = new Color(225, 220, 212, 140);
+            gfx.rect(-half, -half, size, size);
+            gfx.stroke();
+            break;
+        }
     }
+}
+
+/** 绘制起子图标（位于方块中心，深灰色 L 形） */
+function drawScrewdriverIcon(gfx: Graphics): void {
+    gfx.strokeColor = new Color(90, 85, 80, 220);
+
+    // 手柄（短横杠，左下到中心偏右下）
+    gfx.lineWidth = 3;
+    gfx.lineCap = Graphics.LineCap.ROUND;
+    gfx.moveTo(-9, 5);
+    gfx.lineTo(4, 5);
+    gfx.stroke();
+
+    // 杆身（从手柄末端斜向上）
+    gfx.lineWidth = 2.2;
+    gfx.moveTo(4, 5);
+    gfx.lineTo(11, -4);
+    gfx.stroke();
+
+    // 尖端（扁平头，水平短线）
+    gfx.lineWidth = 2.5;
+    gfx.moveTo(9, -6);
+    gfx.lineTo(13, -6);
+    gfx.stroke();
+
+    gfx.lineCap = Graphics.LineCap.BUTT;   // 恢复默认
+}
+
+/** @deprecated 旧版圆形餐垫，保留兼容。新代码请用 drawTile() */
+export function drawSlotMat(gfx: Graphics, locked: boolean): void {
+    drawTile(gfx, locked ? CellType.LOCKED : CellType.AVAILABLE);
 }
 
 // ============================================================

@@ -2,7 +2,7 @@
  * cards/CardRegistry.ts — 五选二卡牌注册表（DrawCardDefinition）
  *
  * 示范四类卡牌（tower/tool/modifier/tactic）的结构化定义。当前运行主流程仍由
- * SceneInitializer.buildHandCards 用 TOWER_REGISTRY + 锤子 + 词缀生成手牌；
+ * SceneInitializer.buildHandCards 用 TOWER_REGISTRY + 起子（原「锤子」）+ 词缀生成手牌；
  * 接入新数据层后改读本注册表，即可用配置扩展几十张卡而无需改代码。
  *
  * towerId / modifierId 等由运行主流程在 spawnTower / addModifierToTower 时按 id 解析。
@@ -106,7 +106,8 @@ export const DRAW_CARDS: DrawCardDefinition[] = [
 
     // —— tool：改变棋盘资源 ——
     {
-        id: 'card_tool_hammer', name: '锤子', description: '敲开一个灰色格', icon: 'ham',
+        // 名称已由「锤子」改为「起子」（仅改叫法，功能与 id 不变）
+        id: 'card_tool_hammer', name: '起子', description: '激活一个灰色格', icon: 'ham',
         systemType: 'drawCard', contentType: 'tool',
         rarity: 'common', tier: 1, buildPaths: ['general'], tags: ['tool', 'unlock'],
         unlockConditions: [
