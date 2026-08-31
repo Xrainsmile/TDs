@@ -55,16 +55,31 @@ __TD_PLAYTEST__.exportLatest() // 导出最近完成的一局
 - `testGroup`：测试组，只能是 `A`、`B` 或 `C`。
 - `playStrategy`：游玩策略，只能是 `认真构筑`、`乱选` 或 `强追流派`。
 - `buildCommit`：本次构建对应的真实 Git commit，支持 7 至 40 位十六进制哈希。
+- `seed`：本局随机种子（非负整数）。指定后本局发牌与战斗随机可复现；不指定则纯随机。
+- `reviveEnabled`：是否允许看广告复活，默认开启。`revive=0` 时关闭。
 
 Web 端通过地址参数传入，中文策略需进行 URL 编码；浏览器直接粘贴中文地址时通常会自动编码：
 
 ```text
-http://127.0.0.1:55035/?balanceVersion=0.3.0&testGroup=A&playStrategy=认真构筑&buildCommit=7ac91de
+http://127.0.0.1:55035/?balanceVersion=0.3.0&testGroup=A&playStrategy=认真构筑&buildCommit=7ac91de&seed=20260831&revive=0
 ```
 
 微信小游戏端读取 `wx.getLaunchOptionsSync().query` 中的同名字段。点击“再来一局”会继续使用本次启动时读取的同一组元数据。
 
 缺少或传入非法参数时，控制台会输出中英文警告，并采用 `unversioned`、`A`、`认真构筑`、`unknown` 作为安全回退值，不影响战斗。正式测试前应使用 `git rev-parse --short HEAD` 获取真实提交号，不要使用示例值。
+
+## 固定种子与复现
+
+游戏内所有影响战斗与发牌的随机统一走 `core/utils/SeededRandom.ts` 的全局种子 RNG（mulberry32），禁止在战斗/发牌逻辑里直接调用 `Math.random()`。
+
+- 指定 `seed` 后，开局（`start` 与重新开始）会重置随机序列，同种子下发牌、暴击、敌群变体等结果序列一致。
+- 复现的前提是**操作顺序一致**：种子只保证随机序列相同，玩家不同的选牌与拖放顺序仍会产生不同对局。
+- `PlaytestRecorder` 的 `runId` 刻意仍使用 `Math.random()`，避免复现局 runId 冲突。
+- 未指定或种子非法（负数、NaN）时自动回退纯随机，行为与加种子前一致。
+
+## 关闭复活
+
+失败面板的「看广告复活」会回满血并 +200 金币，会污染金币与结果统计。基线测试用 `revive=0`（或 `false` / `off`）关闭：按钮不再显示，`revive()` 也会直接返回。导出的 Markdown 头部会记录 `复活：已关闭`。
 
 ## 人工补充内容
 
