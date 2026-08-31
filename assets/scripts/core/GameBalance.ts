@@ -18,9 +18,9 @@ export const BULLET_SPEED = 500;
 
 // ===== 金币 =====
 export const INITIAL_GOLD = 50;   // 开局金币（0.3.2：30→50，缓解前期只能抽1轮导致W1必崩）
-export const KILL_REWARD = 3;     // 每击杀一个敌人奖励
-// 波末奖励（0.3.2：末尾三档 +10，从 [20,20,25,25,30,30,30] 提升，后期有资本补强）
-export const WAVE_BONUSES = [20, 20, 25, 25, 40, 40, 40];
+export const KILL_REWARD = 4;     // 每击杀一个敌人奖励（0.3.3：3→4，缓解后期输出跟不上血量成长）
+// 波末奖励（0.3.3：整体上调，后期有资本补强，从 [20,20,25,25,40,40,40] 提升）
+export const WAVE_BONUSES = [25, 30, 35, 40, 50, 55, 60];
 
 // ===== 倒计时 =====
 // 关卡开头倒计时（秒）：给玩家时间建塔布防
@@ -196,44 +196,44 @@ export const WAVES: WaveConfig[] = [
     ]},
     // Wave 5：20 只，三档小兵+治疗。7×1级+6×2级+5×3级+2×治疗，每 0.75s 一只
     { entries: [
-        { time: 0.0,  type: EnemyType.NORMAL, hp: 340 },  { time: 0.75, type: EnemyType.FAST,   hp: 340 },
-        { time: 1.5,  type: EnemyType.TANK,   hp: 340 },  { time: 2.25, type: EnemyType.NORMAL, hp: 340 },
-        { time: 3.0,  type: EnemyType.HEALER, hp: 200 },  { time: 3.75, type: EnemyType.FAST,   hp: 340 },
-        { time: 4.5,  type: EnemyType.NORMAL, hp: 340 },  { time: 5.25, type: EnemyType.TANK,   hp: 340 },
-        { time: 6.0,  type: EnemyType.FAST,   hp: 340 },  { time: 6.75, type: EnemyType.NORMAL, hp: 340 },
-        { time: 7.5,  type: EnemyType.HEALER, hp: 200 },  { time: 8.25, type: EnemyType.TANK,   hp: 340 },
-        { time: 9.0,  type: EnemyType.FAST,   hp: 340 },  { time: 9.75, type: EnemyType.NORMAL, hp: 340 },
-        { time: 10.5, type: EnemyType.TANK,   hp: 340 },  { time: 11.25,type: EnemyType.FAST,   hp: 340 },
-        { time: 12.0, type: EnemyType.NORMAL, hp: 340 },  { time: 12.75,type: EnemyType.TANK,   hp: 340 },
-        { time: 13.5, type: EnemyType.FAST,   hp: 340 },  { time: 14.25,type: EnemyType.NORMAL, hp: 340 },
+        { time: 0.0,  type: EnemyType.NORMAL, hp: 280 },  { time: 0.75, type: EnemyType.FAST,   hp: 280 },
+        { time: 1.5,  type: EnemyType.TANK,   hp: 280 },  { time: 2.25, type: EnemyType.NORMAL, hp: 280 },
+        { time: 3.0,  type: EnemyType.HEALER, hp: 200 },  { time: 3.75, type: EnemyType.FAST,   hp: 280 },
+        { time: 4.5,  type: EnemyType.NORMAL, hp: 280 },  { time: 5.25, type: EnemyType.TANK,   hp: 280 },
+        { time: 6.0,  type: EnemyType.FAST,   hp: 280 },  { time: 6.75, type: EnemyType.NORMAL, hp: 280 },
+        { time: 7.5,  type: EnemyType.HEALER, hp: 200 },  { time: 8.25, type: EnemyType.TANK,   hp: 280 },
+        { time: 9.0,  type: EnemyType.FAST,   hp: 280 },  { time: 9.75, type: EnemyType.NORMAL, hp: 280 },
+        { time: 10.5, type: EnemyType.TANK,   hp: 280 },  { time: 11.25,type: EnemyType.FAST,   hp: 280 },
+        { time: 12.0, type: EnemyType.NORMAL, hp: 280 },  { time: 12.75,type: EnemyType.TANK,   hp: 280 },
+        { time: 13.5, type: EnemyType.FAST,   hp: 280 },  { time: 14.25,type: EnemyType.NORMAL, hp: 280 },
     ]},
     // Wave 6：22 只，三档小兵+治疗+精英。7×1级+6×2级+4×3级+3×治疗+2×精英，每 0.7s 一只
     { entries: [
-        { time: 0.0,  type: EnemyType.NORMAL, hp: 460 },  { time: 0.7,  type: EnemyType.FAST,   hp: 460 },
-        { time: 1.4,  type: EnemyType.TANK,   hp: 460 },  { time: 2.1,  type: EnemyType.HEALER, hp: 200 },
-        { time: 2.8,  type: EnemyType.NORMAL, hp: 460 },  { time: 3.5,  type: EnemyType.FAST,   hp: 460 },
-        { time: 4.2,  type: EnemyType.ELITE,  hp: 500 },  { time: 4.9,  type: EnemyType.TANK,   hp: 460 },
-        { time: 5.6,  type: EnemyType.FAST,   hp: 460 },  { time: 6.3,  type: EnemyType.NORMAL, hp: 460 },
-        { time: 7.0,  type: EnemyType.HEALER, hp: 200 },  { time: 7.7,  type: EnemyType.FAST,   hp: 460 },
-        { time: 8.4,  type: EnemyType.TANK,   hp: 460 },  { time: 9.1,  type: EnemyType.NORMAL, hp: 460 },
-        { time: 9.8,  type: EnemyType.ELITE,  hp: 500 },  { time: 10.5, type: EnemyType.FAST,   hp: 460 },
-        { time: 11.2, type: EnemyType.TANK,   hp: 460 },  { time: 11.9, type: EnemyType.HEALER, hp: 200 },
-        { time: 12.6, type: EnemyType.NORMAL, hp: 460 },  { time: 13.3, type: EnemyType.FAST,   hp: 460 },
-        { time: 14.0, type: EnemyType.NORMAL, hp: 460 },  { time: 14.7, type: EnemyType.NORMAL, hp: 460 },
+        { time: 0.0,  type: EnemyType.NORMAL, hp: 360 },  { time: 0.7,  type: EnemyType.FAST,   hp: 360 },
+        { time: 1.4,  type: EnemyType.TANK,   hp: 360 },  { time: 2.1,  type: EnemyType.HEALER, hp: 200 },
+        { time: 2.8,  type: EnemyType.NORMAL, hp: 360 },  { time: 3.5,  type: EnemyType.FAST,   hp: 360 },
+        { time: 4.2,  type: EnemyType.ELITE,  hp: 500 },  { time: 4.9,  type: EnemyType.TANK,   hp: 360 },
+        { time: 5.6,  type: EnemyType.FAST,   hp: 360 },  { time: 6.3,  type: EnemyType.NORMAL, hp: 360 },
+        { time: 7.0,  type: EnemyType.HEALER, hp: 200 },  { time: 7.7,  type: EnemyType.FAST,   hp: 360 },
+        { time: 8.4,  type: EnemyType.TANK,   hp: 360 },  { time: 9.1,  type: EnemyType.NORMAL, hp: 360 },
+        { time: 9.8,  type: EnemyType.ELITE,  hp: 500 },  { time: 10.5, type: EnemyType.FAST,   hp: 360 },
+        { time: 11.2, type: EnemyType.TANK,   hp: 360 },  { time: 11.9, type: EnemyType.HEALER, hp: 200 },
+        { time: 12.6, type: EnemyType.NORMAL, hp: 360 },  { time: 13.3, type: EnemyType.FAST,   hp: 360 },
+        { time: 14.0, type: EnemyType.NORMAL, hp: 360 },  { time: 14.7, type: EnemyType.NORMAL, hp: 360 },
     ]},
     // Wave 7（最终波）：23 只，三档小兵+治疗+精英+BOSS。7×1级+6×2级+5×3级+2×治疗+2×精英+1×BOSS，每 0.7s 一只
     { entries: [
-        { time: 0.0,  type: EnemyType.NORMAL, hp: 600 },  { time: 0.7,  type: EnemyType.FAST,   hp: 600 },
-        { time: 1.4,  type: EnemyType.NORMAL, hp: 600 },  { time: 2.1,  type: EnemyType.HEALER, hp: 200 },
-        { time: 2.8,  type: EnemyType.TANK,   hp: 600 },  { time: 3.5,  type: EnemyType.FAST,   hp: 600 },
-        { time: 4.2,  type: EnemyType.ELITE,  hp: 600 },  { time: 4.9,  type: EnemyType.NORMAL, hp: 600 },
-        { time: 5.6,  type: EnemyType.FAST,   hp: 600 },  { time: 6.3,  type: EnemyType.TANK,   hp: 600 },
-        { time: 7.0,  type: EnemyType.NORMAL, hp: 600 },  { time: 7.7,  type: EnemyType.HEALER, hp: 200 },
-        { time: 8.4,  type: EnemyType.BOSS,   hp: 800 },  { time: 9.1,  type: EnemyType.FAST,   hp: 600 },
-        { time: 9.8,  type: EnemyType.TANK,   hp: 600 },  { time: 10.5, type: EnemyType.ELITE,  hp: 600 },
-        { time: 11.2, type: EnemyType.NORMAL, hp: 600 },  { time: 11.9, type: EnemyType.FAST,   hp: 600 },
-        { time: 12.6, type: EnemyType.TANK,   hp: 600 },  { time: 13.3, type: EnemyType.NORMAL, hp: 600 },
-        { time: 14.0, type: EnemyType.FAST,   hp: 600 },  { time: 14.7, type: EnemyType.TANK,   hp: 600 },
-        { time: 15.4, type: EnemyType.NORMAL, hp: 600 },
+        { time: 0.0,  type: EnemyType.NORMAL, hp: 430 },  { time: 0.7,  type: EnemyType.FAST,   hp: 430 },
+        { time: 1.4,  type: EnemyType.NORMAL, hp: 430 },  { time: 2.1,  type: EnemyType.HEALER, hp: 200 },
+        { time: 2.8,  type: EnemyType.TANK,   hp: 430 },  { time: 3.5,  type: EnemyType.FAST,   hp: 430 },
+        { time: 4.2,  type: EnemyType.ELITE,  hp: 430 },  { time: 4.9,  type: EnemyType.NORMAL, hp: 430 },
+        { time: 5.6,  type: EnemyType.FAST,   hp: 430 },  { time: 6.3,  type: EnemyType.TANK,   hp: 430 },
+        { time: 7.0,  type: EnemyType.NORMAL, hp: 430 },  { time: 7.7,  type: EnemyType.HEALER, hp: 200 },
+        { time: 8.4,  type: EnemyType.BOSS,   hp: 800 },  { time: 9.1,  type: EnemyType.FAST,   hp: 430 },
+        { time: 9.8,  type: EnemyType.TANK,   hp: 430 },  { time: 10.5, type: EnemyType.ELITE,  hp: 430 },
+        { time: 11.2, type: EnemyType.NORMAL, hp: 430 },  { time: 11.9, type: EnemyType.FAST,   hp: 430 },
+        { time: 12.6, type: EnemyType.TANK,   hp: 430 },  { time: 13.3, type: EnemyType.NORMAL, hp: 430 },
+        { time: 14.0, type: EnemyType.FAST,   hp: 430 },  { time: 14.7, type: EnemyType.TANK,   hp: 430 },
+        { time: 15.4, type: EnemyType.NORMAL, hp: 430 },
     ]},
 ];
